@@ -492,12 +492,13 @@
 }
 
 .chat-bubble-assistant pre {
-  background: #1e293b;
-  color: #e2e8f0;
-  padding: 10px 12px;
+  background: #282c34;
+  color: #abb2bf;
+  border: 1px solid #3e4451;
+  padding: 32px 12px 10px;
   border-radius: 6px;
   overflow-x: auto;
-  margin: 8px 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -507,6 +508,45 @@
   padding: 0;
   color: inherit;
   font-size: inherit;
+}
+
+.chat-code-block {
+  position: relative;
+  margin: 8px 0;
+}
+
+.chat-code-copy-btn {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #4b5563;
+  border-radius: 4px;
+  background: #374151;
+  color: #d1d5db;
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.chat-code-copy-btn:hover {
+  background: #4b5563;
+  color: #ffffff;
+}
+
+.chat-code-copy-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.chat-code-copy-btn-copied,
+.chat-code-copy-btn-copied:hover {
+  border-color: #16a34a;
+  background: #166534;
+  color: #dcfce7;
 }
 
 .chat-bubble-assistant table {
