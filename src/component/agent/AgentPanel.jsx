@@ -3,7 +3,7 @@ import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import { streamChat, executeTool } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
-import { generateSessionId, listSessions, createSession, loadSession, saveSession, deleteSession, extractTitle } from "../../api/sessions";
+import { generateSessionId, listSessions, createSession, loadSession, loadSessionMeta, saveSession, saveSessionMeta, deleteSession, extractTitle } from "../../api/sessions";
 import {
   EMPTY_AGENT_SKILLS,
   buildSkillsSystemPrompt,
@@ -13,13 +13,16 @@ import {
   mergeAgentSkillsServerUrl,
   mergeLoadedSkills
 } from "../../api/skills";
-import ChatMessage from "./ChatMessage";
+import ChatMessageList from "./ChatMessageList";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
 import toast from "react-hot-toast";
 import { formatProfileForSystemPrompt } from "../../api/userProfile";
 import "./chat.css";
+
+const SYSTEM_PROMPT_PLACEHOLDER =
+  "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
 
 /**
  * Main Agent chat panel with session management.
@@ -33,6 +36,7 @@ export default function AgentPanel() {
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [sessionTitle, setSessionTitle] = useState("");
+  const [sessionSystemPrompt, setSessionSystemPrompt] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [mcpTools, setMcpTools] = useState([]);   // MCP tools from connected servers
@@ -62,11 +66,15 @@ export default function AgentPanel() {
       if (allSessions.length > 0) {
         // Restore the most recent session
         const latest = allSessions[0];
-        const msgs = await loadSession(latest.id);
+        const [msgs, meta] = await Promise.all([
+          loadSession(latest.id),
+          loadSessionMeta(latest.id)
+        ]);
         sessionMessagesRef.current.set(latest.id, msgs);
         activeSessionIdRef.current = latest.id;
         setSessionId(latest.id);
         setSessionTitle(latest.title);
+        setSessionSystemPrompt(meta.systemPrompt || "");
         setMessages(msgs);
         setLoading(false);
       } else {
@@ -77,6 +85,7 @@ export default function AgentPanel() {
         activeSessionIdRef.current = id;
         setSessionId(id);
         setSessionTitle("新会话");
+        setSessionSystemPrompt("");
         setMessages([]);
         setLoading(false);
         setSessions(await listSessions());
@@ -174,11 +183,15 @@ export default function AgentPanel() {
 
   async function openSession(id) {
     const cached = sessionMessagesRef.current.get(id);
-    const msgs = cached ?? await loadSession(id);
+    const [msgs, meta] = await Promise.all([
+      cached ?? loadSession(id),
+      loadSessionMeta(id)
+    ]);
     sessionMessagesRef.current.set(id, msgs);
     activeSessionIdRef.current = id;
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
+    setSessionSystemPrompt(meta.systemPrompt || "");
     setMessages(msgs);
     const runtime = getSessionRuntime(id);
     setLoading(!!runtime.loading);
@@ -330,6 +343,7 @@ export default function AgentPanel() {
     activeSessionIdRef.current = id;
     setSessionId(id);
     setSessionTitle("新会话");
+    setSessionSystemPrompt("");
     setMessages([]);
     setLoading(false);
     setSessions(await listSessions());
@@ -374,6 +388,9 @@ export default function AgentPanel() {
   async function buildSystemPrompt() {
     const memoryBlock = await formatProfileForSystemPrompt().catch(() => "");
     const platformBlock = buildPlatformSystemPrompt(platformInfo);
+    const currentSessionSystemPrompt = sessionSystemPrompt.trim()
+      ? `\n\nAdditional system instructions for this conversation:\n${sessionSystemPrompt.trim()}\n`
+      : "";
     return (
       `You are a browser assistant running inside a browser environment.\n\n` +
       `You can use browser tools to inspect open tabs, tab groups, and windows, focus tabs and windows, move tabs between windows, open tabs, close tabs, create windows, close windows, group tabs, update groups, inspect page DOM, interact with page elements, extract page content, and search browser history.\n\n` +
@@ -391,10 +408,16 @@ export default function AgentPanel() {
       `- window_list and window_get_current return window snapshots with capturedAt timing fields.\n` +
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
       `- If you need the actual page content, first identify the right tab, then call tab_extract.\n` +
+      `- Treat questions about "latest", "current", "today", recent releases, prices, availability, laws, policies, API fields/schemas, model lists/capabilities/pricing, SDK behavior, product documentation, or any fast-changing technical detail as time-sensitive. Do not answer these from memory first.\n` +
+      `- For time-sensitive questions, first look for an available web search/fetch MCP tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources before responding.\n` +
+      `- If no web search/fetch tool is available, use browser tools instead: open a search engine or official documentation page with tab_open, inspect/extract the page with tab_extract and DOM tools, and then answer based on what you found.\n` +
+      `- When answering time-sensitive or documentation/API questions after searching, include concise source context such as the site/document name and relevant dates or version notes when available. If verification fails, clearly say what could not be verified instead of guessing.\n` +
+      `- Prefer primary sources for technical and product facts, especially official API documentation, release notes, model documentation, SDK docs, or standards documents. Use secondary sources only when primary sources are unavailable or to cross-check.\n` +
       `- Dangerous tools such as eval_js or MCP tools marked as dangerous require explicit user confirmation before execution. The application will present that confirmation UI automatically, so do not ask the user to reply with confirmation in text.\n` +
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
       `- Respond in the same language as the user.` +
+      currentSessionSystemPrompt +
       buildSkillsSystemPrompt(agentSkills) +
       memoryBlock
     );
@@ -634,6 +657,8 @@ export default function AgentPanel() {
     setSessionMessages(currentSessionId, []);
     setInput("");
     setSessionTitle("新会话");
+    setSessionSystemPrompt("");
+    await saveSessionMeta(currentSessionId, { systemPrompt: "" });
     await saveSession(currentSessionId, [], "新会话");
     setSessions(await listSessions());
   }
@@ -661,6 +686,16 @@ export default function AgentPanel() {
       console.error("Failed to export session:", error);
       toast.error(`导出失败: ${error.message || String(error)}`);
     }
+  }
+
+  async function handleSaveSessionSystemPrompt(systemPrompt) {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    const normalizedPrompt = String(systemPrompt || "").trim();
+    await saveSessionMeta(currentSessionId, { systemPrompt: normalizedPrompt });
+    setSessionSystemPrompt(normalizedPrompt);
+    setSessions(await listSessions());
+    toast.success(normalizedPrompt ? "系统提示已保存" : "系统提示已清空");
   }
 
   function handleKeyDown(e) {
@@ -715,6 +750,12 @@ export default function AgentPanel() {
     <div className="agent-panel">
       <div className="chat-toolbar">
         <button className="chat-toolbar-btn" onClick={handleNewSession}>+ 新建</button>
+        <Dialog trigger={<button className="chat-toolbar-btn">系统</button>}>
+          <SessionSystemPromptDialogBody
+            initialValue={sessionSystemPrompt}
+            onSave={handleSaveSessionSystemPrompt}
+          />
+        </Dialog>
         <button className="chat-toolbar-btn" onClick={handleClearCurrentSession}>清空</button>
         <button className="chat-toolbar-btn" onClick={handleExportCurrentSession}>导出</button>
         <Dialog trigger={<button className="chat-toolbar-btn">调度</button>}>
@@ -772,14 +813,10 @@ export default function AgentPanel() {
           </div>
         ) : (
           <>
-            {messages.map((msg, i) => (
-              <ChatMessage
-                key={i}
-                msg={msg}
-                messageIndex={i}
-                onRewindToUserMessage={handleRewindToUserMessage}
-              />
-            ))}
+            <ChatMessageList
+              messages={messages}
+              onRewindToUserMessage={handleRewindToUserMessage}
+            />
             {loading && messages[messages.length - 1]?.content === "" && (
               <div className="chat-msg chat-msg-assistant">
                 <div className="chat-bubble chat-bubble-assistant loading-dots">思考中</div>
@@ -847,6 +884,60 @@ export default function AgentPanel() {
 }
 
 // ==================== Helper functions ====================
+
+function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
+  const [draft, setDraft] = useState(initialValue || "");
+  const [saving, setSaving] = useState(false);
+  const rootRef = useRef(null);
+
+  function closeDialog() {
+    const closeButton = rootRef.current?.closest(".dialog-backdrop")?.querySelector(".dialog-close-button");
+    closeButton?.click();
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave?.(draft);
+      closeDialog();
+    } catch (error) {
+      toast.error(`保存失败: ${error?.message || String(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div ref={rootRef} className="system-prompt-dialog">
+      <div>
+        <div className="schedule-dialog-title">当前会话系统提示</div>
+        <div className="schedule-dialog-subtitle">保存后只影响当前会话，会作为额外 system prompt 注入。</div>
+      </div>
+      <textarea
+        className="system-prompt-textarea"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={SYSTEM_PROMPT_PLACEHOLDER}
+      />
+      <div className="schedule-dialog-actions">
+        <Button
+          className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
+          onPress={closeDialog}
+          isDisabled={saving}
+        >
+          取消
+        </Button>
+        <Button
+          className="!min-h-8 !px-3 !text-xs !whitespace-nowrap"
+          onPress={handleSave}
+          isDisabled={saving}
+        >
+          {saving ? "保存中..." : "保存"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function ScheduleJobsDialogBody() {
   const [jobs, setJobs] = useState([]);
@@ -1677,3 +1768,5 @@ function extractJsonPayload(text) {
 
   throw new Error("未找到可解析的 JSON 输出");
 }
+
+

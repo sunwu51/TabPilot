@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
 import { useState } from "react";
 
@@ -122,7 +123,7 @@ function AssistantTextBubble({ text }) {
   return (
     <div className="chat-msg chat-msg-assistant">
       <div className="chat-bubble chat-bubble-assistant">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}>
           {text}
         </ReactMarkdown>
       </div>

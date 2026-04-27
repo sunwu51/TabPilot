@@ -43,6 +43,19 @@ export async function loadSession(id) {
 }
 
 /**
+ * Load optional metadata for a specific session.
+ * @param {string} id - session ID
+ * @returns {Promise<{systemPrompt: string}>}
+ */
+export async function loadSessionMeta(id) {
+  const key = `session_${id}`;
+  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "" } });
+  return {
+    systemPrompt: result[key]?.systemPrompt || ""
+  };
+}
+
+/**
  * Save messages for a session and update the index entry (title + updatedAt).
  * @param {string} id - session ID
  * @param {Array} messages - full message history
@@ -50,13 +63,37 @@ export async function loadSession(id) {
  */
 export async function saveSession(id, messages, title) {
   const key = `session_${id}`;
-  await chrome.storage.local.set({ [key]: { messages } });
+  const result = await chrome.storage.local.get({ [key]: {} });
+  await chrome.storage.local.set({ [key]: { ...result[key], messages } });
 
   // Update index entry
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   const entry = sessions_index.find(s => s.id === id);
   if (entry) {
     if (title) entry.title = title;
+    entry.updatedAt = Date.now();
+  }
+  await chrome.storage.local.set({ sessions_index });
+}
+
+/**
+ * Save optional metadata for a session without replacing messages.
+ * @param {string} id - session ID
+ * @param {{systemPrompt?: string}} meta - partial session metadata
+ */
+export async function saveSessionMeta(id, meta = {}) {
+  const key = `session_${id}`;
+  const result = await chrome.storage.local.get({ [key]: { messages: [] } });
+  await chrome.storage.local.set({
+    [key]: {
+      ...result[key],
+      ...meta
+    }
+  });
+
+  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(s => s.id === id);
+  if (entry) {
     entry.updatedAt = Date.now();
   }
   await chrome.storage.local.set({ sessions_index });

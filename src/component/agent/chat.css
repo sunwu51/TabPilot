@@ -198,6 +198,32 @@
   text-align: center;
 }
 
+.system-prompt-dialog {
+  width: min(560px, 82vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.system-prompt-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 50vh;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.system-prompt-textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
 .schedule-job-list {
   overflow-y: auto;
   padding-right: 4px;
@@ -604,3 +630,25 @@
 }
 
 /* MCP styles removed — now using camel-ui Dialog/Button/Input/Card */
+
+/* ========== Consecutive tool call group ========== */
+.tool-group-msg {
+  cursor: default;
+}
+
+.tool-group-msg > .tool-result-header {
+  cursor: pointer;
+}
+
+.tool-group-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.tool-group-content .tool-result-msg {
+  margin: 0;
+}
