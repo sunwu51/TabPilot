@@ -320,6 +320,26 @@
   gap: 8px;
 }
 
+.chat-jump-to-bottom {
+  position: sticky;
+  bottom: 8px;
+  align-self: center;
+  z-index: 2;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+}
+
+.chat-jump-to-bottom:hover {
+  background: #f9fafb;
+}
+
 .chat-input-area {
   flex-shrink: 0;
   border-top: 1px solid #e5e7eb;
@@ -342,6 +362,35 @@
   line-height: 1.5;
   font-family: inherit;
   box-sizing: border-box;
+}
+
+.chat-input-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.3;
+  min-height: 15px;
+}
+
+.chat-input-status-line span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-input-status-model {
+  flex: 1 1 auto;
+}
+
+.chat-input-status-context {
+  flex: 0 0 auto;
+  max-width: 45%;
+  text-align: right;
 }
 
 .chat-input-actions {
@@ -578,7 +627,7 @@
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -590,6 +639,7 @@
   padding: 5px 8px;
   color: #6b7280;
   user-select: none;
+  cursor: pointer;
 }
 
 .tool-result-arrow {
@@ -608,12 +658,35 @@
   border-top: 1px solid #e5e7eb;
   background: #f9fafb;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
+  line-height: 1.45;
   color: #374151;
   max-height: 200px;
-  overflow-y: auto;
+  overflow: auto;
   margin: 0;
+}
+
+.tool-json-content {
+  max-height: 320px;
+  white-space: pre;
+  word-break: normal;
+  tab-size: 2;
+}
+
+.tool-merged-section-label {
+  padding: 6px 8px 2px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tool-merged-section-label + .tool-result-content {
+  border-top: 0;
+  padding-top: 2px;
 }
 
 .tool-result-error {

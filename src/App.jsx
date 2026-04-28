@@ -4,14 +4,12 @@ import Group from "./component/Group";
 import Search from "./component/Search";
 import Workspace from "./component/Workspace";
 import AgentPanel from "./component/agent/AgentPanel";
-import AcpPanel from "./component/acp/AcpPanel";
 import SettingsDialog from "./component/SettingsDialog";
 
 /**
  * Root application component with tabs:
  * - Tab Management: search, group, workspace features
  * - Agent: LLM chat with browser context awareness
- * - ACP: direct ACP controller chat with external coding agents
  * Settings button floats at top-right, visible across all tabs.
  */
 function App() {
@@ -34,12 +32,8 @@ function App() {
         <TabsItem title="小助手">
           <AgentPanel />
         </TabsItem>
-        <TabsItem title="ACP">
-          <AcpPanel />
-        </TabsItem>
       </Tabs>
     </div>
   );
 }
 export default App;
-
