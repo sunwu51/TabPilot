@@ -4,12 +4,14 @@ import { TOOLS, executeTool } from "./llm";
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const TOOL_CALL_TIMEOUT_MS = 60000;
+const IDLE_TIMEOUT_MS = 30000;
 const WS_STORAGE_KEY = "wsServerUrl";
 
 let rpcId = 0;
 let socket = null;
 let reconnectTimer = null;
 let reconnectDelay = RECONNECT_BASE_MS;
+let idleTimer = null;
 let running = false;
 let currentUrl = "";
 let executionQueue = Promise.resolve();
@@ -64,7 +66,9 @@ function notifyToolCall(record) {
 
 function disconnect() {
   clearTimeout(reconnectTimer);
+  clearTimeout(idleTimer);
   reconnectTimer = null;
+  idleTimer = null;
   if (socket) {
     socket.onclose = null;
     socket.onerror = null;
@@ -92,10 +96,12 @@ function connect(url) {
     reconnectDelay = RECONNECT_BASE_MS;
     executionQueue = Promise.resolve();
     connectError = null;
+    resetIdleWatchdog();
     notifyStatus({ connected: true, url: currentUrl, tools: 0 });
   };
 
   socket.onmessage = (event) => {
+    resetIdleWatchdog();
     let msg;
     try {
       msg = JSON.parse(event.data);
@@ -119,6 +125,15 @@ function connect(url) {
   socket.onerror = () => {
     socket?.close();
   };
+}
+
+function resetIdleWatchdog() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.close();
+    }
+  }, IDLE_TIMEOUT_MS);
 }
 
 function scheduleReconnect() {

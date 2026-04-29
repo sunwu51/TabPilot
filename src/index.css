@@ -44,6 +44,13 @@ html, body, #root {
   z-index: 100;
 }
 
+/* Compact tabs to avoid overlap with settings button */
+.tabs-button {
+  min-width: auto !important;
+  padding: 4px 10px !important;
+  font-size: 12px !important;
+}
+
 /* Unify label styles inside settings dialog */
 .dialog-dialog .select-container label {
   font-size: 0.875rem !important;
