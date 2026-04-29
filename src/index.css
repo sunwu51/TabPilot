@@ -163,3 +163,82 @@ html, body, #root {
   align-items: center;
   margin: 3px 0;
 }
+
+/* ========== Bridge panel ========== */
+.bridge-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bridge-config-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+
+.bridge-url-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.bridge-url-wrap .input-container {
+  margin-bottom: 0;
+}
+
+.bridge-connect-btn {
+  flex-shrink: 0;
+}
+
+.bridge-status {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.bridge-status-connected {
+  color: #047857;
+}
+
+.bridge-status-connecting {
+  color: #b45309;
+}
+
+.bridge-error {
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.bridge-records {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bridge-records-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.bridge-record-duration {
+  margin-left: auto;
+  font-size: 11px;
+  color: #9ca3af;
+  flex-shrink: 0;
+}

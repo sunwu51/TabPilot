@@ -16,8 +16,7 @@ const DEFAULT_SETTINGS = {
   },
   suspendTimeout: 0,
   mcpToolTimeoutSeconds: 60,
-  reuse: false,
-  wsServerUrl: ""
+  reuse: false
 };
 
 /**
@@ -43,7 +42,6 @@ function SettingsDialogBody() {
   const [suspendTimeout, setSuspendTimeout] = useState(DEFAULT_SETTINGS.suspendTimeout);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
-  const [wsServerUrl, setWsServerUrl] = useState(DEFAULT_SETTINGS.wsServerUrl);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -77,7 +75,6 @@ function SettingsDialogBody() {
       setSuspendTimeout(Number(res.suspendTimeout) || 0);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
-      setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : DEFAULT_SETTINGS.wsServerUrl);
 
       const policies = await getReuseDomainPolicies();
       setReusePolicyCount(Object.keys(policies || {}).length);
@@ -106,8 +103,7 @@ function SettingsDialogBody() {
         },
         suspendTimeout,
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
-        reuse,
-        wsServerUrl
+        reuse
       });
       toast.success("设置已保存");
       closeDialog();
@@ -236,14 +232,6 @@ function SettingsDialogBody() {
           setMcpToolTimeoutSeconds(Math.max(1, parseInt(value || String(DEFAULT_SETTINGS.mcpToolTimeoutSeconds), 10) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
         }}
         placeholder="60"
-      />
-      <Input
-        label="WS Server 地址（将内置工具通过 WebSocket 暴露为 MCP server）"
-        labelClassName="!text-sm !font-medium !text-gray-500"
-        inputClassName="!min-h-8"
-        defaultValue={wsServerUrl}
-        onChange={setWsServerUrl}
-        placeholder="ws://localhost:3000/ws/tabmanager"
       />
       <Select
         label="自动释放长期不用标签的内存"

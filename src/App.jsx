@@ -4,6 +4,7 @@ import Group from "./component/Group";
 import Search from "./component/Search";
 import Workspace from "./component/Workspace";
 import AgentPanel from "./component/agent/AgentPanel";
+import BridgePanel from "./component/BridgePanel";
 import SettingsDialog from "./component/SettingsDialog";
 
 /**
@@ -31,6 +32,9 @@ function App() {
         </TabsItem>
         <TabsItem title="小助手">
           <AgentPanel />
+        </TabsItem>
+        <TabsItem title="工具透出">
+          <BridgePanel />
         </TabsItem>
       </Tabs>
     </div>
