@@ -21,7 +21,7 @@ const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"])
 
 // ==================== Tool Definitions ====================
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: "tab_list",
     description: "Get a snapshot of all currently open browser tabs. Returns each tab's id, url, title, and lastAccessed, plus capturedAt timing fields so you can judge whether the tab state may be stale and refresh it again if needed. Use when the user asks about open tabs, browser context, or page-related questions and you need to identify the right tab first.",
