@@ -243,7 +243,7 @@ function SettingsDialogBody() {
         inputClassName="!min-h-8"
         defaultValue={wsServerUrl}
         onChange={setWsServerUrl}
-        placeholder="wss://your-server.com/mcp"
+        placeholder="ws://localhost:3000/ws/tabmanager"
       />
       <Select
         label="自动释放长期不用标签的内存"

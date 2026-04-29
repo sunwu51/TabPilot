@@ -57,8 +57,8 @@ function disconnect() {
 }
 
 function connect(url) {
-  if (!url || !url.startsWith("wss://")) {
-    console.warn("[wsBridge] Refusing to connect: URL must start with wss://");
+  if (!url || (!url.startsWith("ws://") && !url.startsWith("wss://"))) {
+    console.warn("[wsBridge] Refusing to connect: URL must start with ws:// or wss://");
     return;
   }
 
