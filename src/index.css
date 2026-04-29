@@ -170,6 +170,7 @@ html, body, #root {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid #e5e7eb;
+  background: white;
 }
 
 /* Fix camel-ui checkbox text vertical alignment */
