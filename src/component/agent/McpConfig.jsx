@@ -67,10 +67,13 @@ export default function McpConfig({ onToolsChanged }) {
   }
 
   function isNestingTool(toolName) {
-    const lastUnderscore = toolName.lastIndexOf("_");
-    if (lastUnderscore < 0) return false;
-    const suffix = toolName.slice(lastUnderscore + 1);
-    return BUILTIN_TOOL_NAMES.includes(suffix);
+    // Exact match with a built-in tool name
+    if (BUILTIN_TOOL_NAMES.includes(toolName)) return true;
+    // Suffix match: check if tool name ends with "_builtinToolName"
+    for (const builtinName of BUILTIN_TOOL_NAMES) {
+      if (toolName.endsWith("_" + builtinName)) return true;
+    }
+    return false;
   }
 
   function buildToolSettings(existingSettings = {}, tools = []) {

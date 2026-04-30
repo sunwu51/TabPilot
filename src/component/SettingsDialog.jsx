@@ -127,6 +127,7 @@ function SettingsDialogBody() {
 
   return (
     <div ref={rootRef} key={formKey} className="settings-dialog-body">
+      <div className="settings-dialog-scroll">
       <Select
         label="API 类型"
         items={["OpenAI 兼容", "Anthropic"]}
@@ -256,6 +257,7 @@ function SettingsDialogBody() {
         >
           清空域名复用记忆
         </Button>
+      </div>
       </div>
       <div className="settings-dialog-actions">
         <Button
