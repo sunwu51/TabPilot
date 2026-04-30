@@ -44,6 +44,14 @@ html, body, #root {
   z-index: 100;
 }
 
+/* Compact tabs to avoid overlap with settings button */
+.tabs-button {
+  min-width: auto !important;
+  padding: 4px 12px !important;
+  font-size: 12px !important;
+  margin: 0 2px !important;
+}
+
 /* Unify label styles inside settings dialog */
 .dialog-dialog .select-container label {
   font-size: 0.875rem !important;
@@ -130,9 +138,21 @@ html, body, #root {
 .dialog-dialog .settings-dialog-body {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0;
   min-width: min(560px, calc(100vw - 48px));
   max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 130px);
+  overflow: hidden;
+}
+
+.dialog-dialog .settings-dialog-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .dialog-dialog .settings-reuse-memory-row {
@@ -140,10 +160,10 @@ html, body, #root {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.35rem;
 }
 
 .dialog-dialog .settings-dialog-actions {
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
@@ -162,4 +182,85 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   margin: 3px 0;
+}
+
+/* ========== Bridge panel ========== */
+.bridge-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bridge-config-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+
+.bridge-url-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.bridge-url-wrap .input-container {
+  margin-bottom: 0;
+}
+
+.bridge-connect-btn {
+  flex-shrink: 0;
+}
+
+.bridge-status {
+  flex-basis: 100%;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.bridge-status-connected {
+  color: #047857;
+}
+
+.bridge-status-connecting {
+  color: #b45309;
+}
+
+.bridge-error {
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.bridge-records {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bridge-records-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.bridge-record-duration {
+  margin-left: auto;
+  font-size: 11px;
+  color: #9ca3af;
+  flex-shrink: 0;
 }

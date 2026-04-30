@@ -1,13 +1,14 @@
 import { Toaster } from "react-hot-toast";
 import { Tabs, TabsItem } from "@sunwu51/camel-ui";
-import Group from "./component/Group";
-import Search from "./component/Search";
-import Workspace from "./component/Workspace";
+import Group from "./component/tabManager/Group";
+import Search from "./component/tabManager/Search";
+import Workspace from "./component/tabManager/Workspace";
 import AgentPanel from "./component/agent/AgentPanel";
+import BridgePanel from "./component/bridge/BridgePanel";
 import SettingsDialog from "./component/SettingsDialog";
 
 /**
- * Root application component with two tabs:
+ * Root application component with tabs:
  * - Tab Management: search, group, workspace features
  * - Agent: LLM chat with browser context awareness
  * Settings button floats at top-right, visible across all tabs.
@@ -32,8 +33,11 @@ function App() {
         <TabsItem title="小助手">
           <AgentPanel />
         </TabsItem>
+        <TabsItem title="工具透出">
+          <BridgePanel />
+        </TabsItem>
       </Tabs>
     </div>
-  )
+  );
 }
 export default App;

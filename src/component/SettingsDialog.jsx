@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
     apiKey: "",
     model: "",
     firstPacketTimeoutSeconds: 20,
-    supportsImageInput: true
+    supportsImageInput: false
   },
   suspendTimeout: 0,
   mcpToolTimeoutSeconds: 60,
@@ -71,7 +71,7 @@ function SettingsDialogBody() {
       setApiKey(nextLlmConfig.apiKey || "");
       setModel(nextLlmConfig.model || "");
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
-      setSupportsImageInput(nextLlmConfig.supportsImageInput !== false);
+      setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
       setSuspendTimeout(Number(res.suspendTimeout) || 0);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
@@ -127,6 +127,7 @@ function SettingsDialogBody() {
 
   return (
     <div ref={rootRef} key={formKey} className="settings-dialog-body">
+      <div className="settings-dialog-scroll">
       <Select
         label="API 类型"
         items={["OpenAI 兼容", "Anthropic"]}
@@ -141,7 +142,7 @@ function SettingsDialogBody() {
         inputClassName="!min-h-8"
         defaultValue={baseUrl}
         onChange={setBaseUrl}
-        placeholder={apiType === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com"}
+        placeholder={apiType === "anthropic" ? "https://api.deepseek.com/anthropic/messages" : "https://api.deepseek.com/chat/completions"}
       />
       <div className="settings-api-url-hint">
         最终 URL 为 {resolvedApiUrl || "—"}
@@ -206,7 +207,7 @@ function SettingsDialogBody() {
         inputClassName="!min-h-8"
         defaultValue={model}
         onChange={setModel}
-        placeholder={apiType === "anthropic" ? "claude-sonnet-4-20250514" : "gpt-4o"}
+        placeholder={apiType === "anthropic" ? "claude-sonnet-4-20250514" : "deepseek-v4-flash"}
       />
       <Input
         label="LLM 首包超时（秒）"
@@ -256,6 +257,7 @@ function SettingsDialogBody() {
         >
           清空域名复用记忆
         </Button>
+      </div>
       </div>
       <div className="settings-dialog-actions">
         <Button

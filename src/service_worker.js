@@ -9,6 +9,7 @@ import {
     setReuseDomainPolicy
 } from "./api/tabReuse";
 import { BUILTIN_TOOL_NAMES, executeTool } from "./api/llm";
+import { connectWsBridge, disconnectWsBridge, getWsBridgeStatus } from "./api/wsBridge";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const pendingReusePrompts = new Map();
@@ -407,7 +408,32 @@ async function applyReuseDecision(pending, decision, rememberChoice) {
  * communicates with the auto-injected content script (no host_permissions needed).
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg?.type === "schedule_manager") {
+    if (msg?.type === "wsbridge") {
+    (async () => {
+      try {
+        switch (msg.action) {
+          case "connect":
+            await connectWsBridge(msg.url || "");
+            sendResponse({ success: true });
+            break;
+          case "disconnect":
+            disconnectWsBridge();
+            sendResponse({ success: true });
+            break;
+          case "status":
+            sendResponse({ success: true, ...getWsBridgeStatus() });
+            break;
+          default:
+            sendResponse({ error: `Unknown wsbridge action: ${msg.action}` });
+        }
+      } catch (error) {
+        sendResponse({ error: error?.message || String(error) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg?.type === "schedule_manager") {
         (async () => {
             try {
                 switch (msg.action) {

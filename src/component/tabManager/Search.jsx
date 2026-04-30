@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 /* global chrome */
 import { Badge, Button, Card, Input, } from "@sunwu51/camel-ui"
 import { useEffect, useRef, useState } from "react"
@@ -57,6 +56,14 @@ function Search() {
   const searchRef = useRef(null);
   const totalResults = fromTabs.length + fromHistory.length;
 
+  async function closeTab(tabId, e) {
+    e?.preventDefault();
+    e?.stopPropagation();
+    e?.nativeEvent?.stopImmediatePropagation?.();
+    await chrome.tabs.remove(tabId);
+    setTimestamp(Date.now());
+  }
+
   /** Switch to the tab or open history item at the given index */
   async function switchToItem(index) {
     if (index < fromTabs.length) {
@@ -88,8 +95,7 @@ function Search() {
       setFilter("");
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && e.metaKey && selectedIndex < fromTabs.length) {
       e.preventDefault();
-      chrome.tabs.remove(fromTabs[selectedIndex].tab.id);
-      setTimestamp(Date.now());
+      closeTab(fromTabs[selectedIndex].tab.id);
     }
   }
 
@@ -136,13 +142,18 @@ function Search() {
                             }}>{item.tab.title}</p>
                             {selectedIndex === index && (
                               <span
+                                role="button"
+                                tabIndex="-1"
                                 className="flex-shrink-0 ml-1 w-5 h-5 rounded flex items-center justify-center bg-red-400 hover:bg-red-600 text-white text-sm leading-none"
-                                onClick={async (e) => {
-                                  e.stopPropagation();
+                                onPointerDown={(e) => {
                                   e.preventDefault();
-                                  await chrome.tabs.remove(item.tab.id);
-                                  setTimestamp(Date.now());
+                                  e.stopPropagation();
                                 }}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                onClick={(e) => closeTab(item.tab.id, e)}
                                 title="关闭此标签页"
                               >
                                 &times;

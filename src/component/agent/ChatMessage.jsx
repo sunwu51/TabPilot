@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
 import { useState } from "react";
 
@@ -119,13 +120,71 @@ export default function ChatMessage({ msg, messageIndex, onRewindToUserMessage }
 
 /** Markdown-rendered assistant text bubble */
 function AssistantTextBubble({ text }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(event) {
+    event.stopPropagation();
+    try {
+      await copyTextToClipboard(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (error) {
+      console.error("Failed to copy message:", error);
+    }
+  }
+
   return (
     <div className="chat-msg chat-msg-assistant">
       <div className="chat-bubble chat-bubble-assistant">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+          components={{ pre: CodeBlock }}
+        >
           {text}
         </ReactMarkdown>
+        <div className="chat-bubble-copy-row">
+          <button
+            type="button"
+            className={`chat-bubble-copy-btn ${copied ? "chat-bubble-copy-btn-copied" : ""}`}
+            onClick={handleCopy}
+          >
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
       </div>
+    </div>
+  );
+}
+
+function CodeBlock({ children, className = "", node, ...props }) {
+  const [copied, setCopied] = useState(false);
+  const codeText = extractReactText(children);
+
+  async function handleCopy(event) {
+    event.stopPropagation();
+    try {
+      await copyTextToClipboard(codeText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (error) {
+      console.error("Failed to copy code block:", error);
+    }
+  }
+
+  return (
+    <div className="chat-code-block">
+      <button
+        type="button"
+        className={`chat-code-copy-btn ${copied ? "chat-code-copy-btn-copied" : ""}`}
+        onClick={handleCopy}
+        disabled={!codeText}
+      >
+        {copied ? "已复制" : "复制"}
+      </button>
+      <pre {...props} className={`chat-code-pre ${className}`.trim()}>
+        {children}
+      </pre>
     </div>
   );
 }
@@ -265,4 +324,29 @@ function safeJsonParse(value) {
   } catch (error) {
     return { raw: value };
   }
+}
+
+function extractReactText(value) {
+  if (value === null || value === undefined || typeof value === "boolean") return "";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (Array.isArray(value)) return value.map(extractReactText).join("");
+  if (typeof value === "object" && value.props) return extractReactText(value.props.children);
+  return "";
+}
+
+async function copyTextToClipboard(text) {
+  if (!text) return;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
 }

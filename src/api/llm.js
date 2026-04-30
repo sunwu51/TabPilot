@@ -21,7 +21,7 @@ const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"])
 
 // ==================== Tool Definitions ====================
 
-const TOOLS = [
+export const TOOLS = [
   {
     name: "tab_list",
     description: "Get a snapshot of all currently open browser tabs. Returns each tab's id, url, title, and lastAccessed, plus capturedAt timing fields so you can judge whether the tab state may be stale and refresh it again if needed. Use when the user asks about open tabs, browser context, or page-related questions and you need to identify the right tab first.",
@@ -329,7 +329,7 @@ const TOOLS = [
   },
   {
     name: "tab_get_active",
-    description: "Get a snapshot of the currently focused/active tab. Use when the user says 'this page', 'current page', 'the page I'm looking at', etc. Returns the tab's ID, URL, title, lastAccessed, and capturedAt timing fields so you can then use tab_extract to read its content and judge whether the snapshot may need refreshing.",
+    description: "Get a snapshot of the active tab in the current extension/side-panel window. Use when the user says 'this page', 'current page', 'the page I'm looking at', etc. This does not require Chrome to have operating-system focus. Returns the tab's ID, URL, title, lastAccessed, and capturedAt timing fields so you can then use tab_extract to read its content and judge whether the snapshot may need refreshing.",
     schema: {
       type: "object",
       properties: {},
@@ -344,7 +344,7 @@ const TOOLS = [
       type: "object",
       properties: {
         windowId: { type: "number", description: "Window ID passed to captureVisibleTab (default: the resolved tab's window)" },
-        tabId: { type: "number", description: "Optional tab to capture. When omitted, uses the active tab in the last-focused window. When set, that tab is activated before capture." }
+        tabId: { type: "number", description: "Optional tab to capture. When omitted, uses the active tab in the current extension/side-panel window. When set, that tab is activated before capture." }
       },
       required: []
     }
@@ -470,6 +470,62 @@ const TOOLS = [
       properties: {},
       required: []
     }
+  },
+  {
+    name: "stash_in_browser",
+    description: "Stash information in browser local storage with an optional expiration time. A stash is like a personal memory vault — use it to remember facts, user preferences, context, or notes that should persist across conversations. Stashes are stored per-extension and shared across all tabs. Not related to browser history or browsing records.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "A unique title/key for this stash. Used to look up and manage the stash later." },
+        info: { type: "string", description: "The information content to store in the stash." },
+        expireAt: { type: "number", description: "Expiration timestamp in Unix milliseconds. Use -1 for permanent storage. Defaults to 1 month from now if omitted." }
+      },
+      required: ["title", "info"]
+    }
+  },
+  {
+    name: "unstash_in_browser",
+    description: "Retrieve a previously stashed information entry by its title. Returns the stored info string, or an error if the title is not found or the stash has expired.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "The title/key of the stash to retrieve." }
+      },
+      required: ["title"]
+    }
+  },
+  {
+    name: "list_stashes_in_browser",
+    description: "List all stash titles currently stored in browser local storage. Expired stashes are automatically filtered out. Use this to discover what stashes exist before retrieving them.",
+    schema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: "remove_stash_in_browser",
+    description: "Remove a stash entry by its title. Returns success whether or not the stash existed.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "The title/key of the stash to remove." }
+      },
+      required: ["title"]
+    }
+  },
+  {
+    name: "save_to_file",
+    description: "Save arbitrary string content as a file and trigger a browser download. The file is created as a Blob and downloaded using an anchor element. Use this to export data, save generated text, or create downloadable artifacts for the user.",
+    schema: {
+      type: "object",
+      properties: {
+        fileName: { type: "string", description: "The name of the file to download, including extension (e.g. 'report.md', 'data.json', 'notes.txt')." },
+        content: { type: "string", description: "The full string content to write into the file." }
+      },
+      required: ["fileName", "content"]
+    }
   }
 ];
 
@@ -487,10 +543,10 @@ export function buildMcpToolCallName(serverName, toolName) {
  * @param {Array} [mcpTools] - MCP tools from connected servers [{name, description, inputSchema, _serverUrl, _serverHeaders, _toolCallName}]
  * @param {Object} [options]
  * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
- * @param {boolean} [options.supportsImageInput=true] - Whether the selected model accepts image inputs
+ * @param {boolean} [options.supportsImageInput=false] - Whether the selected model accepts image inputs
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = true } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false } = {}) {
   // Convert MCP tools to our internal format
   const externalTools = mcpTools.map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
@@ -585,6 +641,11 @@ export async function executeTool(name, args, mcpRegistry = []) {
       case "list_scheduled": return _execListScheduled();
       case "cancel_scheduled": return _execCancelScheduled(args);
       case "clear_completed_scheduled": return _execClearCompletedScheduled();
+      case "stash_in_browser": return await _execStashInBrowser(args);
+      case "unstash_in_browser": return await _execUnstashInBrowser(args);
+      case "list_stashes_in_browser": return await _execListStashesInBrowser();
+      case "remove_stash_in_browser": return await _execRemoveStashInBrowser(args);
+      case "save_to_file": return await _execSaveToFile(args);
       default: return { error: `Unknown tool: ${name}` };
     }
   } catch (e) {
@@ -844,7 +905,7 @@ async function _execTabList({ maxSize = -1, briefUrl = false } = {}) {
 async function _resolveControllableTab(tabId, actionLabel = "control") {
   let resolvedTabId = tabId;
   if (resolvedTabId == null) {
-    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const activeTab = await _getActiveTabInCurrentExtensionWindow();
     if (!activeTab?.id) return { error: "No active tab found" };
     resolvedTabId = activeTab.id;
   }
@@ -855,6 +916,24 @@ async function _resolveControllableTab(tabId, actionLabel = "control") {
   }
 
   return { tab };
+}
+
+async function _getActiveTabInCurrentExtensionWindow() {
+  const currentWindow = await _getCurrentExtensionWindow();
+  if (currentWindow?.id != null) {
+    const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
+    if (tab?.id) return tab;
+  }
+
+  return null;
+}
+
+async function _getCurrentExtensionWindow() {
+  try {
+    return await chrome.windows.getCurrent({});
+  } catch (_e) {
+    return null;
+  }
 }
 
 /**
@@ -1824,11 +1903,11 @@ async function _execHistoryRecent({ startTime, endTime, maxResults }) {
 }
 
 /**
- * Get info about the currently active/focused tab.
+ * Get info about the active tab in the current extension window.
  */
 async function _execTabGetActive() {
   const capturedAt = _buildCapturedAt();
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await _getActiveTabInCurrentExtensionWindow();
   if (!tab) return { error: "No active tab found" };
   return {
     capturedAt,
@@ -2529,6 +2608,161 @@ async function _execClearCompletedScheduled() {
   };
 }
 
+const STASH_STORAGE_KEY = "user_stashes";
+const DEFAULT_STASH_EXPIRE_MS = 30 * 24 * 60 * 60 * 1000; // 1 month
+
+async function _getStashes() {
+  const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
+  return result[STASH_STORAGE_KEY] || {};
+}
+
+async function _saveStashes(stashes) {
+  await chrome.storage.local.set({ [STASH_STORAGE_KEY]: stashes });
+}
+
+/**
+ * Stash info to browser local storage with optional expiration.
+ */
+async function _execStashInBrowser({ title, info, expireAt }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+  if (info === undefined || info === null) return { error: "info is required" };
+
+  const stashes = await _getStashes();
+  const now = Date.now();
+  let computedExpireAt;
+  if (expireAt === -1) {
+    computedExpireAt = -1;
+  } else if (typeof expireAt === "number" && expireAt > now) {
+    computedExpireAt = expireAt;
+  } else {
+    computedExpireAt = now + DEFAULT_STASH_EXPIRE_MS;
+  }
+
+  stashes[title] = {
+    info: String(info),
+    expireAt: computedExpireAt,
+    updatedAt: now
+  };
+
+  await _saveStashes(stashes);
+
+  return {
+    success: true,
+    title,
+    expireAt: computedExpireAt,
+    permanent: computedExpireAt === -1
+  };
+}
+
+/**
+ * Get a single stash by title. Filters out expired stashes.
+ */
+async function _execUnstashInBrowser({ title }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+
+  const stashes = await _getStashes();
+  const stash = stashes[title];
+  if (!stash) return { error: `Stash not found: ${title}` };
+
+  const now = Date.now();
+  if (stash.expireAt !== -1 && now > stash.expireAt) {
+    delete stashes[title];
+    await _saveStashes(stashes);
+    return { error: `Stash has expired: ${title}` };
+  }
+
+  return {
+    success: true,
+    title,
+    info: stash.info,
+    expireAt: stash.expireAt,
+    updatedAt: stash.updatedAt
+  };
+}
+
+/**
+ * List all stash titles, excluding expired ones.
+ */
+async function _execListStashesInBrowser() {
+  const stashes = await _getStashes();
+  const now = Date.now();
+  const titles = [];
+  let cleaned = false;
+
+  for (const [title, stash] of Object.entries(stashes)) {
+    if (stash.expireAt !== -1 && now > stash.expireAt) {
+      delete stashes[title];
+      cleaned = true;
+    } else {
+      titles.push(title);
+    }
+  }
+
+  if (cleaned) await _saveStashes(stashes);
+
+  return {
+    success: true,
+    count: titles.length,
+    titles
+  };
+}
+
+/**
+ * Remove a stash by title.
+ */
+async function _execRemoveStashInBrowser({ title }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+
+  const stashes = await _getStashes();
+  if (!stashes[title]) {
+    return { success: true, title, existed: false };
+  }
+
+  delete stashes[title];
+  await _saveStashes(stashes);
+
+  return { success: true, title, removed: true };
+}
+
+/**
+ * Save content as a file and trigger a browser download via an anchor element.
+ */
+async function _execSaveToFile({ fileName, content }) {
+  if (!fileName || typeof fileName !== "string") return { error: "fileName is required and must be a string" };
+  if (content === undefined || content === null) return { error: "content is required" };
+
+  try {
+    const tab = await chrome.tabs.query({ active: true, currentWindow: true });
+    const targetTabId = tab?.[0]?.id;
+    if (!targetTabId) return { error: "No active tab found to trigger download" };
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      world: "MAIN",
+      func: (fn, ct) => {
+        const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fn;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return true;
+      },
+      args: [fileName, String(content)]
+    });
+
+    if (results?.[0]?.result === true) {
+      return { success: true, fileName, size: new TextEncoder().encode(String(content)).length };
+    }
+    return { error: "Failed to trigger download on the page" };
+  } catch (e) {
+    return { error: e.message, hint: "Could not trigger file download" };
+  }
+}
+
 // ==================== Streaming Chat ====================
 
 /**
@@ -2661,9 +2895,12 @@ async function _streamOpenAIAttempt(config, messages, signal, { onText, onDone }
 
     const decoder = new TextDecoder();
     let fullContent = "";
+    const reasoningFields = {};
+    const reasoningDetails = [];
     let toolCallsMap = {};
     let buffer = "";
     let sawToolCallDelta = false;
+    let usage = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2684,12 +2921,21 @@ async function _streamOpenAIAttempt(config, messages, signal, { onText, onDone }
 
         try {
           const json = JSON.parse(data);
+          usage = mergeUsage(usage, extractOpenAIStreamUsage(json));
           const delta = json.choices?.[0]?.delta;
           if (!delta) continue;
 
           if (delta.content) {
             fullContent += delta.content;
             onText?.(delta.content);
+          }
+
+          const reasoningDeltas = extractOpenAIReasoningDeltas(delta);
+          for (const [field, chunk] of Object.entries(reasoningDeltas)) {
+            reasoningFields[field] = (reasoningFields[field] || "") + chunk;
+          }
+          if (Array.isArray(delta.reasoning_details)) {
+            reasoningDetails.push(...delta.reasoning_details);
           }
 
           if (delta.tool_calls) {
@@ -2760,6 +3006,9 @@ async function _streamOpenAIAttempt(config, messages, signal, { onText, onDone }
     onDone?.({
       role: "assistant",
       content: fullContent || null,
+      ...reasoningFields,
+      ...(reasoningDetails.length > 0 ? { reasoning_details: reasoningDetails } : {}),
+      ...(usage ? { usage } : {}),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       _openaiToolCalls: toolCalls.length > 0 ? toolCalls.map(tc => ({
         id: tc.id, type: "function",
@@ -2777,6 +3026,49 @@ async function _streamOpenAIAttempt(config, messages, signal, { onText, onDone }
   } finally {
     timeoutState.cleanup();
   }
+}
+
+function extractOpenAIReasoningDeltas(delta) {
+  if (!delta || typeof delta !== "object") return {};
+
+  const result = {};
+  for (const field of ["reasoning_content", "reasoning", "thinking"]) {
+    const value = extractReasoningText(delta[field]);
+    if (value) result[field] = value;
+  }
+  return result;
+}
+
+function extractReasoningText(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractReasoningText).join("");
+  if (value && typeof value === "object") {
+    return [
+      value.reasoning_content,
+      value.thinking,
+      value.text,
+      value.content
+    ].map(extractReasoningText).join("");
+  }
+  return "";
+}
+
+function extractOpenAIStreamUsage(event) {
+  if (!event || typeof event !== "object") return null;
+  return firstUsageObject(
+    event.usage,
+    event.response?.usage,
+    event.message?.usage,
+    event.choices?.[0]?.usage,
+    event.choices?.[0]?.delta?.usage
+  );
+}
+
+function firstUsageObject(...values) {
+  for (const value of values) {
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  }
+  return null;
 }
 
 // ==================== Anthropic Messages API ====================
@@ -2833,9 +3125,11 @@ async function _streamAnthropicAttempt(config, messages, signal, { onText, onDon
     const decoder = new TextDecoder();
     let fullContent = "";
     let collectedToolUses = [];
-    let currentToolUse = null;
+    const activeContentBlocks = new Map();
+    const rawContentBlocks = [];
     let buffer = "";
     let sawToolUseBlock = false;
+    let usage = {};
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2855,20 +3149,42 @@ async function _streamAnthropicAttempt(config, messages, signal, { onText, onDon
 
         try {
           const json = JSON.parse(data);
+          usage = mergeAnthropicUsage(usage, extractAnthropicStreamUsage(json));
 
-          if (json.type === "content_block_start" && json.content_block?.type === "tool_use") {
-            sawToolUseBlock = true;
-            currentToolUse = { id: json.content_block.id, name: json.content_block.name, inputJson: "" };
-          } else if (json.type === "content_block_delta") {
-            if (json.delta?.type === "text_delta") {
-              fullContent += json.delta.text;
-              onText?.(json.delta.text);
-            } else if (json.delta?.type === "input_json_delta" && currentToolUse) {
-              currentToolUse.inputJson += json.delta.partial_json;
+          if (json.type === "content_block_start") {
+            const index = getAnthropicEventIndex(json);
+            const block = normalizeAnthropicContentBlockStart(json.content_block);
+            if (block) {
+              activeContentBlocks.set(index, block);
+              if (block.type === "tool_use") sawToolUseBlock = true;
+              if (block.type === "text" && block.text) {
+                fullContent += block.text;
+                onText?.(block.text);
+              }
             }
-          } else if (json.type === "content_block_stop" && currentToolUse) {
-            collectedToolUses.push(currentToolUse);
-            currentToolUse = null;
+          } else if (json.type === "content_block_delta") {
+            const index = getAnthropicEventIndex(json);
+            const block = activeContentBlocks.get(index);
+            if (json.delta?.type === "text_delta") {
+              const text = json.delta.text || "";
+              fullContent += text;
+              if (block?.type === "text") block.text += text;
+              onText?.(text);
+            } else if (json.delta?.type === "input_json_delta" && block?.type === "tool_use") {
+              block.inputJson += json.delta.partial_json || "";
+            } else if (json.delta?.type === "thinking_delta" && block?.type === "thinking") {
+              block.thinking += json.delta.thinking || "";
+            } else if (json.delta?.type === "signature_delta" && block?.type === "thinking") {
+              block.signature = (block.signature || "") + (json.delta.signature || "");
+            }
+          } else if (json.type === "content_block_stop") {
+            const index = getAnthropicEventIndex(json);
+            const block = activeContentBlocks.get(index);
+            if (block) {
+              if (block.type === "tool_use") collectedToolUses.push(block);
+              rawContentBlocks.push(block);
+              activeContentBlocks.delete(index);
+            }
           }
         } catch (error) {
           throw createLlmStreamError({
@@ -2885,13 +3201,17 @@ async function _streamAnthropicAttempt(config, messages, signal, { onText, onDon
     }
 
     const parseFailures = [];
+    const parsedToolUsesByBlock = new Map();
     const toolCalls = collectedToolUses
       .map((tu, index) => {
         try {
+          const id = tu.id || `tooluse_${index}_${Date.now()}`;
+          const input = JSON.parse(tu.inputJson || "{}");
+          parsedToolUsesByBlock.set(tu, { id, name: tu.name, input });
           return {
-            id: tu.id || `tooluse_${index}_${Date.now()}`,
+            id,
             name: tu.name,
-            args: JSON.parse(tu.inputJson || "{}")
+            args: input
           };
         } catch (error) {
           parseFailures.push({ name: tu.name, inputJson: tu.inputJson, error: error.message });
@@ -2915,15 +3235,19 @@ async function _streamAnthropicAttempt(config, messages, signal, { onText, onDon
       });
     }
 
-    const contentBlocks = [];
-    if (fullContent) contentBlocks.push({ type: "text", text: fullContent });
-    for (const tc of toolCalls) {
-      contentBlocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.args });
+    const contentBlocks = rawContentBlocks
+      .map(block => buildAnthropicContentBlock(block, parsedToolUsesByBlock))
+      .filter(Boolean);
+    if (fullContent && !contentBlocks.some(block => block.type === "text")) {
+      contentBlocks.push({ type: "text", text: fullContent });
     }
+    const thinkingBlocks = contentBlocks.filter(isAnthropicThinkingContentBlock);
 
     onDone?.({
       role: "assistant",
       content: contentBlocks.length > 0 ? contentBlocks : null,
+      ...(thinkingBlocks.length > 0 ? { thinking_blocks: thinkingBlocks } : {}),
+      ...(Object.keys(usage).length > 0 ? { usage } : {}),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined
     });
   } catch (error) {
@@ -2937,6 +3261,100 @@ async function _streamAnthropicAttempt(config, messages, signal, { onText, onDon
   } finally {
     timeoutState.cleanup();
   }
+}
+
+function getAnthropicEventIndex(event) {
+  return Number.isInteger(event?.index) ? event.index : 0;
+}
+
+function normalizeAnthropicContentBlockStart(contentBlock) {
+  if (!contentBlock || typeof contentBlock !== "object") return null;
+
+  if (contentBlock.type === "text") {
+    return { type: "text", text: contentBlock.text || "" };
+  }
+
+  if (contentBlock.type === "tool_use") {
+    return {
+      type: "tool_use",
+      id: contentBlock.id,
+      name: contentBlock.name,
+      inputJson: ""
+    };
+  }
+
+  if (contentBlock.type === "thinking") {
+    return {
+      type: "thinking",
+      thinking: contentBlock.thinking || "",
+      ...(contentBlock.signature ? { signature: contentBlock.signature } : {})
+    };
+  }
+
+  if (contentBlock.type === "redacted_thinking") {
+    return {
+      type: "redacted_thinking",
+      data: contentBlock.data || ""
+    };
+  }
+
+  return { ...contentBlock };
+}
+
+function buildAnthropicContentBlock(block, parsedToolUsesByBlock) {
+  if (!block || typeof block !== "object") return null;
+
+  if (block.type === "text") {
+    return block.text ? { type: "text", text: block.text } : null;
+  }
+
+  if (block.type === "tool_use") {
+    const parsed = parsedToolUsesByBlock.get(block);
+    if (!parsed?.name) return null;
+    return {
+      type: "tool_use",
+      id: parsed.id,
+      name: parsed.name,
+      input: parsed.input
+    };
+  }
+
+  if (block.type === "thinking") {
+    const thinking = block.thinking || "";
+    const signature = block.signature || "";
+    if (!thinking && !signature) return null;
+    return {
+      type: "thinking",
+      thinking,
+      ...(signature ? { signature } : {})
+    };
+  }
+
+  if (block.type === "redacted_thinking") {
+    return block.data ? { type: "redacted_thinking", data: block.data } : null;
+  }
+
+  return block;
+}
+
+function isAnthropicThinkingContentBlock(block) {
+  return block?.type === "thinking" || block?.type === "redacted_thinking";
+}
+
+function extractAnthropicStreamUsage(event) {
+  if (!event || typeof event !== "object") return null;
+  if (event.usage && typeof event.usage === "object") return event.usage;
+  if (event.message?.usage && typeof event.message.usage === "object") return event.message.usage;
+  return null;
+}
+
+function mergeAnthropicUsage(current = {}, next) {
+  return mergeUsage(current, next);
+}
+
+function mergeUsage(current = {}, next) {
+  if (!next || typeof next !== "object") return current || null;
+  return { ...(current || {}), ...next };
 }
 
 function getFirstPacketTimeoutMs(config) {

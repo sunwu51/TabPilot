@@ -198,6 +198,32 @@
   text-align: center;
 }
 
+.system-prompt-dialog {
+  width: min(560px, 82vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.system-prompt-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 50vh;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.system-prompt-textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
 .schedule-job-list {
   overflow-y: auto;
   padding-right: 4px;
@@ -294,6 +320,26 @@
   gap: 8px;
 }
 
+.chat-jump-to-bottom {
+  position: sticky;
+  bottom: 8px;
+  align-self: center;
+  z-index: 2;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+}
+
+.chat-jump-to-bottom:hover {
+  background: #f9fafb;
+}
+
 .chat-input-area {
   flex-shrink: 0;
   border-top: 1px solid #e5e7eb;
@@ -316,6 +362,35 @@
   line-height: 1.5;
   font-family: inherit;
   box-sizing: border-box;
+}
+
+.chat-input-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.3;
+  min-height: 15px;
+}
+
+.chat-input-status-line span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-input-status-model {
+  flex: 1 1 auto;
+}
+
+.chat-input-status-context {
+  flex: 0 0 auto;
+  max-width: 45%;
+  text-align: right;
 }
 
 .chat-input-actions {
@@ -466,12 +541,13 @@
 }
 
 .chat-bubble-assistant pre {
-  background: #1e293b;
-  color: #e2e8f0;
-  padding: 10px 12px;
+  background: #282c34;
+  color: #abb2bf;
+  border: 1px solid #3e4451;
+  padding: 32px 12px 10px;
   border-radius: 6px;
   overflow-x: auto;
-  margin: 8px 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -481,6 +557,79 @@
   padding: 0;
   color: inherit;
   font-size: inherit;
+}
+
+.chat-code-block {
+  position: relative;
+  margin: 8px 0;
+}
+
+.chat-code-copy-btn {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 1;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #4b5563;
+  border-radius: 4px;
+  background: #374151;
+  color: #d1d5db;
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.chat-code-copy-btn:hover {
+  background: #4b5563;
+  color: #ffffff;
+}
+
+.chat-code-copy-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.chat-code-copy-btn-copied,
+.chat-code-copy-btn-copied:hover {
+  border-color: #16a34a;
+  background: #166534;
+  color: #dcfce7;
+}
+
+/* ========== Bubble-level copy button ========== */
+.chat-bubble-copy-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.chat-bubble-copy-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+
+.chat-bubble-copy-btn:hover {
+  border-color: #9ca3af;
+  color: #374151;
+  background: #f3f4f6;
+}
+
+.chat-bubble-copy-btn-copied,
+.chat-bubble-copy-btn-copied:hover {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #16a34a;
 }
 
 .chat-bubble-assistant table {
@@ -512,7 +661,7 @@
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -524,6 +673,7 @@
   padding: 5px 8px;
   color: #6b7280;
   user-select: none;
+  cursor: pointer;
 }
 
 .tool-result-arrow {
@@ -542,12 +692,35 @@
   border-top: 1px solid #e5e7eb;
   background: #f9fafb;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 11px;
+  line-height: 1.45;
   color: #374151;
   max-height: 200px;
-  overflow-y: auto;
+  overflow: auto;
   margin: 0;
+}
+
+.tool-json-content {
+  max-height: 320px;
+  white-space: pre;
+  word-break: normal;
+  tab-size: 2;
+}
+
+.tool-merged-section-label {
+  padding: 6px 8px 2px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tool-merged-section-label + .tool-result-content {
+  border-top: 0;
+  padding-top: 2px;
 }
 
 .tool-result-error {
@@ -604,3 +777,25 @@
 }
 
 /* MCP styles removed — now using camel-ui Dialog/Button/Input/Card */
+
+/* ========== Consecutive tool call group ========== */
+.tool-group-msg {
+  cursor: default;
+}
+
+.tool-group-msg > .tool-result-header {
+  cursor: pointer;
+}
+
+.tool-group-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.tool-group-content .tool-result-msg {
+  margin: 0;
+}

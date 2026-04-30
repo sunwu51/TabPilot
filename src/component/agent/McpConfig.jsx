@@ -2,7 +2,7 @@
 import { Button, Card, Input, Dialog, Checkbox } from "@sunwu51/camel-ui";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { connectMcpServer } from "../../api/mcp";
-import { BUILTIN_TOOL_COUNT, buildMcpToolCallName } from "../../api/llm";
+import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
 import toast from "react-hot-toast";
 
 const MCP_WARNING_LIMIT = 120 - BUILTIN_TOOL_COUNT;
@@ -66,13 +66,25 @@ export default function McpConfig({ onToolsChanged }) {
     });
   }
 
+  function isNestingTool(toolName) {
+    // Exact match with a built-in tool name
+    if (BUILTIN_TOOL_NAMES.includes(toolName)) return true;
+    // Suffix match: check if tool name ends with "_builtinToolName"
+    for (const builtinName of BUILTIN_TOOL_NAMES) {
+      if (toolName.endsWith("_" + builtinName)) return true;
+    }
+    return false;
+  }
+
   function buildToolSettings(existingSettings = {}, tools = []) {
     const next = {};
     for (const tool of tools) {
       const prev = existingSettings[tool.name] || {};
+      const isNesting = isNestingTool(tool.name);
       next[tool.name] = {
-        enabled: prev.enabled !== false,
-        dangerous: !!prev.dangerous
+        enabled: isNesting ? (prev.enabled === true) : (prev.enabled !== false),
+        dangerous: !!prev.dangerous,
+        nesting: isNesting
       };
     }
     return next;
@@ -313,15 +325,22 @@ export default function McpConfig({ onToolsChanged }) {
             </div>
             {expandedServers[s.id] && s.tools?.length > 0 && (
               <div className="mt-2 border-t border-gray-100 pt-2 flex flex-col gap-2 min-w-0">
-                {s.tools.map(tool => {
+                {[...s.tools].sort((a, b) => {
+                  const aNest = !!getToolSetting(s, a.name).nesting;
+                  const bNest = !!getToolSetting(s, b.name).nesting;
+                  return aNest - bNest;
+                }).map(tool => {
                   const settings = getToolSetting(s, tool.name);
                   return (
-                    <div key={tool.name} className="rounded border border-gray-100 p-2 min-w-0 overflow-hidden">
+                    <div key={tool.name} className={"rounded border p-2 min-w-0 overflow-hidden" + (settings.nesting ? " border-dashed opacity-70" : " border-gray-100")}>
                       <div
                         className="text-xs font-medium break-all"
                         style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
                       >
                         {tool.name}
+                        {settings.nesting && (
+                          <span className="text-xs text-amber-600 ml-1">(与内置工具重复)</span>
+                        )}
                       </div>
                       <div
                         className="text-xs text-gray-400 mt-1 break-all whitespace-normal"
