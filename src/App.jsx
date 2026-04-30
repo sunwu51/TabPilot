@@ -1,10 +1,10 @@
 import { Toaster } from "react-hot-toast";
 import { Tabs, TabsItem } from "@sunwu51/camel-ui";
-import Group from "./component/Group";
-import Search from "./component/Search";
-import Workspace from "./component/Workspace";
+import Group from "./component/tabManager/Group";
+import Search from "./component/tabManager/Search";
+import Workspace from "./component/tabManager/Workspace";
 import AgentPanel from "./component/agent/AgentPanel";
-import BridgePanel from "./component/BridgePanel";
+import BridgePanel from "./component/bridge/BridgePanel";
 import SettingsDialog from "./component/SettingsDialog";
 
 /**
