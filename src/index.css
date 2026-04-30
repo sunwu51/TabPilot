@@ -47,8 +47,9 @@ html, body, #root {
 /* Compact tabs to avoid overlap with settings button */
 .tabs-button {
   min-width: auto !important;
-  padding: 4px 10px !important;
+  padding: 4px 12px !important;
   font-size: 12px !important;
+  margin: 0 2px !important;
 }
 
 /* Unify label styles inside settings dialog */

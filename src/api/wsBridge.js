@@ -18,6 +18,14 @@ let executionQueue = Promise.resolve();
 let toolCount = 0;
 let connectError = null;
 
+function logWsBridge(message, data) {
+  if (data === undefined) {
+    console.debug(`[wsBridge] ${message}`);
+  } else {
+    console.debug(`[wsBridge] ${message}`, data);
+  }
+}
+
 /**
  * Connect to a WS server. Saves the URL to storage.
  * @param {string} url
@@ -31,6 +39,7 @@ export async function connectWsBridge(url) {
   connectError = null;
   await chrome.storage.local.set({ [WS_STORAGE_KEY]: url });
   running = true;
+  logWsBridge("connect requested", { url });
   connect(url);
   notifyStatus({ connected: false, url, tools: 0 });
 }
@@ -40,6 +49,7 @@ export async function connectWsBridge(url) {
  */
 export function disconnectWsBridge() {
   running = false;
+  logWsBridge("disconnect requested", { url: currentUrl });
   disconnect();
   notifyStatus({ connected: false, url: "", tools: 0 });
 }
@@ -65,6 +75,12 @@ function notifyToolCall(record) {
 }
 
 function disconnect() {
+  logWsBridge("disconnecting current socket/timers", {
+    hasSocket: Boolean(socket),
+    socketReadyState: socket?.readyState,
+    hasReconnectTimer: Boolean(reconnectTimer),
+    hasPingTimer: Boolean(pingTimer)
+  });
   clearTimeout(reconnectTimer);
   clearInterval(pingTimer);
   reconnectTimer = null;
@@ -79,20 +95,32 @@ function disconnect() {
 }
 
 function connect(url) {
+  logWsBridge("connect attempt starting", {
+    url,
+    previousSocketReadyState: socket?.readyState,
+    reconnectDelay
+  });
   disconnect();
   toolCount = 0;
   connectError = null;
 
   try {
     socket = new WebSocket(url);
+    logWsBridge("WebSocket object created", { url, readyState: socket.readyState });
   } catch (e) {
     connectError = e.message;
+    console.warn("[wsBridge] WebSocket constructor failed", { url, error: e });
     notifyStatus({ connected: false, url: currentUrl, tools: 0, error: e.message });
     scheduleReconnect();
     return;
   }
 
-  socket.onopen = () => {
+  socket.onopen = (event) => {
+    logWsBridge("WebSocket open", {
+      url,
+      readyState: socket?.readyState,
+      eventType: event?.type
+    });
     reconnectDelay = RECONNECT_BASE_MS;
     executionQueue = Promise.resolve();
     connectError = null;
@@ -113,14 +141,32 @@ function connect(url) {
     }
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event) => {
+    console.warn("[wsBridge] WebSocket closed", {
+      url,
+      code: event?.code,
+      reason: event?.reason,
+      wasClean: event?.wasClean,
+      running,
+      reconnectDelay,
+      currentUrl,
+      readyState: socket?.readyState,
+      connectError
+    });
     socket = null;
     toolCount = 0;
     notifyStatus({ connected: false, url: currentUrl, tools: 0, error: connectError });
     if (running) scheduleReconnect();
   };
 
-  socket.onerror = () => {
+  socket.onerror = (event) => {
+    connectError = "WebSocket error";
+    console.warn("[wsBridge] WebSocket error", {
+      url,
+      readyState: socket?.readyState,
+      eventType: event?.type,
+      event
+    });
     socket?.close();
   };
 }
@@ -128,9 +174,20 @@ function connect(url) {
 function scheduleReconnect() {
   clearTimeout(reconnectTimer);
   if (!running) return;
+  const delayMs = reconnectDelay;
+  logWsBridge("scheduling reconnect", {
+    url: currentUrl,
+    delayMs,
+    nextDelayMs: Math.min(reconnectDelay * 2, RECONNECT_MAX_MS)
+  });
   reconnectTimer = setTimeout(() => {
+    logWsBridge("reconnect timer fired", {
+      url: currentUrl,
+      delayMs,
+      running
+    });
     if (currentUrl) connect(currentUrl);
-  }, reconnectDelay);
+  }, delayMs);
   reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
 }
 
