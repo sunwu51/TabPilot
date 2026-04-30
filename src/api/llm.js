@@ -470,6 +470,62 @@ export const TOOLS = [
       properties: {},
       required: []
     }
+  },
+  {
+    name: "stash_in_browser",
+    description: "Stash information in browser local storage with an optional expiration time. A stash is like a personal memory vault — use it to remember facts, user preferences, context, or notes that should persist across conversations. Stashes are stored per-extension and shared across all tabs. Not related to browser history or browsing records.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "A unique title/key for this stash. Used to look up and manage the stash later." },
+        info: { type: "string", description: "The information content to store in the stash." },
+        expireAt: { type: "number", description: "Expiration timestamp in Unix milliseconds. Use -1 for permanent storage. Defaults to 1 month from now if omitted." }
+      },
+      required: ["title", "info"]
+    }
+  },
+  {
+    name: "unstash_in_browser",
+    description: "Retrieve a previously stashed information entry by its title. Returns the stored info string, or an error if the title is not found or the stash has expired.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "The title/key of the stash to retrieve." }
+      },
+      required: ["title"]
+    }
+  },
+  {
+    name: "list_stashes_in_browser",
+    description: "List all stash titles currently stored in browser local storage. Expired stashes are automatically filtered out. Use this to discover what stashes exist before retrieving them.",
+    schema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: "remove_stash_in_browser",
+    description: "Remove a stash entry by its title. Returns success whether or not the stash existed.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "The title/key of the stash to remove." }
+      },
+      required: ["title"]
+    }
+  },
+  {
+    name: "save_to_file",
+    description: "Save arbitrary string content as a file and trigger a browser download. The file is created as a Blob and downloaded using an anchor element. Use this to export data, save generated text, or create downloadable artifacts for the user.",
+    schema: {
+      type: "object",
+      properties: {
+        fileName: { type: "string", description: "The name of the file to download, including extension (e.g. 'report.md', 'data.json', 'notes.txt')." },
+        content: { type: "string", description: "The full string content to write into the file." }
+      },
+      required: ["fileName", "content"]
+    }
   }
 ];
 
@@ -585,6 +641,11 @@ export async function executeTool(name, args, mcpRegistry = []) {
       case "list_scheduled": return _execListScheduled();
       case "cancel_scheduled": return _execCancelScheduled(args);
       case "clear_completed_scheduled": return _execClearCompletedScheduled();
+      case "stash_in_browser": return await _execStashInBrowser(args);
+      case "unstash_in_browser": return await _execUnstashInBrowser(args);
+      case "list_stashes_in_browser": return await _execListStashesInBrowser();
+      case "remove_stash_in_browser": return await _execRemoveStashInBrowser(args);
+      case "save_to_file": return await _execSaveToFile(args);
       default: return { error: `Unknown tool: ${name}` };
     }
   } catch (e) {
@@ -2545,6 +2606,161 @@ async function _execClearCompletedScheduled() {
     removedCount: completedJobs.length,
     removedIds: completedJobs.map(job => job.id)
   };
+}
+
+const STASH_STORAGE_KEY = "user_stashes";
+const DEFAULT_STASH_EXPIRE_MS = 30 * 24 * 60 * 60 * 1000; // 1 month
+
+async function _getStashes() {
+  const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
+  return result[STASH_STORAGE_KEY] || {};
+}
+
+async function _saveStashes(stashes) {
+  await chrome.storage.local.set({ [STASH_STORAGE_KEY]: stashes });
+}
+
+/**
+ * Stash info to browser local storage with optional expiration.
+ */
+async function _execStashInBrowser({ title, info, expireAt }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+  if (info === undefined || info === null) return { error: "info is required" };
+
+  const stashes = await _getStashes();
+  const now = Date.now();
+  let computedExpireAt;
+  if (expireAt === -1) {
+    computedExpireAt = -1;
+  } else if (typeof expireAt === "number" && expireAt > now) {
+    computedExpireAt = expireAt;
+  } else {
+    computedExpireAt = now + DEFAULT_STASH_EXPIRE_MS;
+  }
+
+  stashes[title] = {
+    info: String(info),
+    expireAt: computedExpireAt,
+    updatedAt: now
+  };
+
+  await _saveStashes(stashes);
+
+  return {
+    success: true,
+    title,
+    expireAt: computedExpireAt,
+    permanent: computedExpireAt === -1
+  };
+}
+
+/**
+ * Get a single stash by title. Filters out expired stashes.
+ */
+async function _execUnstashInBrowser({ title }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+
+  const stashes = await _getStashes();
+  const stash = stashes[title];
+  if (!stash) return { error: `Stash not found: ${title}` };
+
+  const now = Date.now();
+  if (stash.expireAt !== -1 && now > stash.expireAt) {
+    delete stashes[title];
+    await _saveStashes(stashes);
+    return { error: `Stash has expired: ${title}` };
+  }
+
+  return {
+    success: true,
+    title,
+    info: stash.info,
+    expireAt: stash.expireAt,
+    updatedAt: stash.updatedAt
+  };
+}
+
+/**
+ * List all stash titles, excluding expired ones.
+ */
+async function _execListStashesInBrowser() {
+  const stashes = await _getStashes();
+  const now = Date.now();
+  const titles = [];
+  let cleaned = false;
+
+  for (const [title, stash] of Object.entries(stashes)) {
+    if (stash.expireAt !== -1 && now > stash.expireAt) {
+      delete stashes[title];
+      cleaned = true;
+    } else {
+      titles.push(title);
+    }
+  }
+
+  if (cleaned) await _saveStashes(stashes);
+
+  return {
+    success: true,
+    count: titles.length,
+    titles
+  };
+}
+
+/**
+ * Remove a stash by title.
+ */
+async function _execRemoveStashInBrowser({ title }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+
+  const stashes = await _getStashes();
+  if (!stashes[title]) {
+    return { success: true, title, existed: false };
+  }
+
+  delete stashes[title];
+  await _saveStashes(stashes);
+
+  return { success: true, title, removed: true };
+}
+
+/**
+ * Save content as a file and trigger a browser download via an anchor element.
+ */
+async function _execSaveToFile({ fileName, content }) {
+  if (!fileName || typeof fileName !== "string") return { error: "fileName is required and must be a string" };
+  if (content === undefined || content === null) return { error: "content is required" };
+
+  try {
+    const tab = await chrome.tabs.query({ active: true, currentWindow: true });
+    const targetTabId = tab?.[0]?.id;
+    if (!targetTabId) return { error: "No active tab found to trigger download" };
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      world: "MAIN",
+      func: (fn, ct) => {
+        const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fn;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return true;
+      },
+      args: [fileName, String(content)]
+    });
+
+    if (results?.[0]?.result === true) {
+      return { success: true, fileName, size: new TextEncoder().encode(String(content)).length };
+    }
+    return { error: "Failed to trigger download on the page" };
+  } catch (e) {
+    return { error: e.message, hint: "Could not trigger file download" };
+  }
 }
 
 // ==================== Streaming Chat ====================

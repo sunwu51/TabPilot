@@ -120,6 +120,19 @@ export default function ChatMessage({ msg, messageIndex, onRewindToUserMessage }
 
 /** Markdown-rendered assistant text bubble */
 function AssistantTextBubble({ text }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(event) {
+    event.stopPropagation();
+    try {
+      await copyTextToClipboard(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch (error) {
+      console.error("Failed to copy message:", error);
+    }
+  }
+
   return (
     <div className="chat-msg chat-msg-assistant">
       <div className="chat-bubble chat-bubble-assistant">
@@ -130,6 +143,15 @@ function AssistantTextBubble({ text }) {
         >
           {text}
         </ReactMarkdown>
+        <div className="chat-bubble-copy-row">
+          <button
+            type="button"
+            className={`chat-bubble-copy-btn ${copied ? "chat-bubble-copy-btn-copied" : ""}`}
+            onClick={handleCopy}
+          >
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
       </div>
     </div>
   );

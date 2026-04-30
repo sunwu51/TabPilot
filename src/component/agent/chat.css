@@ -598,6 +598,40 @@
   color: #dcfce7;
 }
 
+/* ========== Bubble-level copy button ========== */
+.chat-bubble-copy-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.chat-bubble-copy-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  line-height: 1.4;
+}
+
+.chat-bubble-copy-btn:hover {
+  border-color: #9ca3af;
+  color: #374151;
+  background: #f3f4f6;
+}
+
+.chat-bubble-copy-btn-copied,
+.chat-bubble-copy-btn-copied:hover {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
 .chat-bubble-assistant table {
   border-collapse: collapse;
   margin: 8px 0;
