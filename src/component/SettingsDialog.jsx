@@ -16,7 +16,9 @@ const DEFAULT_SETTINGS = {
   },
   suspendTimeout: 0,
   mcpToolTimeoutSeconds: 60,
-  reuse: false
+  reuse: false,
+  extractTextLimit: 8000,
+  bridgeEnabled: false
 };
 
 /**
@@ -42,6 +44,8 @@ function SettingsDialogBody() {
   const [suspendTimeout, setSuspendTimeout] = useState(DEFAULT_SETTINGS.suspendTimeout);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
+  const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
+  const [bridgeEnabled, setBridgeEnabled] = useState(DEFAULT_SETTINGS.bridgeEnabled);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -54,6 +58,12 @@ function SettingsDialogBody() {
     { label: "1 小时", value: 60 },
     { label: "2 小时", value: 120 },
     { label: "1 天", value: 1440 }
+  ];
+  const extractTextLimitOptions = [
+    { label: "8k", value: 8000 },
+    { label: "16k", value: 16000 },
+    { label: "32k", value: 32000 },
+    { label: "128k", value: 128000 }
   ];
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
 
@@ -75,6 +85,8 @@ function SettingsDialogBody() {
       setSuspendTimeout(Number(res.suspendTimeout) || 0);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
+      setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
+      setBridgeEnabled(!!res.bridgeEnabled);
 
       const policies = await getReuseDomainPolicies();
       setReusePolicyCount(Object.keys(policies || {}).length);
@@ -103,7 +115,9 @@ function SettingsDialogBody() {
         },
         suspendTimeout,
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
-        reuse
+        reuse,
+        extractTextLimit,
+        bridgeEnabled
       });
       toast.success("设置已保存");
       closeDialog();
@@ -128,6 +142,8 @@ function SettingsDialogBody() {
   return (
     <div ref={rootRef} key={formKey} className="settings-dialog-body">
       <div className="settings-dialog-scroll">
+      <div className="settings-card">
+        <div className="settings-card-title">LLM 配置</div>
       <Select
         label="API 类型"
         items={["OpenAI 兼容", "Anthropic"]}
@@ -234,6 +250,18 @@ function SettingsDialogBody() {
         }}
         placeholder="60"
       />
+      </div>
+      <div className="settings-card">
+        <div className="settings-card-title">标签管理</div>
+      <Select
+        label="页面内容读取的最大长度"
+        items={extractTextLimitOptions.map((item) => item.label)}
+        defaultIndex={Math.max(0, extractTextLimitOptions.findIndex((item) => item.value === extractTextLimit))}
+        onSelectedItemChange={(changes) => {
+          const selected = extractTextLimitOptions.find((item) => item.label === changes.selectedItem);
+          setExtractTextLimit(selected ? selected.value : DEFAULT_SETTINGS.extractTextLimit);
+        }}
+      />
       <Select
         label="自动释放长期不用标签的内存"
         items={suspendOptions.map((item) => item.label)}
@@ -255,8 +283,17 @@ function SettingsDialogBody() {
           isDisabled={reusePolicyCount === 0}
           onPress={handleClearReusePolicies}
         >
-          清空域名复用记忆
+         清空域名复用记忆
         </Button>
+      </div>
+      </div>
+      <div className="settings-card">
+        <div className="settings-card-title">工具透出</div>
+      <div className="mt-2">
+        <Checkbox isSelected={bridgeEnabled} onChange={setBridgeEnabled}>
+          <span className="text-sm">开启工具透出</span>
+        </Checkbox>
+      </div>
       </div>
       </div>
       <div className="settings-dialog-actions">

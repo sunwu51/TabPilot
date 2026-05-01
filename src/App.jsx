@@ -1,4 +1,5 @@
 import { Toaster } from "react-hot-toast";
+import { useState, useEffect, useRef } from "react";
 import { Tabs, TabsItem } from "@sunwu51/camel-ui";
 import Group from "./component/tabManager/Group";
 import Search from "./component/tabManager/Search";
@@ -14,6 +15,47 @@ import SettingsDialog from "./component/SettingsDialog";
  * Settings button floats at top-right, visible across all tabs.
  */
 function App() {
+  const [bridgeEnabled, setBridgeEnabled] = useState(false);
+  const bridgeEnabledRef = useRef(false);
+
+  useEffect(() => {
+    chrome.storage.local.get({ bridgeEnabled: false }, (res) => {
+      setBridgeEnabled(!!res.bridgeEnabled);
+      bridgeEnabledRef.current = !!res.bridgeEnabled;
+    });
+    const handleChange = (changes) => {
+      if (changes.bridgeEnabled) {
+        const next = !!changes.bridgeEnabled.newValue;
+        setBridgeEnabled(next);
+        // 关闭工具透出时断开 WebSocket
+        if (bridgeEnabledRef.current && !next) {
+          chrome.runtime.sendMessage({ type: "wsbridge", action: "disconnect" });
+        }
+        bridgeEnabledRef.current = next;
+      }
+    };
+    chrome.storage.onChanged.addListener(handleChange);
+    return () => chrome.storage.onChanged.removeListener(handleChange);
+  }, []);
+
+  const tabs = [
+    <TabsItem key="tab-mgr" title="标签管理">
+      <div className="p-1 relative flex flex-col gap-2">
+        <Search />
+        <Group />
+        <Workspace />
+      </div>
+    </TabsItem>,
+    <TabsItem key="agent" title="小助手">
+      <AgentPanel />
+    </TabsItem>,
+    bridgeEnabled ? (
+      <TabsItem key="bridge" title="工具透出">
+        <BridgePanel />
+      </TabsItem>
+    ) : null,
+  ].filter(Boolean);
+
   return (
     <div className="app-root">
       <div>
@@ -23,19 +65,7 @@ function App() {
         <SettingsDialog />
       </div>
       <Tabs defaultIndex={0} aria-label="main tabs">
-        <TabsItem title="标签管理">
-          <div className="p-1 relative flex flex-col gap-2">
-            <Search />
-            <Group />
-            <Workspace />
-          </div>
-        </TabsItem>
-        <TabsItem title="小助手">
-          <AgentPanel />
-        </TabsItem>
-        <TabsItem title="工具透出">
-          <BridgePanel />
-        </TabsItem>
+        {tabs}
       </Tabs>
     </div>
   );
