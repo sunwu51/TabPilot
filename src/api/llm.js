@@ -1372,9 +1372,11 @@ async function _execTabExtract({ tabId }) {
   const resolved = await _resolveControllableTab(tabId, "read");
   if (resolved.error) return { error: resolved.error };
   try {
+    const { extractTextLimit = 8000 } = await chrome.storage.local.get({ extractTextLimit: 8000 });
+    const limit = Number(extractTextLimit) || 8000;
     const results = await chrome.scripting.executeScript({
       target: { tabId: resolved.tab.id },
-      func: () => {
+      func: (maxLen) => {
         const textSource =
           document.body?.innerText ||
           document.documentElement?.innerText ||
@@ -1384,9 +1386,10 @@ async function _execTabExtract({ tabId }) {
         return {
           url: document.URL,
           title: document.title,
-          content: String(textSource).substring(0, 8000)
+          content: String(textSource).substring(0, maxLen)
         };
-      }
+      },
+      args: [limit]
     });
 
     const data = results?.[0]?.result;

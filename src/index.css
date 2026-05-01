@@ -258,9 +258,48 @@ html, body, #root {
   font-size: 13px;
 }
 
+.bridge-mcp-link {
+  color: var(--w-blue);
+  text-decoration: underline;
+}
+.bridge-mcp-link:hover {
+  color: var(--w-blue-dark);
+}
+
 .bridge-record-duration {
   margin-left: auto;
   font-size: 11px;
   color: #9ca3af;
   flex-shrink: 0;
+}
+
+/* Override camel-ui scrollbar: make horizontal same thickness as vertical */
+::-webkit-scrollbar {
+  height: 0.5rem;
+}
+
+.settings-intro {
+  font-size: 13px;
+  color: #6b7280;
+  text-align: center;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 12px;
+}
+
+.settings-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
 }

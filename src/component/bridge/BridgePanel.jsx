@@ -86,6 +86,7 @@ export default function BridgePanel() {
         <div className="bridge-url-wrap">
           <Input
             label=""
+            aria-label="WebSocket 服务器地址"
             inputClassName="!min-h-8 !text-sm"
             defaultValue={url}
             onChange={setUrl}
@@ -107,7 +108,20 @@ export default function BridgePanel() {
 
       <div className="bridge-records">
         {records.length === 0 ? (
-          <div className="bridge-records-empty">暂无调用记录</div>
+          <div className="bridge-records-empty">
+            <span>
+              该功能是将浏览器操作函数作为 MCP 能力透出给其他 agent（如 Claude Code）进行使用，需配合{" "}
+              <a
+                href="https://github.com/sunwu51/mcp-center"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="bridge-mcp-link"
+              >
+                mcp-center
+              </a>
+              {" "}项目使用。
+            </span>
+          </div>
         ) : (
           records.slice().reverse().map((rec, i) => (
             <BridgeRecord key={rec.time + "-" + i} record={rec} />
@@ -122,6 +136,7 @@ function BridgeRecord({ record }) {
   const { time, toolName, args, result, isError, duration } = record;
   const [expanded, setExpanded] = useState(false);
   const timeStr = new Date(time).toLocaleTimeString("zh-CN", { hour12: false });
+  const dateStr = new Date(time).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 
   const detail = formatToolDetail(args);
   const resultPreview = typeof result === "string" ? result : JSON.stringify(result);
@@ -137,7 +152,7 @@ function BridgeRecord({ record }) {
       <div className="tool-result-header">
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
         <span className="tool-result-label">
-          {isError ? "❌" : "✅"} {timeStr} · 🔧 {toolName}({detail})
+          {isError ? "❌" : "✅"} {dateStr} {timeStr} · 🔧 {toolName}({detail})
         </span>
         <span className="bridge-record-duration">{duration}ms</span>
       </div>

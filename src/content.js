@@ -2,7 +2,18 @@
 
 const TEXT_LIMIT = 500;
 const HTML_LIMIT = 4000;
+let extractTextLimit = 8000;
 const HIGHLIGHT_STYLE_ID = "__tab_manager_highlight_style__";
+
+chrome.storage.local.get({ extractTextLimit: 8000 }, (res) => {
+  extractTextLimit = Number(res.extractTextLimit) || 8000;
+});
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.extractTextLimit) {
+    extractTextLimit = Number(changes.extractTextLimit.newValue) || 8000;
+  }
+});
+
 const HIGHLIGHT_OVERLAY_ID = "__tab_manager_highlight_overlay__";
 const REUSE_PROMPT_STYLE_ID = "__tab_manager_reuse_prompt_style__";
 const REUSE_PROMPT_ID = "__tab_manager_reuse_prompt__";
@@ -605,7 +616,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({
       url: document.URL,
       title: document.title,
-      content: document.body.innerText.substring(0, 8000)
+      content: document.body.innerText.substring(0, extractTextLimit)
     });
     return false;
   }
