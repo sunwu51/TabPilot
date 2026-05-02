@@ -1,5 +1,6 @@
 /* global chrome */
 import { TOOLS, executeTool } from "./llm";
+import { DEFAULT_WS_BRIDGE_STATUS, WS_BRIDGE_STATUS_STORAGE_KEY } from "./wsBridgeShared";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -8,17 +9,6 @@ const WS_STORAGE_KEY = "wsServerUrl";
 const BRIDGE_ENABLED_STORAGE_KEY = "bridgeEnabled";
 const WS_BRIDGE_STALE_HEARTBEAT_MS = 90000;
 const WS_BRIDGE_CONNECTING_GRACE_MS = 45000;
-
-export const WS_BRIDGE_STATUS_STORAGE_KEY = "wsBridgeStatus";
-export const DEFAULT_WS_BRIDGE_STATUS = {
-  state: "idle",
-  url: "",
-  error: "",
-  updatedAt: 0,
-  connectedAt: 0,
-  lastHeartbeatAt: 0,
-  lastHeartbeatAckAt: 0
-};
 
 let socket = null;
 let reconnectTimer = null;
@@ -88,7 +78,6 @@ export async function connectWsBridge(url) {
   reconnectDelay = RECONNECT_BASE_MS;
   logWsBridge("connect requested", { url: normalizedUrl });
   connect(normalizedUrl);
-  await chrome.storage.local.set({ [WS_STORAGE_KEY]: normalizedUrl });
 }
 
 /**
@@ -108,7 +97,8 @@ export function disconnectWsBridge() {
     error: "",
     connectedAt: 0,
     lastHeartbeatAt: 0,
-    lastHeartbeatAckAt: 0
+    lastHeartbeatAckAt: 0,
+    tools: 0
   }, {
     connected: false,
     url: "",
@@ -206,7 +196,8 @@ async function syncConfiguredBridge(url, enabled) {
       error: "",
       connectedAt: 0,
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: false,
       url: "",
@@ -228,7 +219,8 @@ async function syncConfiguredBridge(url, enabled) {
       error: "",
       connectedAt: 0,
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: false,
       url: "",
@@ -250,7 +242,8 @@ async function syncConfiguredBridge(url, enabled) {
       error: connectError,
       connectedAt: 0,
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: false,
       url: configuredUrl,
@@ -312,7 +305,8 @@ function connect(url, { isReconnect = false } = {}) {
       error: connectError,
       connectedAt: 0,
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: false,
       url: currentUrl,
@@ -329,7 +323,8 @@ function connect(url, { isReconnect = false } = {}) {
     error: "",
     connectedAt: 0,
     lastHeartbeatAt: 0,
-    lastHeartbeatAckAt: 0
+    lastHeartbeatAckAt: 0,
+    tools: 0
   }, {
     connected: false,
     url: normalizedUrl,
@@ -350,7 +345,8 @@ function connect(url, { isReconnect = false } = {}) {
       error: connectError,
       connectedAt: 0,
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: false,
       url: normalizedUrl,
@@ -373,7 +369,8 @@ function connect(url, { isReconnect = false } = {}) {
       error: "",
       connectedAt: Date.now(),
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: true,
       url: normalizedUrl,
@@ -421,7 +418,8 @@ function connect(url, { isReconnect = false } = {}) {
       error: errorMessage,
       connectedAt: 0,
       lastHeartbeatAt: 0,
-      lastHeartbeatAckAt: 0
+      lastHeartbeatAckAt: 0,
+      tools: 0
     }, {
       connected: false,
       url: shouldReconnect ? configuredUrl : "",
@@ -480,7 +478,8 @@ async function handleRequest(req) {
         error: "",
         connectedAt: wsBridgeStatus.connectedAt || Date.now(),
         lastHeartbeatAt: heartbeatAt,
-        lastHeartbeatAckAt: heartbeatAt
+        lastHeartbeatAckAt: heartbeatAt,
+        tools: toolCount
       }, {
         connected: true,
         url: currentUrl || configuredUrl,
@@ -511,7 +510,8 @@ async function handleRequest(req) {
         state: "connected",
         url: currentUrl || configuredUrl,
         error: "",
-        connectedAt: wsBridgeStatus.connectedAt || Date.now()
+        connectedAt: wsBridgeStatus.connectedAt || Date.now(),
+        tools: toolCount
       }, {
         connected: true,
         url: currentUrl || configuredUrl,
