@@ -3,7 +3,21 @@ import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import { streamChat, executeTool } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
-import { generateSessionId, listSessions, createSession, loadSession, loadSessionMeta, saveSession, saveSessionMeta, deleteSession, extractTitle } from "../../api/sessions";
+import {
+  generateSessionId,
+  listSessions,
+  createSession,
+  loadSession,
+  loadSessionMeta,
+  saveSession,
+  saveSessionMeta,
+  deleteSession,
+  extractTitle,
+  updateSessionTitle,
+  resetSessionTitle,
+  loadDefaultNewSessionSystemPrompt,
+  saveDefaultNewSessionSystemPrompt
+} from "../../api/sessions";
 import {
   EMPTY_AGENT_SKILLS,
   buildSkillsSystemPrompt,
@@ -38,6 +52,9 @@ export default function AgentPanel() {
   const [sessionId, setSessionId] = useState(null);
   const [sessionTitle, setSessionTitle] = useState("");
   const [sessionSystemPrompt, setSessionSystemPrompt] = useState("");
+  const [defaultNewSessionSystemPrompt, setDefaultNewSessionSystemPrompt] = useState({ sessionId: "", systemPrompt: "" });
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [mcpTools, setMcpTools] = useState([]);   // MCP tools from connected servers
@@ -76,6 +93,8 @@ export default function AgentPanel() {
   useEffect(() => {
     (async () => {
       const allSessions = await listSessions();
+      const defaultSystemPrompt = await loadDefaultNewSessionSystemPrompt();
+      setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
       setSessions(allSessions);
       if (allSessions.length > 0) {
         // Restore the most recent session
@@ -98,11 +117,14 @@ export default function AgentPanel() {
         // Create a fresh session
         const id = generateSessionId();
         await createSession(id, "新会话");
+        if (defaultSystemPrompt.systemPrompt) {
+          await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
+        }
         sessionMessagesRef.current.set(id, []);
         activeSessionIdRef.current = id;
         setSessionId(id);
         setSessionTitle("新会话");
-        setSessionSystemPrompt("");
+        setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
         setContextUsage(null);
@@ -231,9 +253,10 @@ export default function AgentPanel() {
     if (!targetSessionId) return;
     const title = extractTitle(msgs);
     await saveSession(targetSessionId, msgs, title);
-    setSessions(await listSessions());
+    const latestSessions = await listSessions();
+    setSessions(latestSessions);
     if (activeSessionIdRef.current === targetSessionId) {
-      setSessionTitle(title);
+      setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
     }
   }
 
@@ -433,12 +456,17 @@ export default function AgentPanel() {
     }
     const id = generateSessionId();
     await createSession(id, "新会话");
+    const defaultSystemPrompt = await loadDefaultNewSessionSystemPrompt();
+    setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
+    if (defaultSystemPrompt.systemPrompt) {
+      await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
+    }
     sessionMessagesRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
     activeSessionIdRef.current = id;
     setSessionId(id);
     setSessionTitle("新会话");
-    setSessionSystemPrompt("");
+    setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
@@ -768,9 +796,7 @@ export default function AgentPanel() {
     setSessionRuntime(currentSessionId, { contextUsage: null });
     setSessionMessages(currentSessionId, []);
     setInput("");
-    setSessionTitle("新会话");
-    setSessionSystemPrompt("");
-    await saveSessionMeta(currentSessionId, { systemPrompt: "" });
+    setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
     await saveSession(currentSessionId, [], "新会话");
     setSessions(await listSessions());
   }
@@ -800,14 +826,73 @@ export default function AgentPanel() {
     }
   }
 
-  async function handleSaveSessionSystemPrompt(systemPrompt) {
+  async function handleSaveSessionSystemPrompt(systemPrompt, applyToNewSessions = false) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
     const normalizedPrompt = String(systemPrompt || "").trim();
+    const previousDefault = await loadDefaultNewSessionSystemPrompt();
+    if (
+      applyToNewSessions &&
+      normalizedPrompt &&
+      previousDefault.systemPrompt &&
+      previousDefault.sessionId &&
+      previousDefault.sessionId !== currentSessionId
+    ) {
+      const ok = window.confirm("已经存在一个作用于新会话的系统提示，保存后将会覆盖之前的设置。是否继续？");
+      if (!ok) return false;
+    }
+
     await saveSessionMeta(currentSessionId, { systemPrompt: normalizedPrompt });
     setSessionSystemPrompt(normalizedPrompt);
+
+    let nextDefault = previousDefault;
+    if (applyToNewSessions && normalizedPrompt) {
+      nextDefault = await saveDefaultNewSessionSystemPrompt({
+        sessionId: currentSessionId,
+        systemPrompt: normalizedPrompt
+      });
+    } else if (previousDefault.sessionId === currentSessionId) {
+      nextDefault = await saveDefaultNewSessionSystemPrompt({ sessionId: "", systemPrompt: "" });
+    }
+    setDefaultNewSessionSystemPrompt(nextDefault);
+
     setSessions(await listSessions());
-    toast.success(normalizedPrompt ? "系统提示已保存" : "系统提示已清空");
+    if (normalizedPrompt && nextDefault.sessionId === currentSessionId) {
+      toast.success("系统提示已保存，并将用于新会话");
+    } else {
+      toast.success(normalizedPrompt ? "系统提示已保存" : "系统提示已清空");
+    }
+    return true;
+  }
+
+  function startEditingSessionTitle() {
+    setTitleDraft(sessionTitle || "新会话");
+    setEditingTitle(true);
+  }
+
+  async function saveEditingSessionTitle() {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    const nextTitle = await updateSessionTitle(currentSessionId, titleDraft);
+    setSessionTitle(nextTitle);
+    setEditingTitle(false);
+    setSessions(await listSessions());
+    toast.success("会话标题已更新");
+  }
+
+  function cancelEditingSessionTitle() {
+    setEditingTitle(false);
+    setTitleDraft("");
+  }
+
+  function handleTitleEditKeyDown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveEditingSessionTitle();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEditingSessionTitle();
+    }
   }
 
   function handleKeyDown(e) {
@@ -867,6 +952,7 @@ export default function AgentPanel() {
         <Dialog trigger={<button className="chat-toolbar-btn">系统</button>}>
           <SessionSystemPromptDialogBody
             initialValue={sessionSystemPrompt}
+            initiallyApplyToNewSessions={defaultNewSessionSystemPrompt.sessionId === sessionId && !!defaultNewSessionSystemPrompt.systemPrompt}
             onSave={handleSaveSessionSystemPrompt}
           />
         </Dialog>
@@ -875,7 +961,31 @@ export default function AgentPanel() {
         <Dialog trigger={<button className="chat-toolbar-btn">调度</button>}>
           <ScheduleJobsDialogBody />
         </Dialog>
-        <span className="chat-session-title">{sessionTitle || "新会话"}</span>
+        <span className="chat-session-title">
+          {editingTitle ? (
+            <input
+              className="chat-session-title-input"
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onKeyDown={handleTitleEditKeyDown}
+              onBlur={saveEditingSessionTitle}
+              autoFocus
+            />
+          ) : (
+            <>
+              <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
+              <button
+                className="chat-session-title-edit"
+                type="button"
+                onClick={startEditingSessionTitle}
+                aria-label="编辑会话标题"
+                title="编辑标题"
+              >
+                ✎
+              </button>
+            </>
+          )}
+        </span>
         <div className="chat-history-wrapper" ref={historyRef}>
           <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }}>
             历史 {showHistory ? "▲" : "▼"}
@@ -1111,8 +1221,9 @@ function formatContextUsageK(contextUsage) {
   return `${value.toFixed(2)}K`;
 }
 
-function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
+function SessionSystemPromptDialogBody({ initialValue = "", initiallyApplyToNewSessions = false, onSave }) {
   const [draft, setDraft] = useState(initialValue || "");
+  const [applyToNewSessions, setApplyToNewSessions] = useState(!!initiallyApplyToNewSessions);
   const [saving, setSaving] = useState(false);
   const rootRef = useRef(null);
 
@@ -1124,8 +1235,8 @@ function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
   async function handleSave() {
     setSaving(true);
     try {
-      await onSave?.(draft);
-      closeDialog();
+      const saved = await onSave?.(draft, applyToNewSessions);
+      if (saved !== false) closeDialog();
     } catch (error) {
       toast.error(`保存失败: ${error?.message || String(error)}`);
     } finally {
@@ -1137,7 +1248,7 @@ function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
     <div ref={rootRef} className="system-prompt-dialog">
       <div>
         <div className="schedule-dialog-title">当前会话系统提示</div>
-        <div className="schedule-dialog-subtitle">保存后只影响当前会话，会作为额外 system prompt 注入。</div>
+        <div className="schedule-dialog-subtitle">默认只影响当前会话，会作为额外 system prompt 注入。</div>
       </div>
       <textarea
         className="system-prompt-textarea"
@@ -1145,6 +1256,14 @@ function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
         onChange={(e) => setDraft(e.target.value)}
         placeholder={SYSTEM_PROMPT_PLACEHOLDER}
       />
+      <label className="system-prompt-default-toggle">
+        <input
+          type="checkbox"
+          checked={applyToNewSessions}
+          onChange={(e) => setApplyToNewSessions(e.target.checked)}
+        />
+        <span>同时作为新会话的系统提示（最多只能有一个）</span>
+      </label>
       <div className="schedule-dialog-actions">
         <Button
           className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
