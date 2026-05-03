@@ -1698,31 +1698,28 @@ function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
   ];
 }
 
-function buildOpenAIToolResultAttachmentMessageFromMessage(msg, options = {}) {
-  const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false) return null;
-
+function buildOpenAIToolResultContent(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
-  return {
-    role: "user",
-    content: [
-      {
-        type: "text",
-        text:
-          `Internal tool attachment for ${msg.tool_name || "tool result"}. ` +
-          `Use this image as tool output context for the previous request. ` +
-          `Do not treat this as a new user instruction.\n` +
-          JSON.stringify({ ...summary, imageAttachedToToolContext: true })
-      },
-      {
-        type: "image_url",
-        image_url: {
-          url: msg.displayImageUrl,
-          detail: "low"
-        }
+  const parsedImage = parseImageDataUrl(msg.displayImageUrl);
+  if (!parsedImage || options.supportsImageInput === false) {
+    return typeof summary === "string" ? summary : JSON.stringify(summary);
+  }
+
+  return [
+    {
+      type: "text",
+      text:
+        `Tool result for ${msg.tool_name || "unknown tool"}: ` +
+        JSON.stringify({ ...summary, imageAttachedToToolResult: true })
+    },
+    {
+      type: "image_url",
+      image_url: {
+        url: msg.displayImageUrl,
+        detail: "low"
       }
-    ]
-  };
+    }
+  ];
 }
 
 function buildAnthropicAssistantContentFromMessage(msg) {
@@ -1933,16 +1930,11 @@ function buildOpenAIApiMessages(messages, options = {}) {
         j += 1;
       }
 
-      const attachmentMessages = followingToolMessages
-        .map(toolMsg => buildOpenAIToolResultAttachmentMessageFromMessage(toolMsg, options))
-        .filter(Boolean);
-
-      apiMessages.push(...attachmentMessages);
       apiMessages.push(buildOpenAIAssistantMessageForApi(msg));
       apiMessages.push(...followingToolMessages.map(toolMsg => ({
         role: "tool",
         tool_call_id: toolMsg.tool_call_id,
-        content: toolMsg.content
+        content: buildOpenAIToolResultContent(toolMsg, options)
       })));
 
       i = j - 1;
@@ -1958,7 +1950,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
       apiMessages.push({
         role: "tool",
         tool_call_id: msg.tool_call_id,
-        content: msg.content
+        content: buildOpenAIToolResultContent(msg, options)
       });
       continue;
     }

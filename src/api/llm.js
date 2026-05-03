@@ -339,12 +339,15 @@ export const TOOLS = [
   {
     name: "tab_screenshot",
     description:
-      "Capture a screenshot of a browser tab. By default captures only the visible viewport using Chrome's captureVisibleTab (requires that tab to be active in its window). Output is width-capped JPEG for readability.",
+      "Capture a screenshot of a browser tab. By default captures only the visible viewport using Chrome's captureVisibleTab (requires that tab to be active in its window). Set fullPage: true to capture the full scrollable page by stitching multiple viewport screenshots. In full-page mode, sticky headers (position:fixed/sticky elements near the top) are automatically hidden after the first frame to prevent content obstruction. Output is width-capped JPEG for readability.",
     schema: {
       type: "object",
       properties: {
         windowId: { type: "number", description: "Window ID passed to captureVisibleTab (default: the resolved tab's window)" },
-        tabId: { type: "number", description: "Optional tab to capture. When omitted, uses the active tab in the current extension/side-panel window. When set, that tab is activated before capture." }
+        tabId: { type: "number", description: "Optional tab to capture. When omitted, uses the active tab in the current extension/side-panel window. When set, that tab is activated before capture." },
+        fullPage: { type: "boolean", description: "When true, capture the entire scrollable page by scrolling and stitching viewport screenshots together. Sticky headers are automatically hidden after the first frame to prevent content obstruction." },
+        maxScreens: { type: "number", description: "Maximum number of viewport screenshots to capture for fullPage mode (default: 40, range: 1-100). Only used when fullPage is true." },
+        settleMs: { type: "number", description: "Milliseconds to wait after scrolling for lazy content to render (default: 250, range: 0-5000). Only used when fullPage is true." }
       },
       required: []
     }
@@ -1929,6 +1932,90 @@ function _sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, n));
 }
 
+
+/**
+ * Convert a Blob to a base64 data URL (works in both DOM and Service Worker contexts).
+ */
+async function _blobToDataUrl(blob) {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return "data:" + (blob.type || "image/png") + ";base64," + btoa(binary);
+}
+
+/**
+ * so they don't overlap content in subsequent full-page screenshot tiles.
+ * Stores the original display value in a data attribute for later restoration.
+ */
+async function _hideStickyHeaderElements(tab) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const hidden = [];
+        const all = document.querySelectorAll("*");
+        const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+        // Only consider elements in the top 30% of the viewport, up to 300px max.
+        const topThreshold = Math.min(300, Math.max(80, vh * 0.3));
+
+        for (const el of all) {
+          const style = window.getComputedStyle(el);
+          const pos = style.position;
+          if (pos !== "fixed" && pos !== "sticky") continue;
+
+          const rect = el.getBoundingClientRect();
+          // Element must be near the top of the viewport and have some visible height.
+          if (rect.top < topThreshold && rect.bottom > 0 && rect.height > 0) {
+            const origDisplay = style.display;
+            el.setAttribute("data-tabmgr-screenshot-hidden", origDisplay);
+            el.style.setProperty("display", "none", "important");
+            hidden.push(
+              el.tagName.toLowerCase() +
+                (el.id ? "#" + el.id : "") +
+                (el.className && typeof el.className === "string"
+                  ? "." + el.className.trim().split(/\s+/)[0]
+                  : "")
+            );
+          }
+        }
+        return hidden;
+      }
+    });
+  } catch (_e) {
+    // Non-fatal: sticky headers may remain visible but the screenshot is still valid.
+    return [];
+  }
+}
+
+/**
+ * Restore elements that were hidden by _hideStickyHeaderElements.
+ * Removes the tracking attribute and restores the original display style.
+ */
+async function _restoreStickyElements(tab) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const hidden = document.querySelectorAll("[data-tabmgr-screenshot-hidden]");
+        for (const el of hidden) {
+          const origDisplay = el.getAttribute("data-tabmgr-screenshot-hidden");
+          el.style.removeProperty("display");
+          if (origDisplay && origDisplay !== "none") {
+            el.style.display = origDisplay;
+          }
+          el.removeAttribute("data-tabmgr-screenshot-hidden");
+        }
+      }
+    });
+  } catch (_e) {
+    // Best-effort restoration; non-fatal.
+  }
+}
+
 async function _readPageScrollMetrics(tab) {
   try {
     const results = await chrome.scripting.executeScript({
@@ -1995,12 +2082,26 @@ async function _readInnerHeightAndScrollY(tab) {
 }
 
 async function _loadImageFromDataUrl(dataUrl) {
-  return await new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Failed to decode screenshot image"));
-    image.src = dataUrl;
-  });
+  if (typeof createImageBitmap === "function") {
+    const parsed = _parseDataUrl(dataUrl);
+    if (!parsed) throw new Error("Invalid screenshot data URL");
+    const byteString = atob(dataUrl.split(",")[1] || "");
+    const bytes = new Uint8Array(byteString.length);
+    for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+    const blob = new Blob([bytes], { type: parsed.mediaType || "image/png" });
+    return await createImageBitmap(blob);
+  }
+
+  if (typeof Image !== "undefined") {
+    return await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to decode screenshot image"));
+      image.src = dataUrl;
+    });
+  }
+
+  throw new Error("No browser image decoder is available in this context");
 }
 
 const FULL_PAGE_MAX_STITCH_PX = 16000;
@@ -2012,8 +2113,6 @@ const FULL_PAGE_STITCH_DEBUG_BORDER = false;
  * Returns an optimized base64 image data URL.
  */
 async function _execTabScreenshot(args = {}) {
-  // TODO: Keep the internal fullPage stitching path for future use, but do not expose
-  // it to the model yet. The current full-page result quality still needs improvement.
   const {
     windowId,
     tabId,
@@ -2123,14 +2222,9 @@ async function _execTabScreenshot(args = {}) {
     const iw0 = img0.naturalWidth || img0.width;
     const ih0 = img0.naturalHeight || img0.height;
 
-    canvas = document.createElement("canvas");
-    canvas.width = iw0;
     const estRows = Math.ceil(documentHeight / windowHeight);
-    canvas.height = Math.min(
-      FULL_PAGE_MAX_STITCH_PX,
-      Math.max(ih0, Math.ceil(estRows * ih0))
-    );
-    ctx = canvas.getContext("2d", { alpha: false });
+    canvas = new OffscreenCanvas(iw0, Math.min(FULL_PAGE_MAX_STITCH_PX, Math.max(ih0, Math.ceil(estRows * ih0))));
+    ctx = canvas.getContext("2d");
     if (!ctx) {
       return { error: "2D canvas context unavailable for full-page stitch." };
     }
@@ -2140,10 +2234,17 @@ async function _execTabScreenshot(args = {}) {
     destY = ih0;
     slicesDrawn = 1;
 
+    // Sticky headers will be hidden before each subsequent scroll-position
+    // screenshot inside the loop (elements may become sticky only after scrolling).
     let n = 1;
     while (slicesDrawn < maxScreens) {
       await _setPageScrollTop(tab, n * windowHeight);
       if (settleMs) await _sleepMs(settleMs);
+
+      // Elements may gain position:fixed/sticky only after scrolling (e.g. headers
+      // that stick after passing a threshold). Re-scan and hide before each capture.
+      // Duplicates are harmless — the DOM data attribute prevents double-hiding.
+      await _hideStickyHeaderElements(tab);
 
       const st = await _readInnerHeightAndScrollY(tab);
       if (!st) {
@@ -2155,6 +2256,12 @@ async function _execTabScreenshot(args = {}) {
       const sy = st.scrollY;
       const targetY = n * windowHeight;
       const maxScrollY = Math.max(0, Number(st.maxScrollY) || 0);
+      /**
+       * The scroll position did not reach the requested target — browser has clamped
+       * us at the bottom of the document, so this is the last screenshot tile.
+       */
+      const didNotReachTarget = sy < targetY - 0.5;
+
       /**
        * True only when scrollY is pinned near maxScrollY (symmetric band).
        * Using only sy >= maxScrollY - eps breaks when maxScrollY is underestimated (lazy layout):
@@ -2172,7 +2279,14 @@ async function _execTabScreenshot(args = {}) {
         break;
       }
 
-      const isLastPage = maxScrollY > 0 && requestPastDocumentEnd && pinnedToMetricsBottom;
+      // True last page: browser has clamped us at the document bottom.
+      // didNotReachTarget alone is NOT enough — we must also be pinned near maxScrollY;
+      // otherwise the scroll was just partially blocked (lazy load, scroll-snap, etc.)
+      // and we should keep going rather than cropping incorrectly.
+      const isLastPage =
+        maxScrollY > 0 &&
+        pinnedToMetricsBottom &&
+        (requestPastDocumentEnd || didNotReachTarget);
 
       const rawDataUrl = await captureVisibleThrottled();
       const img = await _loadImageFromDataUrl(rawDataUrl);
@@ -2181,10 +2295,13 @@ async function _execTabScreenshot(args = {}) {
 
       let safeCropTop = 0;
       if (isLastPage) {
-        const remainForLast = Math.max(0, targetY - sy);
-        const keepDocPx = Math.min(vh, remainForLast);
-        const cropTop = Math.round(ih - (keepDocPx / vh) * ih);
-        safeCropTop = Math.min(Math.max(0, cropTop), Math.max(0, ih - 1));
+        // How far the scroll actually advanced from the previous screenshot position.
+        // This equals the non-overlapping (unique) content height in document pixels.
+        const uniqueDocPx = Math.max(0, sy - (n - 1) * windowHeight);
+        const keepDocPx = Math.min(vh, uniqueDocPx);
+        // Crop the overlap from the TOP of the image, keep the bottom keepDocPx portion.
+        const cropFromTop = Math.round(ih - (keepDocPx / vh) * ih);
+        safeCropTop = Math.min(Math.max(0, cropFromTop), Math.max(0, ih - 1));
       }
 
       const sliceH = ih - safeCropTop;
@@ -2205,10 +2322,8 @@ async function _execTabScreenshot(args = {}) {
           exitedCaptureLoopEarly = true;
           break;
         }
-        const newCanvas = document.createElement("canvas");
-        newCanvas.width = canvas.width;
-        newCanvas.height = newH;
-        const nctx = newCanvas.getContext("2d", { alpha: false });
+        const newCanvas = new OffscreenCanvas(canvas.width, newH);
+        const nctx = newCanvas.getContext("2d");
         if (!nctx) {
           return { error: "2D canvas context unavailable while resizing stitch canvas." };
         }
@@ -2253,23 +2368,40 @@ async function _execTabScreenshot(args = {}) {
       stoppedReason = "max_screens";
     }
 
+    // Restore sticky elements that were hidden during the capture process.
+    // Best-effort; failures are non-fatal to the screenshot result.
+    await _restoreStickyElements(tab);
+
     const lastMetrics = await _readPageScrollMetrics(tab);
-    const trimmed = document.createElement("canvas");
-    trimmed.width = canvas.width;
-    trimmed.height = destY;
-    const tctx = trimmed.getContext("2d", { alpha: false });
+    const trimmed = new OffscreenCanvas(canvas.width, destY);
+    const tctx = trimmed.getContext("2d");
     if (!tctx) {
       return { error: "Unable to finalize full-page canvas." };
     }
     tctx.drawImage(canvas, 0, 0);
 
-    const stitchedPng = trimmed.toDataURL("image/png");
-    const optimized = await _optimizeScreenshotDataUrl(stitchedPng, {
-      strategy: "fitWidth",
-      maxWidth: 2048,
-      maxHeight: 24000,
-      jpegQuality: 0.88
-    });
+    const stitchedPngBlob = await trimmed.convertToBlob({ type: "image/png" });
+    const stitchedPng = await _blobToDataUrl(stitchedPngBlob);
+    // Skip DOM-based optimization in Service Worker context (no document/Image available).
+    // OffscreenCanvas convertToBlob already produces a compact PNG; the optional JPEG
+    // recompress step only runs when a DOM environment is present.
+    const optimized = typeof document === "undefined"
+      ? {
+          dataUrl: stitchedPng,
+          mediaType: "image/png",
+          approxBytes: Math.round(stitchedPng.length * 3 / 4),
+          width: trimmed.width,
+          height: trimmed.height,
+          originalWidth: trimmed.width,
+          originalHeight: trimmed.height,
+          optimized: false
+        }
+      : await _optimizeScreenshotDataUrl(stitchedPng, {
+          strategy: "fitWidth",
+          maxWidth: 2048,
+          maxHeight: 24000,
+          jpegQuality: 0.88
+        });
 
     return {
       success: true,
@@ -2304,6 +2436,11 @@ async function _execTabScreenshot(args = {}) {
   } finally {
     try {
       await _setPageScrollTop(tab, initialScrollY);
+    } catch (_e) {
+      /* ignore */
+    }
+    try {
+      await _restoreStickyElements(tab);
     } catch (_e) {
       /* ignore */
     }
