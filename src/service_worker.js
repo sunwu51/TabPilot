@@ -9,7 +9,7 @@ import {
     setReuseDomainPolicy
 } from "./api/tabReuse";
 import { BUILTIN_TOOL_NAMES, executeTool } from "./api/llm";
-import { connectWsBridge, disconnectWsBridge, getWsBridgeStatus } from "./api/wsBridge";
+import { connectWsBridge, disconnectWsBridge, ensureWsBridgeHealthy, getWsBridgeStatus, startWsBridge } from "./api/wsBridge";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const pendingReusePrompts = new Map();
@@ -671,13 +671,16 @@ chrome.tabs.onActivated.addListener(async function (activeInfo) {
 chrome.runtime.onInstalled.addListener(() => {
     chrome.alarms?.create("check-idle-tabs", { periodInMinutes: 1 });
     void restoreScheduledJobs();
+    void startWsBridge();
 });
 
 chrome.runtime.onStartup.addListener(() => {
     void restoreScheduledJobs();
+    void startWsBridge();
 });
 
 void restoreScheduledJobs();
+void startWsBridge();
 
 if (chrome.alarms) {
     chrome.alarms.get("check-idle-tabs", (alarm) => {
@@ -696,6 +699,8 @@ if (chrome.alarms) {
         }
 
         if (alarm.name !== "check-idle-tabs") return;
+
+        await ensureWsBridgeHealthy();
 
         let { suspendTimeout, tabActivity } = await chrome.storage.local.get({
             suspendTimeout: 0,

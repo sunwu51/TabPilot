@@ -170,6 +170,7 @@ html, body, #root {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid #e5e7eb;
+  background: white;
 }
 
 /* Fix camel-ui checkbox text vertical alignment */
@@ -198,7 +199,6 @@ html, body, #root {
 .bridge-config-bar {
   flex-shrink: 0;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -206,25 +206,42 @@ html, body, #root {
   background: #fafafa;
 }
 
-.bridge-url-wrap {
+.bridge-status-block {
   flex: 1;
   min-width: 0;
-}
-
-.bridge-url-wrap .input-container {
-  margin-bottom: 0;
 }
 
 .bridge-connect-btn {
   flex-shrink: 0;
 }
 
-.bridge-status {
-  flex-basis: 100%;
-  flex-shrink: 0;
+.bridge-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
   color: #6b7280;
-  white-space: nowrap;
+}
+
+.bridge-status-label {
+  font-weight: 600;
+  color: #374151;
+}
+
+.bridge-status-pill {
+  font-weight: 600;
+}
+
+.bridge-status-meta {
+  color: #6b7280;
+}
+
+.bridge-status-url {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #4b5563;
+  word-break: break-all;
 }
 
 .bridge-status-connected {
@@ -236,6 +253,7 @@ html, body, #root {
 }
 
 .bridge-error {
+  margin-top: 4px;
   color: #b91c1c;
   font-size: 11px;
 }

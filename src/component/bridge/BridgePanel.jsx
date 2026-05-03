@@ -1,8 +1,13 @@
 /* global chrome */
-import { Button, Input } from "@sunwu51/camel-ui";
+import { Button } from "@sunwu51/camel-ui";
 import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  DEFAULT_WS_BRIDGE_STATUS,
+  formatWsBridgeStatusTime,
+  getWsBridgeStateMeta,
+  WS_BRIDGE_STATUS_STORAGE_KEY
+} from "../../api/wsBridgeShared";
 
-const DEFAULT_URL = "ws://localhost:3000/ws/tabmanager";
 const MAX_RECORDS = 100;
 
 /**
@@ -10,39 +15,44 @@ const MAX_RECORDS = 100;
  * Shows connection status and tool call history.
  */
 export default function BridgePanel() {
-  const [url, setUrl] = useState(DEFAULT_URL);
-  const [connected, setConnected] = useState(false);
-  const [toolCount, setToolCount] = useState(0);
-  const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState(null);
+  const [url, setUrl] = useState("");
+  const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [records, setRecords] = useState([]);
   const recordsRef = useRef([]);
 
   // Load saved URL and status on mount
   useEffect(() => {
-    chrome.storage.local.get({ wsServerUrl: DEFAULT_URL }).then(({ wsServerUrl }) => {
-      if (wsServerUrl) setUrl(wsServerUrl);
-    });
-    // Query current connection status
-    chrome.runtime.sendMessage({ type: "wsbridge", action: "status" }, (res) => {
-      if (res?.connected) {
-        setConnected(true);
-        setToolCount(res.tools || 0);
-        setError(null);
-      }
+    chrome.storage.local.get({
+      wsServerUrl: "",
+      [WS_BRIDGE_STATUS_STORAGE_KEY]: DEFAULT_WS_BRIDGE_STATUS
+    }).then(({ wsServerUrl, [WS_BRIDGE_STATUS_STORAGE_KEY]: status }) => {
+      setUrl(typeof wsServerUrl === "string" ? wsServerUrl : "");
+      setWsBridgeStatus({
+        ...DEFAULT_WS_BRIDGE_STATUS,
+        ...(status || {})
+      });
     });
   }, []);
 
-  // Listen for status updates and tool call records
+  useEffect(() => {
+    function handleStorageChange(changes, areaName) {
+      if (areaName !== "local") return;
+      if (changes.wsServerUrl) {
+        setUrl(typeof changes.wsServerUrl.newValue === "string" ? changes.wsServerUrl.newValue : "");
+      }
+      if (changes[WS_BRIDGE_STATUS_STORAGE_KEY]) {
+        setWsBridgeStatus({
+          ...DEFAULT_WS_BRIDGE_STATUS,
+          ...(changes[WS_BRIDGE_STATUS_STORAGE_KEY].newValue || {})
+        });
+      }
+    }
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+  }, []);
+
   useEffect(() => {
     function handleMessage(msg) {
-      if (msg?.type === "wsbridge_status") {
-        const { connected: isConnected, tools, error: err } = msg.status;
-        setConnected(isConnected);
-        setToolCount(tools || 0);
-        setError(err || null);
-        setConnecting(false);
-      }
       if (msg?.type === "wsbridge_tool_call") {
         const next = [...recordsRef.current, msg.record];
         if (next.length > MAX_RECORDS) {
@@ -57,53 +67,42 @@ export default function BridgePanel() {
   }, []);
 
   const handleConnect = useCallback(() => {
-    if (connected) {
+    if (wsBridgeStatus.state === "connected" || wsBridgeStatus.state === "connecting" || wsBridgeStatus.state === "reconnecting") {
       chrome.runtime.sendMessage({ type: "wsbridge", action: "disconnect" });
-      setConnected(false);
-      setToolCount(0);
     } else {
-      setConnecting(true);
-      setError(null);
       chrome.runtime.sendMessage({ type: "wsbridge", action: "connect", url });
     }
-  }, [url, connected]);
+  }, [url, wsBridgeStatus.state]);
 
-  const statusDot = connected ? "🟢" : connecting ? "🟡" : "⚫";
-  const statusText = connected
-    ? `已连接 · ${toolCount} 个工具`
-    : connecting
-    ? "连接中..."
-    : "未连接";
-  const statusClass = connected
-    ? "bridge-status-connected"
-    : connecting
-    ? "bridge-status-connecting"
-    : "";
+  const wsBridgeStateMeta = getWsBridgeStateMeta(wsBridgeStatus.state);
+  const connectedLike = wsBridgeStatus.state === "connected" || wsBridgeStatus.state === "connecting" || wsBridgeStatus.state === "reconnecting";
+  const actionLabel = connectedLike ? "断开" : "连接";
+  const heartbeatText = formatWsBridgeStatusTime(wsBridgeStatus.lastHeartbeatAckAt);
 
   return (
     <div className="bridge-panel">
       <div className="bridge-config-bar">
-        <div className="bridge-url-wrap">
-          <Input
-            label=""
-            aria-label="WebSocket 服务器地址"
-            inputClassName="!min-h-8 !text-sm"
-            defaultValue={url}
-            onChange={setUrl}
-            placeholder={DEFAULT_URL}
-          />
+        <div className="bridge-status-block">
+          <div className="bridge-status-line">
+            <span className="bridge-status-label">Bridge 状态</span>
+            <span className="bridge-status-pill" style={{ color: wsBridgeStateMeta.color }}>
+              {wsBridgeStateMeta.label}
+            </span>
+            {wsBridgeStatus.tools > 0 ? <span className="bridge-status-meta">{wsBridgeStatus.tools} 个工具</span> : null}
+            {heartbeatText ? <span className="bridge-status-meta">最近心跳 {heartbeatText}</span> : null}
+          </div>
+          <div className="bridge-status-url">
+            {url || "请先在设置中填写 WS Server 地址"}
+          </div>
+          {wsBridgeStatus.error ? <div className="bridge-error">{wsBridgeStatus.error}</div> : null}
         </div>
         <Button
           className="!text-sm !min-h-8 !px-3 bridge-connect-btn"
           onPress={handleConnect}
-          isDisabled={connecting}
+          isDisabled={!url}
         >
-          {connecting ? "连接中..." : connected ? "断开" : "连接"}
+          {actionLabel}
         </Button>
-        <span className={`bridge-status ${statusClass}`}>
-          {statusDot} {statusText}
-          {error && <span className="bridge-error"> — {error}</span>}
-        </span>
       </div>
 
       <div className="bridge-records">
