@@ -75,6 +75,7 @@ export default function AgentPanel() {
   const sessionRuntimeRef = useRef(new Map());
   const [pendingApproval, setPendingApproval] = useState(null);
   const approvalResolverRef = useRef(new Map());
+  const shouldFocusInputWhenReadyRef = useRef(false);
 
   /**
    * Streamed tokens can arrive faster than a user can read them. We only keep
@@ -88,6 +89,14 @@ export default function AgentPanel() {
     }
     scrollMessagesToBottom("auto");
   }, [messages]);
+
+  useEffect(() => {
+    if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
+    shouldFocusInputWhenReadyRef.current = false;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, [loading, pendingApproval]);
 
   /** Initialize: load last session or create a new one */
   useEffect(() => {
@@ -277,6 +286,13 @@ export default function AgentPanel() {
       setLoading(!!next.loading);
       setPendingApproval(next.pendingApproval || null);
       setContextUsage(next.contextUsage || null);
+      if (!next.loading && !next.pendingApproval && shouldFocusInputWhenReadyRef.current) {
+        requestAnimationFrame(() => {
+          if (!activeSessionIdRef.current || activeSessionIdRef.current !== targetSessionId) return;
+          shouldFocusInputWhenReadyRef.current = false;
+          inputRef.current?.focus();
+        });
+      }
     }
     return next;
   }
@@ -319,6 +335,9 @@ export default function AgentPanel() {
 
   function stopSessionGeneration(targetSessionId) {
     const runtime = getSessionRuntime(targetSessionId);
+    if (activeSessionIdRef.current === targetSessionId) {
+      shouldFocusInputWhenReadyRef.current = true;
+    }
     if (runtime.abort) {
       runtime.abort();
     }
@@ -434,6 +453,7 @@ export default function AgentPanel() {
   function resolveDangerousToolApproval(approved) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
+    shouldFocusInputWhenReadyRef.current = true;
     const runtime = getSessionRuntime(currentSessionId);
     const resolver = approvalResolverRef.current.get(currentSessionId);
     approvalResolverRef.current.delete(currentSessionId);
@@ -534,6 +554,7 @@ export default function AgentPanel() {
       `- window_list and window_get_current return window snapshots with capturedAt timing fields.\n` +
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
       `- If you need the actual page content, first identify the right tab, then call tab_extract.\n` +
+      `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tab_focus to switch to and reactivate the tab, then retry the original tool.\n` +
       `- Treat questions about "latest", "current", "today", recent releases, prices, availability, laws, policies, API fields/schemas, model lists/capabilities/pricing, SDK behavior, product documentation, or any fast-changing technical detail as time-sensitive. Do not answer these from memory first.\n` +
       `- For time-sensitive questions, first look for an available web search/fetch MCP tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources before responding.\n` +
       `- If no web search/fetch tool is available, use browser tools instead: open a search engine or official documentation page with tab_open, inspect/extract the page with tab_extract and DOM tools, and then answer based on what you found.\n` +
@@ -635,9 +656,7 @@ export default function AgentPanel() {
     enableAutoFollowBottom("auto");
     setSessionMessages(currentSessionId, newMessages);
     setInput("");
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
+    shouldFocusInputWhenReadyRef.current = true;
     const nextRunId = getSessionRuntime(currentSessionId).runId + 1;
     setSessionRuntime(currentSessionId, { loading: true, abort: null, runId: nextRunId });
 
@@ -796,8 +815,15 @@ export default function AgentPanel() {
     setSessionRuntime(currentSessionId, { contextUsage: null });
     setSessionMessages(currentSessionId, []);
     setInput("");
-    setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
-    await saveSession(currentSessionId, [], "新会话");
+    const currentSessionEntry = sessions.find(s => s.id === currentSessionId);
+    if (currentSessionEntry?.manualTitle) {
+      const preservedTitle = String(sessionTitle || "").trim() || "新会话";
+      setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
+      await saveSession(currentSessionId, [], preservedTitle);
+    } else {
+      setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
+      await saveSession(currentSessionId, [], "新会话");
+    }
     setSessions(await listSessions());
   }
 
@@ -947,82 +973,135 @@ export default function AgentPanel() {
 
   return (
     <div className="agent-panel">
-      <div className="chat-toolbar">
-        <button className="chat-toolbar-btn" onClick={handleNewSession}>+ 新建</button>
-        <Dialog trigger={<button className="chat-toolbar-btn">系统</button>}>
-          <SessionSystemPromptDialogBody
-            initialValue={sessionSystemPrompt}
-            initiallyApplyToNewSessions={defaultNewSessionSystemPrompt.sessionId === sessionId && !!defaultNewSessionSystemPrompt.systemPrompt}
-            onSave={handleSaveSessionSystemPrompt}
-          />
-        </Dialog>
-        <button className="chat-toolbar-btn" onClick={handleClearCurrentSession}>清空</button>
-        <button className="chat-toolbar-btn" onClick={handleExportCurrentSession}>导出</button>
-        <Dialog trigger={<button className="chat-toolbar-btn">调度</button>}>
-          <ScheduleJobsDialogBody />
-        </Dialog>
-        <span className="chat-session-title">
-          {editingTitle ? (
-            <input
-              className="chat-session-title-input"
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onKeyDown={handleTitleEditKeyDown}
-              onBlur={saveEditingSessionTitle}
-              autoFocus
-            />
-          ) : (
-            <>
-              <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
-              <button
-                className="chat-session-title-edit"
-                type="button"
-                onClick={startEditingSessionTitle}
-                aria-label="编辑会话标题"
-                title="编辑标题"
-              >
-                ✎
-              </button>
-            </>
-          )}
-        </span>
-        <div className="chat-history-wrapper" ref={historyRef}>
-          <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }}>
-            历史 {showHistory ? "▲" : "▼"}
+      <div className={`chat-header ${(editingTitle || showHistory) ? "chat-header-expanded" : ""}`}>
+        <div className="chat-toolbar">
+          <button className="chat-toolbar-btn" onClick={handleNewSession} title="新建">
+            <span className="chat-toolbar-icon">+</span>
+            <span className="chat-toolbar-full-text">新建</span>
           </button>
-          {showHistory && (
-            <div className="chat-history-dropdown">
-              {sessions.length === 0 && (
-                <div className="chat-history-empty">暂无历史会话</div>
-              )}
-              {sessions.map(s => (
-                <div
-                  key={s.id}
-                  className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
-                  onClick={() => switchSession(s.id)}
-                >
-                  <div className="chat-history-item-info">
-                    <span className="chat-history-item-title">
-                      {s.title}
-                      {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
-                        <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
-                      )}
-                      {s.id !== sessionId && isSessionLoading(s.id) && (
-                        <span className="chat-history-item-status">● 生成中</span>
-                      )}
-                    </span>
-                    <span className="chat-history-item-time">{formatTime(s.updatedAt)}</span>
-                  </div>
+          <Dialog trigger={
+            <button className="chat-toolbar-btn" title="系统">
+              <span className="chat-toolbar-icon">⚙️</span>
+              <span className="chat-toolbar-full-text">系统</span>
+            </button>
+          }>
+            <SessionSystemPromptDialogBody
+              initialValue={sessionSystemPrompt}
+              initiallyApplyToNewSessions={defaultNewSessionSystemPrompt.sessionId === sessionId && !!defaultNewSessionSystemPrompt.systemPrompt}
+              onSave={handleSaveSessionSystemPrompt}
+            />
+          </Dialog>
+          <button className="chat-toolbar-btn" onClick={handleClearCurrentSession} title="清空">
+            <span className="chat-toolbar-icon">🗑️</span>
+            <span className="chat-toolbar-full-text">清空</span>
+          </button>
+          <button className="chat-toolbar-btn" onClick={handleExportCurrentSession} title="导出">
+            <span className="chat-toolbar-icon">⬇️</span>
+            <span className="chat-toolbar-full-text">导出</span>
+          </button>
+          <Dialog trigger={
+            <button className="chat-toolbar-btn" title="调度">
+              <span className="chat-toolbar-icon">⏱️</span>
+              <span className="chat-toolbar-full-text">调度</span>
+            </button>
+          }>
+            <ScheduleJobsDialogBody />
+          </Dialog>
+          <div className="chat-toolbar-expanded-spacer" />
+          <div className="chat-title-inline">
+            <span className="chat-session-title">
+              {editingTitle ? (
+                <input
+                  className="chat-session-title-input"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={handleTitleEditKeyDown}
+                  onBlur={saveEditingSessionTitle}
+                  autoFocus
+                />
+              ) : (
+                <>
+                  <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
                   <button
-                    className="chat-history-item-delete"
-                    onClick={(e) => handleDeleteSession(s.id, e)}
-                    aria-label={`删除会话 ${s.title || ""}`.trim()}
-                    title="删除"
-                  >✕</button>
-                </div>
-              ))}
-            </div>
-          )}
+                    className="chat-session-title-edit"
+                    type="button"
+                    onClick={startEditingSessionTitle}
+                    aria-label="编辑会话标题"
+                    title="编辑标题"
+                  >
+                    ✎
+                  </button>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="chat-history-wrapper" ref={historyRef}>
+            <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }} title="历史">
+              <span className="chat-toolbar-icon">🕘</span>
+              <span className="chat-toolbar-full-text">历史</span>
+              <span className="chat-toolbar-caret">{showHistory ? "▲" : "▼"}</span>
+            </button>
+            {showHistory && (
+              <div className="chat-history-dropdown">
+                {sessions.length === 0 && (
+                  <div className="chat-history-empty">暂无历史会话</div>
+                )}
+                {sessions.map(s => (
+                  <div
+                    key={s.id}
+                    className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
+                    onClick={() => switchSession(s.id)}
+                  >
+                    <div className="chat-history-item-info">
+                      <span className="chat-history-item-title">
+                        {s.title}
+                        {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
+                          <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
+                        )}
+                        {s.id !== sessionId && isSessionLoading(s.id) && (
+                          <span className="chat-history-item-status">● 生成中</span>
+                        )}
+                      </span>
+                      <span className="chat-history-item-time">{formatTime(s.updatedAt)}</span>
+                    </div>
+                    <button
+                      className="chat-history-item-delete"
+                      onClick={(e) => handleDeleteSession(s.id, e)}
+                      aria-label={`删除会话 ${s.title || ""}`.trim()}
+                      title="删除"
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="chat-title-row">
+          <span className="chat-session-title">
+            {editingTitle ? (
+              <input
+                className="chat-session-title-input"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={handleTitleEditKeyDown}
+                onBlur={saveEditingSessionTitle}
+                autoFocus
+              />
+            ) : (
+              <>
+                <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
+                <button
+                  className="chat-session-title-edit"
+                  type="button"
+                  onClick={startEditingSessionTitle}
+                  aria-label="编辑会话标题"
+                  title="编辑标题"
+                >
+                  ✎
+                </button>
+              </>
+            )}
+          </span>
         </div>
       </div>
 
@@ -1091,7 +1170,8 @@ export default function AgentPanel() {
           onKeyDown={handleKeyDown}
           placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
           rows={3}
-          disabled={loading || !!pendingApproval}
+          readOnly={loading}
+          disabled={!!pendingApproval}
         />
         <div className="chat-input-status-line">
           <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>

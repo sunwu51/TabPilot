@@ -11,6 +11,7 @@ const DOM_LOCATOR_PROPERTIES = {
 };
 const DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS = 30;
 const DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 60;
+const DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS = 10;
 const DEFAULT_LLM_FIRST_PACKET_TIMEOUT_SECONDS = 20;
 const MAX_LLM_STREAM_RETRIES = 3;
 const SCHEDULE_STORAGE_KEY = "scheduledJobs";
@@ -608,55 +609,74 @@ export async function executeTool(name, args, mcpRegistry = []) {
     }
 
     // Built-in tools
-    switch (name) {
-      case "tab_list":    return await _execTabList(args);
-      case "tab_extract": return await _execTabExtract(args);
-      case "tab_scroll":  return await _execTabScroll(args);
-      case "dom_query":   return await _execDomQuery(args);
-      case "dom_click":   return await _execDomClick(args);
-      case "dom_set_value": return await _execDomSetValue(args);
-      case "dom_style":   return await _execDomStyle(args);
-      case "dom_get_html": return await _execDomGetHtml(args);
-      case "dom_highlight": return await _execDomHighlight(args);
-      case "eval_js":     return await _execEvalJs(args);
-      case "tab_open":    return await _execTabOpen(args);
-      case "tab_focus":   return await _execTabFocus(args);
-      case "tab_close":   return await _execTabClose(args);
-      case "tab_group":   return await _execTabGroup(args);
-      case "group_list": return await _execGroupList(args);
-      case "group_get": return await _execGroupGet(args);
-      case "group_update": return await _execGroupUpdate(args);
-      case "group_add_tabs": return await _execGroupAddTabs(args);
-      case "group_remove_tabs": return await _execGroupRemoveTabs(args);
-      case "group_ungroup": return await _execGroupUngroup(args);
-      case "history_search": return await _execHistorySearch(args);
-      case "history_recent": return await _execHistoryRecent(args);
-      case "tab_get_active": return await _execTabGetActive(args);
-      case "tab_screenshot": return await _execTabScreenshot(args);
-      case "window_list": return await _execWindowList(args);
-      case "window_get_current": return await _execWindowGetCurrent(args);
-      case "window_focus": return await _execWindowFocus(args);
-      case "window_move_tab": return await _execWindowMoveTab(args);
-      case "window_create": return await _execWindowCreate(args);
-      case "window_close": return await _execWindowClose(args);
-      case "get_current_time": return _execGetCurrentTime();
-      case "schedule_tool": return await _execScheduleTool(args, mcpRegistry);
-      case "list_scheduled": return _execListScheduled();
-      case "cancel_scheduled": return _execCancelScheduled(args);
-      case "clear_completed_scheduled": return _execClearCompletedScheduled();
-      case "stash_in_browser": return await _execStashInBrowser(args);
-      case "unstash_in_browser": return await _execUnstashInBrowser(args);
-      case "list_stashes_in_browser": return await _execListStashesInBrowser();
-      case "remove_stash_in_browser": return await _execRemoveStashInBrowser(args);
-      case "save_to_file": return await _execSaveToFile(args);
-      default: return { error: `Unknown tool: ${name}` };
-    }
+    const runBuiltinTool = () => {
+      switch (name) {
+        case "tab_list":    return _execTabList(args);
+        case "tab_extract": return _execTabExtract(args);
+        case "tab_scroll":  return _execTabScroll(args);
+        case "dom_query":   return _execDomQuery(args);
+        case "dom_click":   return _execDomClick(args);
+        case "dom_set_value": return _execDomSetValue(args);
+        case "dom_style":   return _execDomStyle(args);
+        case "dom_get_html": return _execDomGetHtml(args);
+        case "dom_highlight": return _execDomHighlight(args);
+        case "eval_js":     return _execEvalJs(args);
+        case "tab_open":    return _execTabOpen(args);
+        case "tab_focus":   return _execTabFocus(args);
+        case "tab_close":   return _execTabClose(args);
+        case "tab_group":   return _execTabGroup(args);
+        case "group_list": return _execGroupList(args);
+        case "group_get": return _execGroupGet(args);
+        case "group_update": return _execGroupUpdate(args);
+        case "group_add_tabs": return _execGroupAddTabs(args);
+        case "group_remove_tabs": return _execGroupRemoveTabs(args);
+        case "group_ungroup": return _execGroupUngroup(args);
+        case "history_search": return _execHistorySearch(args);
+        case "history_recent": return _execHistoryRecent(args);
+        case "tab_get_active": return _execTabGetActive(args);
+        case "tab_screenshot": return _execTabScreenshot(args);
+        case "window_list": return _execWindowList(args);
+        case "window_get_current": return _execWindowGetCurrent(args);
+        case "window_focus": return _execWindowFocus(args);
+        case "window_move_tab": return _execWindowMoveTab(args);
+        case "window_create": return _execWindowCreate(args);
+        case "window_close": return _execWindowClose(args);
+        case "get_current_time": return _execGetCurrentTime();
+        case "schedule_tool": return _execScheduleTool(args, mcpRegistry);
+        case "list_scheduled": return _execListScheduled();
+        case "cancel_scheduled": return _execCancelScheduled(args);
+        case "clear_completed_scheduled": return _execClearCompletedScheduled();
+        case "stash_in_browser": return _execStashInBrowser(args);
+        case "unstash_in_browser": return _execUnstashInBrowser(args);
+        case "list_stashes_in_browser": return _execListStashesInBrowser();
+        case "remove_stash_in_browser": return _execRemoveStashInBrowser(args);
+        case "save_to_file": return _execSaveToFile(args);
+        default: return { error: `Unknown tool: ${name}` };
+      }
+    };
+
+    return await withTimeout(
+      runBuiltinTool(),
+      DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS * 1000,
+      `Built-in tool timed out after ${DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS}s: ${name}`
+    );
   } catch (e) {
     return {
       error: e.message,
       hint: "The operation failed."
     };
   }
+}
+
+function withTimeout(promise, timeoutMs, message = "Operation timed out") {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([Promise.resolve(promise), timeoutPromise]).finally(() => {
+    if (timer != null) clearTimeout(timer);
+  });
 }
 
 /**
