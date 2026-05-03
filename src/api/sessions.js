@@ -1,5 +1,7 @@
 /* global chrome */
 
+const DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY = "agent_default_new_session_system_prompt";
+
 /**
  * Generate a unique session ID: s_{timestamp}_{random4chars}
  * @returns {string}
@@ -27,7 +29,13 @@ export async function listSessions() {
 export async function createSession(id, title) {
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   const now = Date.now();
-  sessions_index.unshift({ id, title: title || "新会话", createdAt: now, updatedAt: now });
+  sessions_index.unshift({
+    id,
+    title: title || "新会话",
+    createdAt: now,
+    updatedAt: now,
+    manualTitle: false
+  });
   await chrome.storage.local.set({ sessions_index });
 }
 
@@ -70,10 +78,46 @@ export async function saveSession(id, messages, title) {
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   const entry = sessions_index.find(s => s.id === id);
   if (entry) {
-    if (title) entry.title = title;
+    if (title && !entry.manualTitle) entry.title = title;
     entry.updatedAt = Date.now();
   }
   await chrome.storage.local.set({ sessions_index });
+}
+
+/**
+ * Update a session title manually. Manual titles are not overwritten by auto-generated titles.
+ * @param {string} id - session ID
+ * @param {string} title - custom display title
+ */
+export async function updateSessionTitle(id, title) {
+  const normalizedTitle = String(title || "").trim() || "新会话";
+  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(s => s.id === id);
+  if (entry) {
+    entry.title = normalizedTitle;
+    entry.manualTitle = true;
+    entry.updatedAt = Date.now();
+  }
+  await chrome.storage.local.set({ sessions_index });
+  return normalizedTitle;
+}
+
+/**
+ * Reset a session title back to the automatic-title mode.
+ * @param {string} id - session ID
+ * @param {string} [title] - display title to use until the next auto-generated title
+ */
+export async function resetSessionTitle(id, title = "新会话") {
+  const normalizedTitle = String(title || "").trim() || "新会话";
+  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(s => s.id === id);
+  if (entry) {
+    entry.title = normalizedTitle;
+    entry.manualTitle = false;
+    entry.updatedAt = Date.now();
+  }
+  await chrome.storage.local.set({ sessions_index });
+  return normalizedTitle;
 }
 
 /**
@@ -110,6 +154,41 @@ export async function deleteSession(id) {
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   const updated = sessions_index.filter(s => s.id !== id);
   await chrome.storage.local.set({ sessions_index: updated });
+}
+
+/**
+ * Load the system prompt that should be copied into newly-created sessions.
+ * @returns {Promise<{sessionId: string, systemPrompt: string}>}
+ */
+export async function loadDefaultNewSessionSystemPrompt() {
+  const result = await chrome.storage.local.get({
+    [DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY]: { sessionId: "", systemPrompt: "" }
+  });
+  const value = result[DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY] || {};
+  return {
+    sessionId: value.sessionId || "",
+    systemPrompt: value.systemPrompt || ""
+  };
+}
+
+/**
+ * Save or clear the system prompt that should be copied into newly-created sessions.
+ * @param {{sessionId?: string, systemPrompt?: string}} value
+ */
+export async function saveDefaultNewSessionSystemPrompt(value = {}) {
+  const normalizedPrompt = String(value.systemPrompt || "").trim();
+  if (!normalizedPrompt) {
+    await chrome.storage.local.set({
+      [DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY]: { sessionId: "", systemPrompt: "" }
+    });
+    return { sessionId: "", systemPrompt: "" };
+  }
+  const next = {
+    sessionId: value.sessionId || "",
+    systemPrompt: normalizedPrompt
+  };
+  await chrome.storage.local.set({ [DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY]: next });
+  return next;
 }
 
 /**

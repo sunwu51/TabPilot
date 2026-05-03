@@ -3,7 +3,21 @@ import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import { streamChat, executeTool } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
-import { generateSessionId, listSessions, createSession, loadSession, loadSessionMeta, saveSession, saveSessionMeta, deleteSession, extractTitle } from "../../api/sessions";
+import {
+  generateSessionId,
+  listSessions,
+  createSession,
+  loadSession,
+  loadSessionMeta,
+  saveSession,
+  saveSessionMeta,
+  deleteSession,
+  extractTitle,
+  updateSessionTitle,
+  resetSessionTitle,
+  loadDefaultNewSessionSystemPrompt,
+  saveDefaultNewSessionSystemPrompt
+} from "../../api/sessions";
 import {
   EMPTY_AGENT_SKILLS,
   buildSkillsSystemPrompt,
@@ -38,6 +52,9 @@ export default function AgentPanel() {
   const [sessionId, setSessionId] = useState(null);
   const [sessionTitle, setSessionTitle] = useState("");
   const [sessionSystemPrompt, setSessionSystemPrompt] = useState("");
+  const [defaultNewSessionSystemPrompt, setDefaultNewSessionSystemPrompt] = useState({ sessionId: "", systemPrompt: "" });
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [mcpTools, setMcpTools] = useState([]);   // MCP tools from connected servers
@@ -58,6 +75,7 @@ export default function AgentPanel() {
   const sessionRuntimeRef = useRef(new Map());
   const [pendingApproval, setPendingApproval] = useState(null);
   const approvalResolverRef = useRef(new Map());
+  const shouldFocusInputWhenReadyRef = useRef(false);
 
   /**
    * Streamed tokens can arrive faster than a user can read them. We only keep
@@ -72,10 +90,20 @@ export default function AgentPanel() {
     scrollMessagesToBottom("auto");
   }, [messages]);
 
+  useEffect(() => {
+    if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
+    shouldFocusInputWhenReadyRef.current = false;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, [loading, pendingApproval]);
+
   /** Initialize: load last session or create a new one */
   useEffect(() => {
     (async () => {
       const allSessions = await listSessions();
+      const defaultSystemPrompt = await loadDefaultNewSessionSystemPrompt();
+      setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
       setSessions(allSessions);
       if (allSessions.length > 0) {
         // Restore the most recent session
@@ -98,11 +126,14 @@ export default function AgentPanel() {
         // Create a fresh session
         const id = generateSessionId();
         await createSession(id, "新会话");
+        if (defaultSystemPrompt.systemPrompt) {
+          await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
+        }
         sessionMessagesRef.current.set(id, []);
         activeSessionIdRef.current = id;
         setSessionId(id);
         setSessionTitle("新会话");
-        setSessionSystemPrompt("");
+        setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
         setContextUsage(null);
@@ -231,9 +262,10 @@ export default function AgentPanel() {
     if (!targetSessionId) return;
     const title = extractTitle(msgs);
     await saveSession(targetSessionId, msgs, title);
-    setSessions(await listSessions());
+    const latestSessions = await listSessions();
+    setSessions(latestSessions);
     if (activeSessionIdRef.current === targetSessionId) {
-      setSessionTitle(title);
+      setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
     }
   }
 
@@ -254,6 +286,13 @@ export default function AgentPanel() {
       setLoading(!!next.loading);
       setPendingApproval(next.pendingApproval || null);
       setContextUsage(next.contextUsage || null);
+      if (!next.loading && !next.pendingApproval && shouldFocusInputWhenReadyRef.current) {
+        requestAnimationFrame(() => {
+          if (!activeSessionIdRef.current || activeSessionIdRef.current !== targetSessionId) return;
+          shouldFocusInputWhenReadyRef.current = false;
+          inputRef.current?.focus();
+        });
+      }
     }
     return next;
   }
@@ -296,6 +335,9 @@ export default function AgentPanel() {
 
   function stopSessionGeneration(targetSessionId) {
     const runtime = getSessionRuntime(targetSessionId);
+    if (activeSessionIdRef.current === targetSessionId) {
+      shouldFocusInputWhenReadyRef.current = true;
+    }
     if (runtime.abort) {
       runtime.abort();
     }
@@ -411,6 +453,7 @@ export default function AgentPanel() {
   function resolveDangerousToolApproval(approved) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
+    shouldFocusInputWhenReadyRef.current = true;
     const runtime = getSessionRuntime(currentSessionId);
     const resolver = approvalResolverRef.current.get(currentSessionId);
     approvalResolverRef.current.delete(currentSessionId);
@@ -433,12 +476,17 @@ export default function AgentPanel() {
     }
     const id = generateSessionId();
     await createSession(id, "新会话");
+    const defaultSystemPrompt = await loadDefaultNewSessionSystemPrompt();
+    setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
+    if (defaultSystemPrompt.systemPrompt) {
+      await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
+    }
     sessionMessagesRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
     activeSessionIdRef.current = id;
     setSessionId(id);
     setSessionTitle("新会话");
-    setSessionSystemPrompt("");
+    setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
@@ -506,6 +554,7 @@ export default function AgentPanel() {
       `- window_list and window_get_current return window snapshots with capturedAt timing fields.\n` +
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
       `- If you need the actual page content, first identify the right tab, then call tab_extract.\n` +
+      `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tab_focus to switch to and reactivate the tab, then retry the original tool.\n` +
       `- Treat questions about "latest", "current", "today", recent releases, prices, availability, laws, policies, API fields/schemas, model lists/capabilities/pricing, SDK behavior, product documentation, or any fast-changing technical detail as time-sensitive. Do not answer these from memory first.\n` +
       `- For time-sensitive questions, first look for an available web search/fetch MCP tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources before responding.\n` +
       `- If no web search/fetch tool is available, use browser tools instead: open a search engine or official documentation page with tab_open, inspect/extract the page with tab_extract and DOM tools, and then answer based on what you found.\n` +
@@ -607,9 +656,7 @@ export default function AgentPanel() {
     enableAutoFollowBottom("auto");
     setSessionMessages(currentSessionId, newMessages);
     setInput("");
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
+    shouldFocusInputWhenReadyRef.current = true;
     const nextRunId = getSessionRuntime(currentSessionId).runId + 1;
     setSessionRuntime(currentSessionId, { loading: true, abort: null, runId: nextRunId });
 
@@ -768,10 +815,15 @@ export default function AgentPanel() {
     setSessionRuntime(currentSessionId, { contextUsage: null });
     setSessionMessages(currentSessionId, []);
     setInput("");
-    setSessionTitle("新会话");
-    setSessionSystemPrompt("");
-    await saveSessionMeta(currentSessionId, { systemPrompt: "" });
-    await saveSession(currentSessionId, [], "新会话");
+    const currentSessionEntry = sessions.find(s => s.id === currentSessionId);
+    if (currentSessionEntry?.manualTitle) {
+      const preservedTitle = String(sessionTitle || "").trim() || "新会话";
+      setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
+      await saveSession(currentSessionId, [], preservedTitle);
+    } else {
+      setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
+      await saveSession(currentSessionId, [], "新会话");
+    }
     setSessions(await listSessions());
   }
 
@@ -800,14 +852,73 @@ export default function AgentPanel() {
     }
   }
 
-  async function handleSaveSessionSystemPrompt(systemPrompt) {
+  async function handleSaveSessionSystemPrompt(systemPrompt, applyToNewSessions = false) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
     const normalizedPrompt = String(systemPrompt || "").trim();
+    const previousDefault = await loadDefaultNewSessionSystemPrompt();
+    if (
+      applyToNewSessions &&
+      normalizedPrompt &&
+      previousDefault.systemPrompt &&
+      previousDefault.sessionId &&
+      previousDefault.sessionId !== currentSessionId
+    ) {
+      const ok = window.confirm("已经存在一个作用于新会话的系统提示，保存后将会覆盖之前的设置。是否继续？");
+      if (!ok) return false;
+    }
+
     await saveSessionMeta(currentSessionId, { systemPrompt: normalizedPrompt });
     setSessionSystemPrompt(normalizedPrompt);
+
+    let nextDefault = previousDefault;
+    if (applyToNewSessions && normalizedPrompt) {
+      nextDefault = await saveDefaultNewSessionSystemPrompt({
+        sessionId: currentSessionId,
+        systemPrompt: normalizedPrompt
+      });
+    } else if (previousDefault.sessionId === currentSessionId) {
+      nextDefault = await saveDefaultNewSessionSystemPrompt({ sessionId: "", systemPrompt: "" });
+    }
+    setDefaultNewSessionSystemPrompt(nextDefault);
+
     setSessions(await listSessions());
-    toast.success(normalizedPrompt ? "系统提示已保存" : "系统提示已清空");
+    if (normalizedPrompt && nextDefault.sessionId === currentSessionId) {
+      toast.success("系统提示已保存，并将用于新会话");
+    } else {
+      toast.success(normalizedPrompt ? "系统提示已保存" : "系统提示已清空");
+    }
+    return true;
+  }
+
+  function startEditingSessionTitle() {
+    setTitleDraft(sessionTitle || "新会话");
+    setEditingTitle(true);
+  }
+
+  async function saveEditingSessionTitle() {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    const nextTitle = await updateSessionTitle(currentSessionId, titleDraft);
+    setSessionTitle(nextTitle);
+    setEditingTitle(false);
+    setSessions(await listSessions());
+    toast.success("会话标题已更新");
+  }
+
+  function cancelEditingSessionTitle() {
+    setEditingTitle(false);
+    setTitleDraft("");
+  }
+
+  function handleTitleEditKeyDown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveEditingSessionTitle();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEditingSessionTitle();
+    }
   }
 
   function handleKeyDown(e) {
@@ -862,57 +973,135 @@ export default function AgentPanel() {
 
   return (
     <div className="agent-panel">
-      <div className="chat-toolbar">
-        <button className="chat-toolbar-btn" onClick={handleNewSession}>+ 新建</button>
-        <Dialog trigger={<button className="chat-toolbar-btn">系统</button>}>
-          <SessionSystemPromptDialogBody
-            initialValue={sessionSystemPrompt}
-            onSave={handleSaveSessionSystemPrompt}
-          />
-        </Dialog>
-        <button className="chat-toolbar-btn" onClick={handleClearCurrentSession}>清空</button>
-        <button className="chat-toolbar-btn" onClick={handleExportCurrentSession}>导出</button>
-        <Dialog trigger={<button className="chat-toolbar-btn">调度</button>}>
-          <ScheduleJobsDialogBody />
-        </Dialog>
-        <span className="chat-session-title">{sessionTitle || "新会话"}</span>
-        <div className="chat-history-wrapper" ref={historyRef}>
-          <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }}>
-            历史 {showHistory ? "▲" : "▼"}
+      <div className={`chat-header ${(editingTitle || showHistory) ? "chat-header-expanded" : ""}`}>
+        <div className="chat-toolbar">
+          <button className="chat-toolbar-btn" onClick={handleNewSession} title="新建">
+            <span className="chat-toolbar-icon">+</span>
+            <span className="chat-toolbar-full-text">新建</span>
           </button>
-          {showHistory && (
-            <div className="chat-history-dropdown">
-              {sessions.length === 0 && (
-                <div className="chat-history-empty">暂无历史会话</div>
-              )}
-              {sessions.map(s => (
-                <div
-                  key={s.id}
-                  className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
-                  onClick={() => switchSession(s.id)}
-                >
-                  <div className="chat-history-item-info">
-                    <span className="chat-history-item-title">
-                      {s.title}
-                      {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
-                        <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
-                      )}
-                      {s.id !== sessionId && isSessionLoading(s.id) && (
-                        <span className="chat-history-item-status">● 生成中</span>
-                      )}
-                    </span>
-                    <span className="chat-history-item-time">{formatTime(s.updatedAt)}</span>
-                  </div>
+          <Dialog trigger={
+            <button className="chat-toolbar-btn" title="系统">
+              <span className="chat-toolbar-icon">⚙️</span>
+              <span className="chat-toolbar-full-text">系统</span>
+            </button>
+          }>
+            <SessionSystemPromptDialogBody
+              initialValue={sessionSystemPrompt}
+              initiallyApplyToNewSessions={defaultNewSessionSystemPrompt.sessionId === sessionId && !!defaultNewSessionSystemPrompt.systemPrompt}
+              onSave={handleSaveSessionSystemPrompt}
+            />
+          </Dialog>
+          <button className="chat-toolbar-btn" onClick={handleClearCurrentSession} title="清空">
+            <span className="chat-toolbar-icon">🗑️</span>
+            <span className="chat-toolbar-full-text">清空</span>
+          </button>
+          <button className="chat-toolbar-btn" onClick={handleExportCurrentSession} title="导出">
+            <span className="chat-toolbar-icon">⬇️</span>
+            <span className="chat-toolbar-full-text">导出</span>
+          </button>
+          <Dialog trigger={
+            <button className="chat-toolbar-btn" title="调度">
+              <span className="chat-toolbar-icon">⏱️</span>
+              <span className="chat-toolbar-full-text">调度</span>
+            </button>
+          }>
+            <ScheduleJobsDialogBody />
+          </Dialog>
+          <div className="chat-toolbar-expanded-spacer" />
+          <div className="chat-title-inline">
+            <span className="chat-session-title">
+              {editingTitle ? (
+                <input
+                  className="chat-session-title-input"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={handleTitleEditKeyDown}
+                  onBlur={saveEditingSessionTitle}
+                  autoFocus
+                />
+              ) : (
+                <>
+                  <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
                   <button
-                    className="chat-history-item-delete"
-                    onClick={(e) => handleDeleteSession(s.id, e)}
-                    aria-label={`删除会话 ${s.title || ""}`.trim()}
-                    title="删除"
-                  >✕</button>
-                </div>
-              ))}
-            </div>
-          )}
+                    className="chat-session-title-edit"
+                    type="button"
+                    onClick={startEditingSessionTitle}
+                    aria-label="编辑会话标题"
+                    title="编辑标题"
+                  >
+                    ✎
+                  </button>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="chat-history-wrapper" ref={historyRef}>
+            <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }} title="历史">
+              <span className="chat-toolbar-icon">🕘</span>
+              <span className="chat-toolbar-full-text">历史</span>
+              <span className="chat-toolbar-caret">{showHistory ? "▲" : "▼"}</span>
+            </button>
+            {showHistory && (
+              <div className="chat-history-dropdown">
+                {sessions.length === 0 && (
+                  <div className="chat-history-empty">暂无历史会话</div>
+                )}
+                {sessions.map(s => (
+                  <div
+                    key={s.id}
+                    className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
+                    onClick={() => switchSession(s.id)}
+                  >
+                    <div className="chat-history-item-info">
+                      <span className="chat-history-item-title">
+                        {s.title}
+                        {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
+                          <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
+                        )}
+                        {s.id !== sessionId && isSessionLoading(s.id) && (
+                          <span className="chat-history-item-status">● 生成中</span>
+                        )}
+                      </span>
+                      <span className="chat-history-item-time">{formatTime(s.updatedAt)}</span>
+                    </div>
+                    <button
+                      className="chat-history-item-delete"
+                      onClick={(e) => handleDeleteSession(s.id, e)}
+                      aria-label={`删除会话 ${s.title || ""}`.trim()}
+                      title="删除"
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="chat-title-row">
+          <span className="chat-session-title">
+            {editingTitle ? (
+              <input
+                className="chat-session-title-input"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={handleTitleEditKeyDown}
+                onBlur={saveEditingSessionTitle}
+                autoFocus
+              />
+            ) : (
+              <>
+                <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
+                <button
+                  className="chat-session-title-edit"
+                  type="button"
+                  onClick={startEditingSessionTitle}
+                  aria-label="编辑会话标题"
+                  title="编辑标题"
+                >
+                  ✎
+                </button>
+              </>
+            )}
+          </span>
         </div>
       </div>
 
@@ -981,7 +1170,8 @@ export default function AgentPanel() {
           onKeyDown={handleKeyDown}
           placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
           rows={3}
-          disabled={loading || !!pendingApproval}
+          readOnly={loading}
+          disabled={!!pendingApproval}
         />
         <div className="chat-input-status-line">
           <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
@@ -1111,8 +1301,9 @@ function formatContextUsageK(contextUsage) {
   return `${value.toFixed(2)}K`;
 }
 
-function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
+function SessionSystemPromptDialogBody({ initialValue = "", initiallyApplyToNewSessions = false, onSave }) {
   const [draft, setDraft] = useState(initialValue || "");
+  const [applyToNewSessions, setApplyToNewSessions] = useState(!!initiallyApplyToNewSessions);
   const [saving, setSaving] = useState(false);
   const rootRef = useRef(null);
 
@@ -1124,8 +1315,8 @@ function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
   async function handleSave() {
     setSaving(true);
     try {
-      await onSave?.(draft);
-      closeDialog();
+      const saved = await onSave?.(draft, applyToNewSessions);
+      if (saved !== false) closeDialog();
     } catch (error) {
       toast.error(`保存失败: ${error?.message || String(error)}`);
     } finally {
@@ -1137,7 +1328,7 @@ function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
     <div ref={rootRef} className="system-prompt-dialog">
       <div>
         <div className="schedule-dialog-title">当前会话系统提示</div>
-        <div className="schedule-dialog-subtitle">保存后只影响当前会话，会作为额外 system prompt 注入。</div>
+        <div className="schedule-dialog-subtitle">默认只影响当前会话，会作为额外 system prompt 注入。</div>
       </div>
       <textarea
         className="system-prompt-textarea"
@@ -1145,6 +1336,14 @@ function SessionSystemPromptDialogBody({ initialValue = "", onSave }) {
         onChange={(e) => setDraft(e.target.value)}
         placeholder={SYSTEM_PROMPT_PLACEHOLDER}
       />
+      <label className="system-prompt-default-toggle">
+        <input
+          type="checkbox"
+          checked={applyToNewSessions}
+          onChange={(e) => setApplyToNewSessions(e.target.checked)}
+        />
+        <span>同时作为新会话的系统提示（最多只能有一个）</span>
+      </label>
       <div className="schedule-dialog-actions">
         <Button
           className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
