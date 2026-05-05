@@ -1,5 +1,6 @@
 /* global chrome */
 import { resolveLlmRequestUrl } from "./llmEndpoint";
+import { API_TYPES, getDefaultApiType, normalizeApiType } from "./llm";
 
 /**
  * Lightweight non-streaming, no-tools LLM text completion.
@@ -14,8 +15,12 @@ export async function textComplete(config, messages) {
     throw new Error("LLM config incomplete (apiKey / baseUrl / model required)");
   }
 
-  if (config.apiType === "anthropic") {
+  const apiType = normalizeApiType(config.apiType);
+  if (apiType === API_TYPES.ANTHROPIC) {
     return _anthropicComplete(config, messages);
+  }
+  if (apiType === API_TYPES.OPENAI_RESPONSES) {
+    return _openaiResponsesComplete(config, messages);
   }
   return _openaiComplete(config, messages);
 }
@@ -28,7 +33,7 @@ function buildOpenAICacheFields(options = {}) {
 }
 
 async function _openaiComplete(config, messages, options = {}) {
-  const url = resolveLlmRequestUrl("openai", config.baseUrl);
+  const url = resolveLlmRequestUrl(API_TYPES.OPENAI_CHAT_COMPLETIONS, config.baseUrl);
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -75,6 +80,54 @@ function extractOpenAITextContent(content) {
   return "";
 }
 
+
+
+async function _openaiResponsesComplete(config, messages, options = {}) {
+  const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      input: messages.map((msg) => ({
+        role: msg.role,
+        content: [{ type: "input_text", text: typeof msg.content === "string" ? msg.content : String(msg.content ?? "") }]
+      })),
+      stream: false,
+      max_output_tokens: 600,
+      ...buildOpenAICacheFields(options)
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.status);
+    throw new Error(`OpenAI Responses API error ${res.status}: ${text}`);
+  }
+
+  const json = await res.json();
+  const text = extractOpenAIResponsesTextContent(json);
+  if (!text) {
+    throw new Error("Unexpected OpenAI Responses response shape");
+  }
+  return text;
+}
+
+function extractOpenAIResponsesTextContent(response) {
+  const outputs = Array.isArray(response?.output) ? response.output : [];
+  const text = outputs
+    .flatMap((item) => Array.isArray(item?.content) ? item.content : [])
+    .filter((block) => (block?.type === "output_text" || block?.type === "text") && typeof block?.text === "string")
+    .map((block) => block.text)
+    .join("")
+    .trim();
+  if (text) return text;
+  if (typeof response?.output_text === "string") return response.output_text.trim();
+  return "";
+}
+
 async function _anthropicComplete(config, messages) {
   let systemPrompt = "";
   const apiMessages = [];
@@ -86,7 +139,7 @@ async function _anthropicComplete(config, messages) {
     }
   }
 
-  const url = resolveLlmRequestUrl("anthropic", config.baseUrl);
+  const url = resolveLlmRequestUrl(API_TYPES.ANTHROPIC, config.baseUrl);
   const body = {
     model: config.model,
     cache_control: DEFAULT_ANTHROPIC_CACHE_CONTROL,
@@ -125,7 +178,7 @@ async function _anthropicComplete(config, messages) {
  */
 export async function getLLMConfigForMemory() {
   const { llmConfig } = await chrome.storage.local.get({
-    llmConfig: { apiType: "openai", baseUrl: "", apiKey: "", model: "" },
+    llmConfig: { apiType: getDefaultApiType(), baseUrl: "", apiKey: "", model: "" },
   });
   if (!llmConfig?.apiKey || !llmConfig?.baseUrl || !llmConfig?.model) {
     return null;

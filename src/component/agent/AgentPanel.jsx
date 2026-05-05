@@ -1,7 +1,7 @@
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
-import { streamChat, executeTool } from "../../api/llm";
+import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
@@ -63,7 +63,7 @@ export default function AgentPanel() {
   const [skillStationTools, setSkillStationTools] = useState([]);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: "openai", model: "" });
+  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "" });
   const [contextUsage, setContextUsage] = useState(null);
   const messagesScrollerRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -176,7 +176,7 @@ export default function AgentPanel() {
       if (areaName === "local" && changes.llmConfig) {
         const nextConfig = changes.llmConfig.newValue || {};
         setLlmConfigInfo({
-          apiType: nextConfig.apiType || "openai",
+          apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
           model: nextConfig.model || ""
         });
       }
@@ -246,10 +246,10 @@ export default function AgentPanel() {
 
   async function refreshLlmConfigInfo() {
     const { llmConfig } = await chrome.storage.local.get({
-      llmConfig: { apiType: "openai", model: "" }
+      llmConfig: { apiType: getDefaultApiType(), model: "" }
     });
     setLlmConfigInfo({
-      apiType: llmConfig?.apiType || "openai",
+      apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || ""
     });
   }
@@ -573,7 +573,7 @@ export default function AgentPanel() {
   async function getLLMConfig() {
     const { llmConfig } = await chrome.storage.local.get({
       llmConfig: {
-        apiType: "openai",
+        apiType: getDefaultApiType(),
         baseUrl: "",
         apiKey: "",
         model: "",
@@ -582,11 +582,12 @@ export default function AgentPanel() {
       }
     });
     setLlmConfigInfo({
-      apiType: llmConfig?.apiType || "openai",
+      apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || ""
     });
     return {
       ...llmConfig,
+      apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       supportsImageInput: llmConfig?.supportsImageInput === true
     };
   }
@@ -1214,7 +1215,7 @@ function buildContextUsage(apiType, model, usage) {
   if (!usage || typeof usage !== "object") return null;
   const tokens = calculateContextTokens(apiType, usage);
   return {
-    apiType: apiType || "openai",
+    apiType: normalizeApiType(apiType || getDefaultApiType()),
     model: model || "",
     tokens: Number.isFinite(tokens) ? tokens : null,
     usageStatus: Number.isFinite(tokens) ? "ok" : "unrecognized",
@@ -1227,7 +1228,7 @@ function getLatestContextUsageFromMessages(messages, fallbackConfig = {}) {
     const msg = messages[index];
     if (!msg?.usage) continue;
     const usageInfo = buildContextUsage(
-      msg._usageApiType || fallbackConfig.apiType || "openai",
+      normalizeApiType(msg._usageApiType || fallbackConfig.apiType || getDefaultApiType()),
       msg._usageModel || fallbackConfig.model || "",
       msg.usage
     );
@@ -1246,7 +1247,7 @@ function calculateContextTokens(apiType, usage) {
   ];
   const openAiFields = ["prompt_tokens", "completion_tokens"];
 
-  if (apiType === "anthropic") {
+  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
     return firstFiniteNumber(
       sumTokenFields(usage, anthropicFields),
       sumTokenFields(usage, openAiFields),
@@ -1728,6 +1729,12 @@ function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
     role: "assistant",
     content: textContent || doneMsg.content || ""
   };
+  if (doneMsg?.response_id) {
+    message._responsesResponseId = doneMsg.response_id;
+  }
+  if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
+    message._responsesContent = doneMsg.response_content;
+  }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
 
@@ -1745,7 +1752,7 @@ function downloadMarkdownFile(filename, markdown) {
 }
 
 function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
-  if (apiType === "anthropic") {
+  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
     return copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
   }
 
@@ -1754,6 +1761,12 @@ function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
     content: textContent || null,
     tool_calls: doneMsg._openaiToolCalls
   };
+  if (doneMsg?.response_id) {
+    message._responsesResponseId = doneMsg.response_id;
+  }
+  if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
+    message._responsesContent = doneMsg.response_content;
+  }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
 
@@ -2203,7 +2216,7 @@ function buildAnthropicApiMessages(messages, options = {}) {
 }
 
 function buildApiMessages(apiType, messages, options = {}) {
-  if (apiType === "anthropic") {
+  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
     return buildAnthropicApiMessages(messages, options);
   }
   return buildOpenAIApiMessages(messages, options);
