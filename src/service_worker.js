@@ -10,6 +10,19 @@ import {
 } from "./api/tabReuse";
 import { BUILTIN_TOOL_NAMES, executeTool } from "./api/llm";
 import { connectWsBridge, disconnectWsBridge, ensureWsBridgeHealthy, getWsBridgeStatus, startWsBridge } from "./api/wsBridge";
+import {
+    listMacros,
+    saveMacro,
+    deleteMacro,
+    getMacro,
+    getRecording,
+    setRecording,
+    clearRecording,
+    newMacroId,
+    normalizeStep,
+    MACROS_STORAGE_KEY,
+    MACRO_RECORDING_KEY
+} from "./api/macro";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const pendingReusePrompts = new Map();
@@ -399,6 +412,105 @@ async function applyReuseDecision(pending, decision, rememberChoice) {
     await focusTabIfExists(pending.newTabId);
 }
 
+// ========== Macro recording / replay helpers ==========
+
+async function startMacroRecording(payload) {
+    const tabId = Number(payload?.tabId);
+    const startUrl = String(payload?.startUrl || "").trim();
+    const name = String(payload?.name || "").trim() || "untitled";
+    if (!Number.isInteger(tabId)) return { success: false, error: "tabId is required" };
+    if (!startUrl) return { success: false, error: "startUrl is required" };
+
+    const id = newMacroId();
+    let origin = "";
+    try { origin = new URL(startUrl).origin; } catch { /* ignore */ }
+    const draft = {
+        id,
+        name,
+        startUrl,
+        origin,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        steps: []
+    };
+    await setRecording({ tabId, draft });
+    // Nudge the content script in that tab in case it loaded before storage was set.
+    try {
+        chrome.tabs.sendMessage(tabId, { type: "macro_activate_check" }, () => void chrome.runtime.lastError);
+    } catch { /* ignore */ }
+    return { success: true, data: { id, tabId } };
+}
+
+async function appendMacroDraftStep(rawStep) {
+    const recording = await getRecording();
+    if (!recording) return;
+    const step = normalizeStep(rawStep);
+    if (!step) return;
+    const draft = recording.draft || { steps: [] };
+    draft.steps = Array.isArray(draft.steps) ? draft.steps : [];
+    draft.steps.push(step);
+    draft.updatedAt = Date.now();
+    await setRecording({ tabId: recording.tabId, draft });
+}
+
+async function stopMacroRecording({ commit }) {
+    const recording = await getRecording();
+    if (!recording) {
+        return { success: true, data: { committed: false, reason: "no active recording" } };
+    }
+    const tabId = recording.tabId;
+    const draft = recording.draft;
+    await clearRecording();
+    // Tell the recorder in that tab to stop (storage change triggers it too).
+    try {
+        chrome.tabs.sendMessage(tabId, { type: "macro_activate_check" }, () => void chrome.runtime.lastError);
+    } catch { /* ignore */ }
+
+    if (!commit) {
+        return { success: true, data: { committed: false, discarded: true } };
+    }
+    if (!draft || !Array.isArray(draft.steps) || draft.steps.length === 0) {
+        return { success: true, data: { committed: false, reason: "draft is empty" } };
+    }
+    const saved = await saveMacro(draft);
+    return { success: true, data: { committed: true, macro: saved } };
+}
+
+function waitForTabComplete(tabId, timeoutMs = 15000) {
+    return new Promise((resolve) => {
+        const deadline = Date.now() + timeoutMs;
+        const check = () => {
+            chrome.tabs.get(tabId, (tab) => {
+                if (chrome.runtime.lastError || !tab) return resolve(false);
+                if (tab.status === "complete") return resolve(true);
+                if (Date.now() >= deadline) return resolve(false);
+                setTimeout(check, 200);
+            });
+        };
+        check();
+    });
+}
+
+async function replayMacro(id) {
+    const macro = await getMacro(id);
+    if (!macro) return { success: false, error: "macro not found" };
+    if (!macro.startUrl) return { success: false, error: "macro has no startUrl" };
+    const tab = await chrome.tabs.create({ url: macro.startUrl, active: true });
+    const ready = await waitForTabComplete(tab.id);
+    if (!ready) return { success: false, error: "tab failed to load in time" };
+    // Small extra grace for SPA hydration.
+    await new Promise(r => setTimeout(r, 500));
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tab.id, { type: "macro_play", steps: macro.steps }, (response) => {
+            if (chrome.runtime.lastError) {
+                resolve({ success: false, error: chrome.runtime.lastError.message });
+                return;
+            }
+            resolve({ success: true, tabId: tab.id, ...(response || {}) });
+        });
+    });
+}
+
 // ========== Message handler (must be registered first for reliable wake-up) ==========
 
 /**
@@ -458,6 +570,62 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
         })();
         return true;
+    }
+
+    if (msg?.type === "macro_manager") {
+        (async () => {
+            try {
+                switch (msg.action) {
+                    case "list":
+                        sendResponse({ success: true, data: await listMacros() });
+                        break;
+                    case "get":
+                        sendResponse({ success: true, data: await getMacro(msg.payload?.id) });
+                        break;
+                    case "save":
+                        sendResponse({ success: true, data: await saveMacro(msg.payload) });
+                        break;
+                    case "delete":
+                        sendResponse({ success: true, data: await deleteMacro(msg.payload?.id) });
+                        break;
+                    case "start":
+                        sendResponse(await startMacroRecording(msg.payload || {}));
+                        break;
+                    case "stop":
+                        sendResponse(await stopMacroRecording({ commit: msg.payload?.commit !== false }));
+                        break;
+                    case "replay":
+                        sendResponse(await replayMacro(msg.payload?.id));
+                        break;
+                    case "recording_status":
+                        sendResponse({ success: true, data: await getRecording() });
+                        break;
+                    default:
+                        sendResponse({ error: `Unknown macro action: ${msg.action}` });
+                }
+            } catch (error) {
+                sendResponse({ error: error?.message || String(error) });
+            }
+        })();
+        return true;
+    }
+
+    if (msg?.type === "macro_record_step") {
+        (async () => {
+            try {
+                await appendMacroDraftStep(msg.step);
+                sendResponse({ success: true });
+            } catch (error) {
+                sendResponse({ success: false, error: error?.message || String(error) });
+            }
+        })();
+        return true;
+    }
+
+    if (msg?.type === "macro_get_my_tab_id") {
+        const tabId = sender?.tab?.id;
+        sendResponse({ tabId: Number.isInteger(tabId) ? tabId : null });
+        return false;
     }
 
     function forwardToTab(tabId, payload) {
@@ -649,6 +817,36 @@ chrome.webNavigation.onCompleted.addListener(async e => {
     }
 });
 
+// Fallback: if a JS-triggered navigation happens in the recording tab and our
+// content-script hooks didn't intercept it, auto-commit so we don't keep
+// recording on the new page.
+chrome.webNavigation.onCommitted.addListener(async e => {
+    if (e.frameId !== 0) return;
+    try {
+        const recording = await getRecording();
+        if (!recording || recording.tabId !== e.tabId) return;
+        if (!e.url) return;
+        const currentOrigin = recording.draft?.origin || "";
+        const startUrl = recording.draft?.startUrl || "";
+        // Allow same-page hash/query updates and reloads of the start URL.
+        if (e.url === startUrl) return;
+        try {
+            const newUrl = new URL(e.url);
+            const startUrlParsed = startUrl ? new URL(startUrl) : null;
+            if (
+                startUrlParsed &&
+                newUrl.origin === startUrlParsed.origin &&
+                newUrl.pathname === startUrlParsed.pathname
+            ) {
+                return;
+            }
+        } catch { /* fall through */ }
+        // Different page: commit whatever we recorded so far.
+        await stopMacroRecording({ commit: true });
+        void currentOrigin; // reserved for future origin-based policy
+    } catch (err) {/* ignore */}
+});
+
 chrome.tabs.onRemoved.addListener(async function (tabId) {
     clearPendingReusePrompt(tabId);
     for (const [pendingTabId, pending] of pendingReusePrompts.entries()) {
@@ -657,6 +855,14 @@ chrome.tabs.onRemoved.addListener(async function (tabId) {
         }
     }
     try { await chrome.runtime.sendMessage({ type: 'close', tabId }); } catch (e) {/* ignore */}
+
+    // If the closed tab was the recording tab, auto-commit whatever is buffered.
+    try {
+        const recording = await getRecording();
+        if (recording && recording.tabId === tabId) {
+            await stopMacroRecording({ commit: true });
+        }
+    } catch (e) {/* ignore */}
 });
 
 chrome.tabs.onActivated.addListener(async function (activeInfo) {
