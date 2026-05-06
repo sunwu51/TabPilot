@@ -14,6 +14,7 @@ export default function Macro() {
     const [search, setSearch] = useState("");
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
     const [replayingId, setReplayingId] = useState(null);
+    const [replaySpeed, setReplaySpeed] = useState("normal");
 
     async function loadAll() {
         const res = await sendMacroMessage({ action: "list" });
@@ -64,7 +65,18 @@ export default function Macro() {
     }
 
     async function stopRecording(commit) {
-        const res = await sendMacroMessage({ action: "stop", payload: { commit } });
+        let replacePasswords = false;
+        if (commit) {
+            const rec = recording || (await sendMacroMessage({ action: "recording_status" }))?.data;
+            const hasPassword = rec?.draft?.steps?.some(s => s.type === "input" && s.inputType === "password");
+            if (hasPassword) {
+                const keepRealPassword = window.confirm(
+                    "发现录制过程中有密码输入。\n\n选择“确定”：记录真实密码（将会明文存到本地宏数据中）。\n选择“取消”：用 1A2b3!4399 代替密码。"
+                );
+                replacePasswords = !keepRealPassword;
+            }
+        }
+        const res = await sendMacroMessage({ action: "stop", payload: { commit, replacePasswords } });
         if (res?.success) {
             const data = res.data;
             if (data?.committed) toast.success(`已保存宏「${data.macro?.name}」(${data.macro?.steps?.length || 0} 步)`);
@@ -79,7 +91,7 @@ export default function Macro() {
     async function replayMacro(id) {
         setReplayingId(id);
         try {
-            const res = await sendMacroMessage({ action: "replay", payload: { id } });
+            const res = await sendMacroMessage({ action: "replay", payload: { id, options: buildReplayOptions(replaySpeed) } });
             if (!res?.success) {
                 toast.error(`回放失败: ${res?.error || "未知错误"}`);
                 return;
@@ -88,7 +100,9 @@ export default function Macro() {
             if (report?.ok) {
                 toast.success(`回放成功 (${report.success}/${report.total})`);
             } else if (report) {
-                toast.error(`回放在第 ${report.failedAt + 1} 步失败：${report.results?.[report.failedAt]?.error || "未知"}`);
+                const failed = report.results?.find(r => r.index === report.failedAt);
+                const detail = failed?.usedSelector ? `，selector: ${failed.usedSelector}` : "";
+                toast.error(`回放在第 ${report.failedAt + 1} 步失败：${failed?.error || "未知"}${detail}`);
             } else {
                 toast.success("已发起回放");
             }
@@ -118,7 +132,7 @@ export default function Macro() {
     return (
         <Card>
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
-                <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏</span>
+                <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏 <span className="text-gray-400">(beta)</span></span>
                 <Button className="w-24 !text-xs" onPress={() => setShowStartForm(!showStartForm)} isDisabled={!!recording}>
                     {recording ? "录制中..." : (showStartForm ? "取消" : "新增/录制")}
                 </Button>
@@ -176,6 +190,21 @@ export default function Macro() {
                 />
             </div>
 
+            <div className="mb-2 flex items-center gap-2 text-xs">
+                <span className="text-gray-500">回放速度</span>
+                <select
+                    className="px-2 py-1 border border-gray-300 rounded text-xs"
+                    value={replaySpeed}
+                    onChange={e => setReplaySpeed(e.target.value)}
+                >
+                    <option value="slow">慢速</option>
+                    <option value="normal">正常</option>
+                    <option value="fast">快速</option>
+                    <option value="instant">极速</option>
+                </select>
+                <span className="text-gray-400">每步会高亮目标元素</span>
+            </div>
+
             {macros.length === 0 && (
                 <div className="text-xs text-gray-400 text-center py-2">还没有宏，点上方「新增/录制」开始</div>
             )}
@@ -194,7 +223,7 @@ export default function Macro() {
                             <span className="text-gray-400 ml-1">{macro.steps.length} 步</span>
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
-                            <MacroEditor macro={macro} onSaved={loadAll} />
+                            <MacroEditor macro={macro} onSaved={loadAll} replayOptions={buildReplayOptions(replaySpeed)} />
                             <Button
                                 className="!text-xs !p-0 !px-2 !min-h-6"
                                 isDisabled={replayingId === macro.id || !!recording}
@@ -256,4 +285,8 @@ function defaultMacroName() {
     const d = new Date();
     const pad = n => String(n).padStart(2, "0");
     return `macro_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
+function buildReplayOptions(speed) {
+    return { speed };
 }

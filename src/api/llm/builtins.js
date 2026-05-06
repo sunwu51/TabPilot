@@ -1,7 +1,7 @@
 /* global chrome */
 import { callMcpTool } from "../mcp";
 import { buildMcpToolCallName } from "./tools";
-import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
+import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 
 
 /**
@@ -72,6 +72,9 @@ export async function executeTool(name, args, mcpRegistry = []) {
         case "unstash_in_browser": return _execUnstashInBrowser(args);
         case "list_stashes_in_browser": return _execListStashesInBrowser();
         case "remove_stash_in_browser": return _execRemoveStashInBrowser(args);
+        case "list_macros": return _execListMacros(args);
+        case "describe_macro": return _execDescribeMacro(args);
+        case "run_macro": return _execRunMacro(args);
         case "save_to_file": return _execSaveToFile(args);
         default: return { error: `Unknown tool: ${name}` };
       }
@@ -79,8 +82,8 @@ export async function executeTool(name, args, mcpRegistry = []) {
 
     return await withTimeout(
       runBuiltinTool(),
-      DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS * 1000,
-      `Built-in tool timed out after ${DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS}s: ${name}`
+      getBuiltinToolTimeoutSeconds(name) * 1000,
+      `Built-in tool timed out after ${getBuiltinToolTimeoutSeconds(name)}s: ${name}`
     );
   } catch (e) {
     return {
@@ -88,6 +91,53 @@ export async function executeTool(name, args, mcpRegistry = []) {
       hint: "The operation failed."
     };
   }
+}
+
+function getBuiltinToolTimeoutSeconds(name) {
+  if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
+  return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
+}
+
+function _sendMacroManagerMessage(action, payload = {}) {
+  return new Promise(resolve => {
+    try {
+      chrome.runtime.sendMessage({ type: "macro_manager", action, payload }, response => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(response || { success: false, error: "Empty macro manager response" });
+      });
+    } catch (error) {
+      resolve({ success: false, error: error?.message || String(error) });
+    }
+  });
+}
+
+async function _execListMacros({ query } = {}) {
+  const res = await _sendMacroManagerMessage("list_for_ai", { query });
+  if (!res?.success) return { error: res?.error || "Failed to list macros" };
+  return { macros: res.data || [] };
+}
+
+async function _execDescribeMacro({ id } = {}) {
+  if (!id || typeof id !== "string") return { error: "id is required" };
+  const res = await _sendMacroManagerMessage("describe_for_ai", { id });
+  if (!res?.success) return { error: res?.error || "Failed to describe macro" };
+  if (!res.data) return { error: `Macro not found: ${id}` };
+  return { macro: res.data };
+}
+
+async function _execRunMacro({ id, inputValues = {}, speed = "normal", stepDelayMs } = {}) {
+  if (!id || typeof id !== "string") return { error: "id is required" };
+  const options = { speed };
+  if (stepDelayMs != null) options.stepDelayMs = Number(stepDelayMs);
+  const res = await _sendMacroManagerMessage("replay", { id, inputValues, options });
+  if (!res?.success) return { error: res?.error || "Failed to run macro" };
+  return {
+    tabId: res.tabId,
+    report: res.report
+  };
 }
 
 function withTimeout(promise, timeoutMs, message = "Operation timed out") {

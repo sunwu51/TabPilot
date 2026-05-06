@@ -512,10 +512,11 @@
   font-size: 13px;
   resize: none;
   min-height: 64px;
-  max-height: 150px;
+  max-height: 50vh;
   line-height: 1.5;
   font-family: inherit;
   box-sizing: border-box;
+  overflow-y: hidden;
 }
 
 .chat-input-status-line {

@@ -19,9 +19,7 @@ import {
     setRecording,
     clearRecording,
     newMacroId,
-    normalizeStep,
-    MACROS_STORAGE_KEY,
-    MACRO_RECORDING_KEY
+    normalizeStep
 } from "./api/macro";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
@@ -32,6 +30,7 @@ const DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS = 30;
 const SCHEDULE_FIRE_ALARM_PREFIX = "schedule-fire:";
 const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
 const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
+const PASSWORD_PLACEHOLDER = "1A2b3!4399";
 
 function buildScheduleFireAlarmName(id) {
     return `${SCHEDULE_FIRE_ALARM_PREFIX}${id}`;
@@ -448,12 +447,44 @@ async function appendMacroDraftStep(rawStep) {
     if (!step) return;
     const draft = recording.draft || { steps: [] };
     draft.steps = Array.isArray(draft.steps) ? draft.steps : [];
-    draft.steps.push(step);
+    const last = draft.steps[draft.steps.length - 1];
+    const sameFirstSelector = (last?.selectors?.[0] || "") && last?.selectors?.[0] === step.selectors?.[0];
+    if (last?.type === "input" && step.type === "input" && sameFirstSelector) {
+        draft.steps[draft.steps.length - 1] = step;
+    } else if (last?.type === "scroll" && step.type === "scroll") {
+        draft.steps[draft.steps.length - 1] = step;
+    } else if (last?.type === "click" && step.type === "submit") {
+        draft.steps[draft.steps.length - 1] = step;
+    } else if (last?.type === "wait_url" && step.type === "wait_url" && (last.pattern || last.url) === (step.pattern || step.url)) {
+        draft.steps[draft.steps.length - 1] = step;
+    } else {
+        draft.steps.push(step);
+    }
     draft.updatedAt = Date.now();
     await setRecording({ tabId: recording.tabId, draft });
 }
 
-async function stopMacroRecording({ commit }) {
+async function replaceLastMacroDraftStep(rawStep) {
+    const recording = await getRecording();
+    if (!recording) return;
+    const step = normalizeStep(rawStep);
+    if (!step) return;
+    const draft = recording.draft || { steps: [] };
+    draft.steps = Array.isArray(draft.steps) ? draft.steps : [];
+    const last = draft.steps[draft.steps.length - 1];
+    const sameFirstSelector = (last?.selectors?.[0] || "") && last?.selectors?.[0] === step.selectors?.[0];
+    if (draft.steps.length === 0) {
+        draft.steps.push(step);
+    } else if (last?.type === step.type && sameFirstSelector) {
+        draft.steps[draft.steps.length - 1] = step;
+    } else {
+        draft.steps.push(step);
+    }
+    draft.updatedAt = Date.now();
+    await setRecording({ tabId: recording.tabId, draft });
+}
+
+async function stopMacroRecording({ commit, replacePasswords } = {}) {
     const recording = await getRecording();
     if (!recording) {
         return { success: true, data: { committed: false, reason: "no active recording" } };
@@ -472,8 +503,90 @@ async function stopMacroRecording({ commit }) {
     if (!draft || !Array.isArray(draft.steps) || draft.steps.length === 0) {
         return { success: true, data: { committed: false, reason: "draft is empty" } };
     }
-    const saved = await saveMacro(draft);
+    const saved = await saveMacro(processMacroBeforeSave(draft, { replacePasswords: replacePasswords === true }));
     return { success: true, data: { committed: true, macro: saved } };
+}
+
+function processMacroBeforeSave(macro, { replacePasswords = false } = {}) {
+    if (!macro || !Array.isArray(macro.steps)) return macro;
+    return {
+        ...macro,
+        steps: macro.steps.map((step, index) => {
+            if (step?.type !== "input" || step.inputType !== "password") return step;
+            const key = step.valueRef || `input_${index + 1}`;
+            return {
+                ...step,
+                sensitive: true,
+                required: true,
+                valueRef: key,
+                label: step.label || "password",
+                value: replacePasswords ? PASSWORD_PLACEHOLDER : step.value
+            };
+        })
+    };
+}
+
+function getMacroInputDescriptors(macro) {
+    const inputs = [];
+    let ordinal = 0;
+    for (let index = 0; index < (macro?.steps || []).length; index++) {
+        const step = macro.steps[index];
+        if (step?.type !== "input" && step?.type !== "change") continue;
+        ordinal += 1;
+        const key = step.valueRef || `input_${ordinal}`;
+        inputs.push({
+            key,
+            index: ordinal,
+            stepIndex: index,
+            stepType: step.type,
+            inputKind: step.inputKind || step.tagName || "",
+            inputType: step.inputType || "",
+            label: step.label || step.text || step.selectors?.[0] || key,
+            sensitive: step.sensitive === true,
+            required: step.required === true,
+            defaultValue: step.sensitive ? undefined : step.value,
+            hasDefault: step.value !== undefined,
+            selector: step.selectors?.[0] || ""
+        });
+    }
+    return inputs;
+}
+
+function describeMacroForTool(macro, { includeSteps = true } = {}) {
+    if (!macro) return null;
+    return {
+        id: macro.id,
+        name: macro.name,
+        startUrl: macro.startUrl,
+        origin: macro.origin,
+        stepCount: macro.steps?.length || 0,
+        inputs: getMacroInputDescriptors(macro),
+        ...(includeSteps ? {
+            steps: (macro.steps || []).map((step, index) => ({
+                index,
+                type: step.type,
+                label: step.label || step.text || step.key || step.pattern || step.url || step.selectors?.[0] || "",
+                inputKey: (step.type === "input" || step.type === "change")
+                    ? (step.valueRef || `input_${getMacroInputDescriptors({ steps: macro.steps.slice(0, index + 1) }).length}`)
+                    : undefined,
+                sensitive: step.sensitive === true
+            }))
+        } : {})
+    };
+}
+
+function applyMacroInputValues(macro, inputValues = {}) {
+    let ordinal = 0;
+    return {
+        ...macro,
+        steps: (macro.steps || []).map(step => {
+            if (step?.type !== "input" && step?.type !== "change") return step;
+            ordinal += 1;
+            const key = step.valueRef || `input_${ordinal}`;
+            if (!Object.prototype.hasOwnProperty.call(inputValues || {}, key)) return step;
+            return { ...step, value: String(inputValues[key] ?? "") };
+        })
+    };
 }
 
 function waitForTabComplete(tabId, timeoutMs = 15000) {
@@ -491,24 +604,135 @@ function waitForTabComplete(tabId, timeoutMs = 15000) {
     });
 }
 
-async function replayMacro(id) {
-    const macro = await getMacro(id);
-    if (!macro) return { success: false, error: "macro not found" };
-    if (!macro.startUrl) return { success: false, error: "macro has no startUrl" };
-    const tab = await chrome.tabs.create({ url: macro.startUrl, active: true });
-    const ready = await waitForTabComplete(tab.id);
-    if (!ready) return { success: false, error: "tab failed to load in time" };
-    // Small extra grace for SPA hydration.
-    await new Promise(r => setTimeout(r, 500));
+function waitForTabUrl(tabId, pattern, timeoutMs = 10000) {
+    const matches = (url) => {
+        const p = String(pattern || "").trim();
+        if (!p) return true;
+        if (url === p || String(url || "").includes(p)) return true;
+        try { return new RegExp(p).test(String(url || "")); } catch { return false; }
+    };
     return new Promise((resolve) => {
-        chrome.tabs.sendMessage(tab.id, { type: "macro_play", steps: macro.steps }, (response) => {
+        const deadline = Date.now() + timeoutMs;
+        const check = () => {
+            chrome.tabs.get(tabId, (tab) => {
+                if (chrome.runtime.lastError || !tab) return resolve(false);
+                if (matches(tab.url)) return resolve(true);
+                if (Date.now() >= deadline) return resolve(false);
+                setTimeout(check, 150);
+            });
+        };
+        check();
+    });
+}
+
+function sendMacroPlayToTab(tabId, steps, options = {}) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { type: "macro_play", steps, options }, (response) => {
             if (chrome.runtime.lastError) {
                 resolve({ success: false, error: chrome.runtime.lastError.message });
                 return;
             }
-            resolve({ success: true, tabId: tab.id, ...(response || {}) });
+            resolve(response || { success: false, error: "empty response" });
         });
     });
+}
+
+function normalizeReplayOptions(options = {}) {
+    const rawSpeed = String(options.speed || "normal");
+    const presets = {
+        slow: { stepDelayMs: 1500, highlightMs: 1200, highlightPauseMs: 450 },
+        normal: { stepDelayMs: 650, highlightMs: 800, highlightPauseMs: 250 },
+        fast: { stepDelayMs: 180, highlightMs: 450, highlightPauseMs: 80 },
+        instant: { stepDelayMs: 0, highlightMs: 180, highlightPauseMs: 0 }
+    };
+    const speed = Object.prototype.hasOwnProperty.call(presets, rawSpeed) ? rawSpeed : "normal";
+    const preset = presets[speed] || presets.normal;
+    return {
+        ...options,
+        speed,
+        stepDelayMs: Math.max(0, Number(options.stepDelayMs ?? preset.stepDelayMs) || 0),
+        highlightMs: Math.max(0, Number(options.highlightMs ?? preset.highlightMs) || 0),
+        highlightPauseMs: Math.max(0, Number(options.highlightPauseMs ?? preset.highlightPauseMs) || 0),
+        highlight: options.highlight !== false
+    };
+}
+
+async function replayMacro(id, options = {}) {
+    const macro = await getMacro(id);
+    return replayMacroSteps(macro, options);
+}
+
+async function replayMacroSteps(macro, options = {}) {
+    const replayOptions = normalizeReplayOptions(options);
+    if (!macro) return { success: false, error: "macro not found" };
+    macro = applyMacroInputValues(macro, options.inputValues || {});
+    if (!macro.startUrl && !Number.isInteger(Number(options.tabId))) return { success: false, error: "macro has no startUrl" };
+    const tab = Number.isInteger(Number(options.tabId))
+        ? await chrome.tabs.get(Number(options.tabId))
+        : await chrome.tabs.create({ url: macro.startUrl, active: true });
+    if (!tab?.id) return { success: false, error: "target tab not found" };
+    if (macro.startUrl) {
+        await chrome.tabs.update(tab.id, { url: macro.startUrl, active: true });
+    } else {
+        await chrome.tabs.update(tab.id, { active: true });
+    }
+    const ready = await waitForTabComplete(tab.id);
+    if (!ready) return { success: false, error: "tab failed to load in time" };
+    // Small extra grace for SPA hydration.
+    await new Promise(r => setTimeout(r, 500));
+    const steps = Array.isArray(macro.steps) ? macro.steps : [];
+    const startIndex = Math.max(0, Number(replayOptions.startIndex) || 0);
+    const endIndex = replayOptions.singleStep ? Math.min(steps.length, startIndex + 1) : steps.length;
+    const report = { total: steps.length, startIndex, speed: replayOptions.speed, success: 0, failed: 0, results: [], ok: true };
+
+    for (let i = startIndex; i < endIndex; i++) {
+        const step = steps[i];
+        if (step.type === "wait_url") {
+            const pattern = step.pattern || step.url || "";
+            const ok = await waitForTabUrl(tab.id, pattern, Math.max(100, Number(step.timeoutMs) || 10000));
+            if (ok) await waitForTabComplete(tab.id, Math.max(1000, Number(step.timeoutMs) || 15000));
+            report.results.push({ index: i, type: step.type, ok, error: ok ? undefined : `等待 URL 超时: ${pattern}`, currentUrl: (await chrome.tabs.get(tab.id)).url });
+            if (ok) { report.success++; continue; }
+            report.failed = 1; report.failedAt = i; report.ok = false; break;
+        }
+        if (step.type === "navigate") {
+            const url = String(step.url || step.pattern || "").trim();
+            if (!url) {
+                report.results.push({ index: i, type: step.type, ok: false, error: "navigate step 缺少 URL" });
+                report.failed = 1; report.failedAt = i; report.ok = false; break;
+            }
+            await chrome.tabs.update(tab.id, { url });
+            const ok = await waitForTabUrl(tab.id, step.pattern || url, Math.max(100, Number(step.timeoutMs) || 10000));
+            if (ok) await waitForTabComplete(tab.id, Math.max(1000, Number(step.timeoutMs) || 15000));
+            report.results.push({ index: i, type: step.type, ok, error: ok ? undefined : `导航超时: ${url}` });
+            if (ok) { report.success++; continue; }
+            report.failed = 1; report.failedAt = i; report.ok = false; break;
+        }
+
+        const response = await sendMacroPlayToTab(tab.id, [step], { ...replayOptions, singleStep: true });
+        const stepReport = response?.report;
+        const result = stepReport?.results?.[0];
+        if (response?.success && result?.ok) {
+            report.results.push({ ...result, index: i, type: step.type });
+            report.success++;
+            continue;
+        }
+
+        const next = steps[i + 1];
+        if (!response?.success && next?.type === "wait_url") {
+            report.results.push({ index: i, type: step.type, ok: true, warning: response.error || "页面导航导致响应中断" });
+            report.success++;
+            continue;
+        }
+
+        report.results.push({ ...(result || {}), index: i, type: step.type, ok: false, error: result?.error || response?.error || "未知错误" });
+        report.failed = 1;
+        report.failedAt = i;
+        report.ok = false;
+        break;
+    }
+
+    return { success: true, tabId: tab.id, report };
 }
 
 // ========== Message handler (must be registered first for reliable wake-up) ==========
@@ -579,8 +803,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     case "list":
                         sendResponse({ success: true, data: await listMacros() });
                         break;
+                    case "list_for_ai": {
+                        const macros = await listMacros();
+                        const query = String(msg.payload?.query || "").trim().toLowerCase();
+                        const filtered = query
+                            ? macros.filter(m => m.name.toLowerCase().includes(query) || m.id.toLowerCase().includes(query))
+                            : macros;
+                        sendResponse({
+                            success: true,
+                            data: filtered.map(m => describeMacroForTool(m, { includeSteps: false }))
+                        });
+                        break;
+                    }
                     case "get":
                         sendResponse({ success: true, data: await getMacro(msg.payload?.id) });
+                        break;
+                    case "describe_for_ai":
+                        sendResponse({ success: true, data: describeMacroForTool(await getMacro(msg.payload?.id), { includeSteps: true }) });
                         break;
                     case "save":
                         sendResponse({ success: true, data: await saveMacro(msg.payload) });
@@ -592,10 +831,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                         sendResponse(await startMacroRecording(msg.payload || {}));
                         break;
                     case "stop":
-                        sendResponse(await stopMacroRecording({ commit: msg.payload?.commit !== false }));
+                        sendResponse(await stopMacroRecording({
+                            commit: msg.payload?.commit !== false,
+                            replacePasswords: msg.payload?.replacePasswords === true
+                        }));
                         break;
                     case "replay":
-                        sendResponse(await replayMacro(msg.payload?.id));
+                        sendResponse(await replayMacro(msg.payload?.id, {
+                            ...(msg.payload?.options || {}),
+                            tabId: Number.isInteger(Number(msg.payload?.tabId)) ? Number(msg.payload.tabId) : undefined,
+                            inputValues: msg.payload?.inputValues || msg.payload?.options?.inputValues || {}
+                        }));
+                        break;
+                    case "replay_steps":
+                        sendResponse(await replayMacroSteps(msg.payload?.macro, {
+                            ...(msg.payload?.options || {}),
+                            inputValues: msg.payload?.inputValues || msg.payload?.options?.inputValues || {}
+                        }));
                         break;
                     case "recording_status":
                         sendResponse({ success: true, data: await getRecording() });
@@ -614,6 +866,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         (async () => {
             try {
                 await appendMacroDraftStep(msg.step);
+                sendResponse({ success: true });
+            } catch (error) {
+                sendResponse({ success: false, error: error?.message || String(error) });
+            }
+        })();
+        return true;
+    }
+
+    if (msg?.type === "macro_replace_last_step") {
+        (async () => {
+            try {
+                await replaceLastMacroDraftStep(msg.step);
                 sendResponse({ success: true });
             } catch (error) {
                 sendResponse({ success: false, error: error?.message || String(error) });
@@ -841,8 +1105,19 @@ chrome.webNavigation.onCommitted.addListener(async e => {
                 return;
             }
         } catch { /* fall through */ }
-        // Different page: commit whatever we recorded so far.
-        await stopMacroRecording({ commit: true });
+        await appendMacroDraftStep({
+            type: "wait_url",
+            selectors: [],
+            url: e.url,
+            pattern: e.url,
+            timeoutMs: 15000,
+            timestamp: Date.now()
+        });
+        // Keep recording in the same tab after navigation; the new content
+        // script will re-activate from chrome.storage.local.macroRecording.
+        try {
+            chrome.tabs.sendMessage(e.tabId, { type: "macro_activate_check" }, () => void chrome.runtime.lastError);
+        } catch { /* ignore */ }
         void currentOrigin; // reserved for future origin-based policy
     } catch (err) {/* ignore */}
 });
@@ -860,7 +1135,10 @@ chrome.tabs.onRemoved.addListener(async function (tabId) {
     try {
         const recording = await getRecording();
         if (recording && recording.tabId === tabId) {
-            await stopMacroRecording({ commit: true });
+            // The page is gone, so we cannot ask the user whether to keep
+            // password values. Prefer the safer placeholder path for this
+            // exceptional auto-commit.
+            await stopMacroRecording({ commit: true, replacePasswords: true });
         }
     } catch (e) {/* ignore */}
 });

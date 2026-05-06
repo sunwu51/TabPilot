@@ -3,7 +3,18 @@
 export const MACROS_STORAGE_KEY = "macros";
 export const MACRO_RECORDING_KEY = "macroRecording";
 
-const VALID_STEP_TYPES = new Set(["click", "input", "change", "submit", "key", "scroll"]);
+const VALID_STEP_TYPES = new Set([
+  "click",
+  "input",
+  "change",
+  "submit",
+  "key",
+  "scroll",
+  "wait",
+  "wait_element",
+  "wait_url",
+  "navigate"
+]);
 
 export function newMacroId() {
   const rand = Math.random().toString(36).slice(2, 6);
@@ -46,12 +57,40 @@ export function normalizeStep(step) {
   if (type === "input" || type === "change") {
     out.value = String(step.value ?? "");
   }
+  if (type === "input" && step.inputKind) {
+    out.inputKind = String(step.inputKind || "").toLowerCase();
+  }
+  if ((type === "input" || type === "change") && step.inputType) {
+    out.inputType = String(step.inputType || "").toLowerCase();
+  }
+  if ((type === "input" || type === "change") && step.valueRef) {
+    out.valueRef = String(step.valueRef || "").trim();
+  }
+  if ((type === "input" || type === "change") && step.label) {
+    out.label = String(step.label || "").trim().slice(0, 120);
+  }
+  if (type === "input" || type === "change") {
+    out.sensitive = step.sensitive === true;
+    out.required = step.required === true;
+  }
   if (type === "key") {
     out.key = String(step.key || "");
   }
   if (type === "scroll") {
     out.scrollX = Math.max(0, Number(step.scrollX) || 0);
     out.scrollY = Math.max(0, Number(step.scrollY) || 0);
+  }
+  if (type === "wait") {
+    out.durationMs = Math.max(0, Number(step.durationMs) || 0);
+  }
+  if (type === "wait_element") {
+    out.state = ["visible", "hidden", "present", "absent"].includes(step.state) ? step.state : "visible";
+    out.timeoutMs = Math.max(100, Number(step.timeoutMs) || 6000);
+  }
+  if (type === "wait_url" || type === "navigate") {
+    out.url = String(step.url || "").trim();
+    out.pattern = String(step.pattern || "").trim();
+    out.timeoutMs = Math.max(100, Number(step.timeoutMs) || 10000);
   }
   return out;
 }

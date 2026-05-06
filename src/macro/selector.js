@@ -177,6 +177,22 @@ export function generateSelectors(element) {
     if (uniqueCss(sel)) candidates.push(sel);
   }
 
+  // 3b. Radio/checkbox groups often share the same name; include type + value
+  // to make selectors stable and unique inside the group.
+  const typeAttr = element.getAttribute("type");
+  const valueAttr = element.getAttribute("value");
+  if (
+    tag === "input" &&
+    (typeAttr === "radio" || typeAttr === "checkbox") &&
+    nameAttr &&
+    !looksRandom(nameAttr) &&
+    valueAttr != null &&
+    !looksRandom(valueAttr)
+  ) {
+    const sel = `${tag}[type="${cssEscape(typeAttr)}"][name="${cssEscape(nameAttr)}"][value="${cssEscape(valueAttr)}"]`;
+    if (uniqueCss(sel)) candidates.push(sel);
+  }
+
   // 4. aria-label
   const aria = element.getAttribute("aria-label");
   if (aria && aria.length <= 60) {
@@ -184,7 +200,24 @@ export function generateSelectors(element) {
     if (uniqueCss(sel)) candidates.push(sel);
   }
 
-  // 5. text-based XPath (limit to short text, avoid noisy matches)
+  // 5. Editable controls: modern apps often use contenteditable/role=textbox
+  // instead of input/textarea (e.g. ProseMirror editors).
+  const role = element.getAttribute("role");
+  const editableAttr = element.getAttribute("contenteditable");
+  if (role === "textbox" && aria && aria.length <= 60) {
+    const sel = `[role="textbox"][aria-label="${cssEscape(aria)}"]`;
+    if (uniqueCss(sel)) candidates.push(sel);
+  }
+  if ((editableAttr === "true" || editableAttr === "plaintext-only") && aria && aria.length <= 60) {
+    const sel = `[contenteditable="${cssEscape(editableAttr)}"][aria-label="${cssEscape(aria)}"]`;
+    if (uniqueCss(sel)) candidates.push(sel);
+  }
+  if (role === "textbox" && editableAttr) {
+    const sel = `${tag}[role="textbox"][contenteditable="${cssEscape(editableAttr)}"]`;
+    if (uniqueCss(sel)) candidates.push(sel);
+  }
+
+  // 6. text-based XPath (limit to short text, avoid noisy matches)
   const text = normalizeText(element.innerText || element.textContent);
   if (text && text.length <= 40 && /\S/.test(text)) {
     const escaped = text.includes('"') ? `concat("${text.replace(/"/g, '","\'","')}")` : `"${text}"`;
@@ -192,13 +225,13 @@ export function generateSelectors(element) {
     if (uniqueXPath(xp)) candidates.push(xp);
   }
 
-  // 6. structural CSS path
+  // 7. structural CSS path
   const structural = shortCssPath(element);
   if (structural && uniqueCss(structural) && !candidates.includes(structural)) {
     candidates.push(structural);
   }
 
-  // 7. Fallback non-unique structural path (still useful as last resort)
+  // 8. Fallback non-unique structural path (still useful as last resort)
   if (candidates.length === 0 && structural) {
     candidates.push(structural);
   }

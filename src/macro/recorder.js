@@ -23,7 +23,10 @@ const state = {
   pendingNavigation: null,
   pendingNavigationConfirmed: false,
   inputDebounceTimers: new WeakMap(),
-  scrollTimer: null
+  scrollTimer: null,
+  lastClickStep: null,
+  hasPasswordInput: false,
+  lastTextInputAt: 0
 };
 
 const handlers = {};
@@ -31,11 +34,58 @@ const handlers = {};
 function reportStep(step) {
   state.stepCount += 1;
   updateRecordingBar({ stepCount: state.stepCount });
+  return sendStepMessage("macro_record_step", step);
+}
+
+function sendStepMessage(type, step) {
   try {
-    chrome.runtime.sendMessage({ type: "macro_record_step", step }, () => void chrome.runtime.lastError);
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage({ type, step }, response => {
+        resolve({ success: !chrome.runtime.lastError && response?.success !== false });
+      });
+    });
   } catch {
     // ignore (service worker asleep is OK; storage observer will sync later)
+    return Promise.resolve({ success: false });
   }
+}
+
+function reportStepReplacingLast(step) {
+  return sendStepMessage("macro_replace_last_step", step);
+}
+
+async function reportStepsInOrder(steps) {
+  for (const step of steps) {
+    await reportStep(step);
+  }
+}
+
+function sameSelectorTarget(a, b) {
+  const aFirst = a?.selectors?.[0] || "";
+  const bFirst = b?.selectors?.[0] || "";
+  return !!aFirst && aFirst === bFirst;
+}
+
+function reportInputStep(target) {
+  state.lastTextInputAt = Date.now();
+  const step = buildBaseStep("input", target);
+  step.value = getEditableValue(target);
+  step.inputKind = getInputKind(target);
+  if (isPasswordInput(target)) {
+    state.hasPasswordInput = true;
+    step.sensitive = true;
+    step.inputType = "password";
+    step.label = extractTargetText(target) || target.getAttribute("name") || target.getAttribute("id") || "password";
+  }
+  const previous = target.__tabManagerLastInputStep;
+  const now = Date.now();
+  if (previous && sameSelectorTarget(previous, step) && now - (previous.timestamp || 0) < 3000) {
+    target.__tabManagerLastInputStep = step;
+    reportStepReplacingLast(step);
+    return;
+  }
+  target.__tabManagerLastInputStep = step;
+  reportStep(step);
 }
 
 function buildBaseStep(type, target) {
@@ -47,6 +97,39 @@ function buildBaseStep(type, target) {
     text: extractTargetText(target),
     timestamp: Date.now()
   };
+}
+
+function getEditableTarget(target) {
+  if (!target || target.nodeType !== 1) return null;
+  const tag = target.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea") return target;
+  if (target.isContentEditable) return target;
+  return target.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"], [role="textbox"]') || null;
+}
+
+function isTextEditableTarget(target) {
+  if (!target) return false;
+  const tag = target.tagName?.toLowerCase();
+  if (tag === "textarea") return true;
+  if (tag === "input") return target.type !== "checkbox" && target.type !== "radio";
+  return target.isContentEditable || target.getAttribute?.("role") === "textbox";
+}
+
+function getEditableValue(target) {
+  if (!target) return "";
+  const tag = target.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea") return String(target.value ?? "");
+  return String(target.innerText ?? target.textContent ?? "");
+}
+
+function getInputKind(target) {
+  const tag = target?.tagName?.toLowerCase();
+  if (tag === "input" || tag === "textarea") return tag;
+  return "contenteditable";
+}
+
+function isPasswordInput(target) {
+  return target?.tagName?.toLowerCase() === "input" && target.type === "password";
 }
 
 function extractTargetText(target) {
@@ -80,8 +163,10 @@ function findActionableTarget(target) {
     if (
       tag === "button" || tag === "a" || tag === "input" || tag === "select" ||
       tag === "textarea" || tag === "label" || tag === "summary" ||
+      el.isContentEditable ||
       el.getAttribute("role") === "button" ||
       el.getAttribute("role") === "link" ||
+      el.getAttribute("role") === "textbox" ||
       typeof el.onclick === "function"
     ) {
       return el;
@@ -107,10 +192,17 @@ handlers.click = function (event) {
     if (shouldInterceptHref(target)) {
       event.preventDefault();
       event.stopPropagation();
-      askNavigation(target.href, () => {
+      askNavigation(target.href, async () => {
         // Confirmed: record click and let navigation happen by clicking again.
         const step = buildBaseStep("click", target);
-        reportStep(step);
+        await reportStepsInOrder([step, {
+          type: "wait_url",
+          selectors: [],
+          url: target.href,
+          pattern: target.href,
+          timeoutMs: 15000,
+          timestamp: Date.now()
+        }]);
         finishRecordingAndNavigate(target.href);
       });
       return;
@@ -119,6 +211,7 @@ handlers.click = function (event) {
 
   // Form submit button etc. is captured by submit handler; still record click.
   const step = buildBaseStep("click", target);
+  state.lastClickStep = step;
   reportStep(step);
 };
 
@@ -161,8 +254,20 @@ handlers.submit = function (event) {
   } catch {
     targetUrl = action || location.href;
   }
-  askNavigation(targetUrl, () => {
-    reportStep(step);
+  askNavigation(targetUrl, async () => {
+    if (state.lastClickStep && Date.now() - state.lastClickStep.timestamp < 1500) {
+      await reportStepReplacingLast(step);
+    } else {
+      await reportStep(step);
+    }
+    await reportStep({
+      type: "wait_url",
+      selectors: [],
+      url: targetUrl,
+      pattern: targetUrl,
+      timeoutMs: 15000,
+      timestamp: Date.now()
+    });
     finishRecordingAndNavigate(targetUrl, form);
   });
 };
@@ -171,19 +276,15 @@ handlers.submit = function (event) {
 
 handlers.input = function (event) {
   if (!state.active) return;
-  const target = event.target;
-  if (!target || isOurOverlayTarget(event)) return;
-  const tag = target.tagName?.toLowerCase();
-  if (!["input", "textarea"].includes(tag)) return;
-  if (target.type === "checkbox" || target.type === "radio") return;
+  if (!event.target || isOurOverlayTarget(event)) return;
+  const target = getEditableTarget(event.target);
+  if (!isTextEditableTarget(target)) return;
 
   const existing = state.inputDebounceTimers.get(target);
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     state.inputDebounceTimers.delete(target);
-    const step = buildBaseStep("input", target);
-    step.value = String(target.value ?? "");
-    reportStep(step);
+    reportInputStep(target);
   }, 300);
   state.inputDebounceTimers.set(target, timer);
 };
@@ -214,15 +315,13 @@ handlers.keydown = function (event) {
   if (!state.active) return;
   if (isOurOverlayTarget(event)) return;
   if (!SEMANTIC_KEYS.has(event.key)) return;
-  const target = event.target;
+  const target = getEditableTarget(event.target) || event.target;
   // Flush any pending input first.
   if (target && state.inputDebounceTimers.has(target)) {
     const t = state.inputDebounceTimers.get(target);
     clearTimeout(t);
     state.inputDebounceTimers.delete(target);
-    const step = buildBaseStep("input", target);
-    step.value = String(target.value ?? "");
-    reportStep(step);
+    reportInputStep(target);
   }
   const step = buildBaseStep("key", target);
   step.key = event.key;
@@ -233,6 +332,13 @@ handlers.keydown = function (event) {
 
 handlers.scroll = function () {
   if (!state.active) return;
+  // Textarea/contenteditable autosize or focus can produce scroll(0,0) while
+  // typing. Treat scrolls immediately after text input as noise unless the
+  // page actually moved away from the origin.
+  const now = Date.now();
+  const sx = window.scrollX || 0;
+  const sy = window.scrollY || 0;
+  if (now - state.lastTextInputAt < 800 && sx === 0 && sy === 0) return;
   if (state.scrollTimer) clearTimeout(state.scrollTimer);
   state.scrollTimer = setTimeout(() => {
     state.scrollTimer = null;
@@ -279,22 +385,10 @@ function askNavigation(url, onConfirmed) {
 
 function finishRecordingAndNavigate(url, form) {
   state.pendingNavigationConfirmed = true;
-  try {
-    chrome.runtime.sendMessage({ type: "macro_manager", action: "stop", payload: { commit: true } }, () => {
-      void chrome.runtime.lastError;
-      if (form && typeof form.submit === "function") {
-        try { form.submit(); return; } catch { /* fall through */ }
-      }
-      try {
-        location.href = url;
-      } catch { /* ignore */ }
-    });
-  } catch {
-    if (form && typeof form.submit === "function") {
-      try { form.submit(); return; } catch { /* ignore */ }
-    }
-    try { location.href = url; } catch { /* ignore */ }
+  if (form && typeof form.submit === "function") {
+    try { form.submit(); return; } catch { /* fall through */ }
   }
+  try { location.href = url; } catch { /* ignore */ }
 }
 
 // ============================ start / stop ============================
@@ -305,6 +399,7 @@ function start(meta) {
   state.draftName = meta?.name || "录制中";
   state.stepCount = Number(meta?.stepCount) || 0;
   state.pendingNavigationConfirmed = false;
+  state.hasPasswordInput = !!meta?.hasPasswordInput;
 
   document.addEventListener("click", handlers.click, true);
   document.addEventListener("submit", handlers.submit, true);
@@ -319,7 +414,13 @@ function start(meta) {
     stepCount: state.stepCount,
     onStop: () => {
       try {
-        chrome.runtime.sendMessage({ type: "macro_manager", action: "stop", payload: { commit: true } });
+        let replacePasswords = false;
+        if (state.hasPasswordInput) {
+          replacePasswords = !window.confirm(
+            "发现录制过程中有密码输入。\n\n选择“确定”：记录真实密码（将会明文存到本地宏数据中）。\n选择“取消”：用 1A2b3!4399 代替密码。"
+          );
+        }
+        chrome.runtime.sendMessage({ type: "macro_manager", action: "stop", payload: { commit: true, replacePasswords } });
       } catch { /* ignore */ }
     },
     onDiscard: () => {
@@ -382,7 +483,8 @@ export async function activateRecorderIfNeeded() {
     if (recording && Number.isInteger(recording.tabId) && tabId === recording.tabId) {
       start({
         name: recording.draft?.name,
-        stepCount: recording.draft?.steps?.length || 0
+        stepCount: recording.draft?.steps?.length || 0,
+        hasPasswordInput: recording.draft?.steps?.some(s => s.type === "input" && s.inputType === "password")
       });
       // Sync count with whatever is stored
       updateRecordingBar({

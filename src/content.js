@@ -696,7 +696,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "macro_play") {
-    play(Array.isArray(msg.steps) ? msg.steps : [])
+    play(Array.isArray(msg.steps) ? msg.steps : [], msg.options || {})
       .then(report => sendResponse({ success: true, report }))
       .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
     return true;

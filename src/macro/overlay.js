@@ -213,7 +213,7 @@ export function showNavigationPrompt({ url, onConfirmStop, onCancel }) {
   body.className = "tm-macro-prompt-body";
 
   const desc = document.createElement("div");
-  desc.textContent = "录制只支持单页操作。是否结束录制并跳转，还是保留在当前页继续录？";
+  desc.textContent = "即将离开当前页面。可以记录一次 URL 等待并在新页面继续录制，也可以取消留在当前页。";
 
   const urlEl = document.createElement("div");
   urlEl.className = "tm-macro-prompt-url";
@@ -225,7 +225,7 @@ export function showNavigationPrompt({ url, onConfirmStop, onCancel }) {
   const confirmBtn = document.createElement("button");
   confirmBtn.type = "button";
   confirmBtn.className = "tm-macro-prompt-primary";
-  confirmBtn.textContent = "保存并跳转";
+  confirmBtn.textContent = "记录并跳转";
   confirmBtn.addEventListener("click", () => onConfirmStop && onConfirmStop());
 
   const cancelBtn = document.createElement("button");

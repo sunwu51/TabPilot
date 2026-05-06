@@ -8,6 +8,7 @@ const DOM_LOCATOR_PROPERTIES = {
   matchExact: { type: "boolean", description: "Whether text matching should be exact. Defaults to false." },
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
 };
+const BETA_TOOL_NAMES = new Set(["list_macros", "describe_macro", "run_macro"]);
 
 // ==================== Tool Definitions ====================
 
@@ -550,6 +551,52 @@ export const TOOLS = [
     }
   },
   {
+    name: "list_macros",
+    description: "List saved browser macros that can be replayed. Use this before run_macro unless the user provided an exact macro id. Returns macro ids, names, start URLs, step counts, and input variables including input_1/input_2 keys for overriding recorded inputs.",
+    schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional search text matched against macro name or id." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "describe_macro",
+    description: "Get details about a saved browser macro, including start URL, step summary, and input variables. Use this before run_macro when you need to know which inputValues keys to provide or override.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Saved macro id." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "run_macro",
+    description: "Run a saved browser macro by opening its startUrl in a new tab and replaying its steps. Provide top-level arguments: id, inputValues, speed, and stepDelayMs. Use inputValues to override recorded input/change values, including text inputs, password inputs, selects, checkboxes, and radio steps. Call describe_macro first if you do not know the input keys.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The saved macro id to run. Get this from list_macros or describe_macro." },
+        inputValues: {
+          type: "object",
+          description: "Optional values keyed by macro input key such as input_1, input_2, or a step valueRef. Only include keys you want to override; missing keys keep the macro's recorded/default values. Radio/checkbox values should be true/false strings or booleans."
+        },
+        speed: {
+          type: "string",
+          enum: ["slow", "normal", "fast", "instant"],
+          description: "Replay speed preset. Defaults to normal. If stepDelayMs is provided, it overrides the preset delay."
+        },
+        stepDelayMs: {
+          type: "number",
+          description: "Optional custom delay between operations in milliseconds. When provided, it overrides the selected speed preset."
+        }
+      },
+      required: ["id"]
+    }
+  },
+  {
     name: "save_to_file",
     description: "Save arbitrary string content as a file and trigger a browser download. The file is created as a Blob and downloaded using an anchor element. Use this to export data, save generated text, or create downloadable artifacts for the user.",
     schema: {
@@ -578,9 +625,10 @@ export function buildMcpToolCallName(serverName, toolName) {
  * @param {Object} [options]
  * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
  * @param {boolean} [options.supportsImageInput=false] - Whether the selected model accepts image inputs
+ * @param {boolean} [options.enableBetaFeatures=true] - Whether to include beta built-in tools.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true } = {}) {
   // Convert MCP tools to our internal format
   const externalTools = mcpTools.map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
@@ -589,7 +637,11 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
   }));
 
   const builtInTools = includeBuiltins
-    ? TOOLS.filter(tool => supportsImageInput || tool.name !== "tab_screenshot")
+    ? TOOLS.filter(tool => {
+      if (!supportsImageInput && tool.name === "tab_screenshot") return false;
+      if (enableBetaFeatures === false && BETA_TOOL_NAMES.has(tool.name)) return false;
+      return true;
+    })
     : [];
   const allTools = [...builtInTools, ...externalTools];
 

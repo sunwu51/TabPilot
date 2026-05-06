@@ -83,6 +83,7 @@ export default function AgentPanel() {
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
   const attachWrapperRef = useRef(null);
   const imageInputRef = useRef(null);
   const textInputRef = useRef(null);
@@ -118,6 +119,10 @@ export default function AgentPanel() {
       inputRef.current?.focus();
     });
   }, [loading, pendingApproval]);
+
+  useEffect(() => {
+    resizeChatInput();
+  }, [input, inputFocused]);
 
   useEffect(() => {
     const previousStatus = latestPlanStatusRef.current;
@@ -777,7 +782,7 @@ export default function AgentPanel() {
   }
 
   async function getLLMConfig() {
-    const { llmConfig } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled } = await chrome.storage.local.get({
       llmConfig: {
         apiType: getDefaultApiType(),
         baseUrl: "",
@@ -785,7 +790,8 @@ export default function AgentPanel() {
         model: "",
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false
-      }
+      },
+      betaFeaturesEnabled: true
     });
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
@@ -795,7 +801,8 @@ export default function AgentPanel() {
     return {
       ...llmConfig,
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
-      supportsImageInput: llmConfig?.supportsImageInput === true
+      supportsImageInput: llmConfig?.supportsImageInput === true,
+      enableBetaFeatures: betaFeaturesEnabled !== false
     };
   }
 
@@ -1035,7 +1042,8 @@ export default function AgentPanel() {
       }
     }, combinedMcpTools, {
       sessionId: targetSessionId,
-      supportsImageInput: config.supportsImageInput === true
+      supportsImageInput: config.supportsImageInput === true,
+      enableBetaFeatures: config.enableBetaFeatures !== false
     });
 
     if (!isCurrentRun(targetSessionId, runId)) {
@@ -1291,6 +1299,35 @@ export default function AgentPanel() {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       sendMessage();
+    }
+  }
+
+  function resizeChatInput() {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    if (!inputFocused) {
+      textarea.style.height = "";
+      textarea.style.overflowY = "";
+      return;
+    }
+    textarea.style.height = "auto";
+    const maxHeight = Math.max(120, Math.floor(window.innerHeight * 0.5));
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+    keepChatInputVisible(textarea);
+  }
+
+  function keepChatInputVisible(textarea) {
+    const scroller = messagesScrollerRef.current;
+    const inputArea = textarea?.closest(".chat-input-area");
+    if (!scroller || !inputArea) return;
+    const textareaRect = textarea.getBoundingClientRect();
+    const viewportBottom = window.innerHeight;
+    const bottomGap = 12;
+    const overflow = textareaRect.bottom + bottomGap - viewportBottom;
+    if (overflow > 0) {
+      scroller.scrollTop += overflow;
     }
   }
 
@@ -1594,6 +1631,8 @@ export default function AgentPanel() {
           ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           onDragOver={handleDragOver}

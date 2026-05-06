@@ -25,6 +25,7 @@ const DEFAULT_SETTINGS = {
   mcpToolTimeoutSeconds: 60,
   reuse: false,
   extractTextLimit: 8000,
+  betaFeaturesEnabled: true,
   bridgeEnabled: false,
   wsServerUrl: ""
 };
@@ -53,6 +54,7 @@ function SettingsDialogBody() {
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
+  const [betaFeaturesEnabled, setBetaFeaturesEnabled] = useState(DEFAULT_SETTINGS.betaFeaturesEnabled);
   const [bridgeEnabled, setBridgeEnabled] = useState(DEFAULT_SETTINGS.bridgeEnabled);
   const [wsServerUrl, setWsServerUrl] = useState(DEFAULT_SETTINGS.wsServerUrl);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
@@ -114,6 +116,7 @@ function SettingsDialogBody() {
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
+      setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
       setBridgeEnabled(!!res.bridgeEnabled);
       setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : "");
       setWsBridgeStatus({
@@ -156,6 +159,7 @@ function SettingsDialogBody() {
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
         extractTextLimit,
+        betaFeaturesEnabled,
         bridgeEnabled,
         wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null
       });
@@ -336,6 +340,11 @@ function SettingsDialogBody() {
             >
               清空域名复用记忆
             </Button>
+          </div>
+          <div className="mt-2">
+            <Checkbox isSelected={betaFeaturesEnabled} onChange={setBetaFeaturesEnabled}>
+              <span className="text-sm">开启 Beta 功能</span>
+            </Checkbox>
           </div>
         </div>
 
