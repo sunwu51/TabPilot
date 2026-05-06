@@ -116,9 +116,6 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
       }
     }
 
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
-    }
 
     const rawToolCalls = Object.entries(toolCallsMap)
       .filter(([, tc]) => tc.name)

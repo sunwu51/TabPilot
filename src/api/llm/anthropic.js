@@ -129,9 +129,6 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
       }
     }
 
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
-    }
 
     const parseFailures = [];
     const parsedToolUsesByBlock = new Map();

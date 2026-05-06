@@ -89,9 +89,6 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       }
     }
 
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
-    }
 
     const orderedItems = [...outputItems.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const textParts = [];
