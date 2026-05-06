@@ -3118,10 +3118,6 @@ async function _streamOpenAIAttempt(config, messages, signal, { onText, onDone }
       }
     }
 
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
-    }
-
     const rawToolCalls = Object.entries(toolCallsMap)
       .filter(([, tc]) => tc.name)
       .map(([idx, tc]) => ({
@@ -3354,10 +3350,6 @@ async function _streamAnthropicAttempt(config, messages, signal, { onText, onDon
           });
         }
       }
-    }
-
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
     }
 
     const parseFailures = [];
