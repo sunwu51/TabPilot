@@ -4,6 +4,7 @@ import { Tabs, TabsItem } from "@sunwu51/camel-ui";
 import Group from "./component/tabManager/Group";
 import Search from "./component/tabManager/Search";
 import Workspace from "./component/tabManager/Workspace";
+import Macro from "./component/tabManager/Macro";
 import AgentPanel from "./component/agent/AgentPanel";
 import BridgePanel from "./component/bridge/BridgePanel";
 import SettingsDialog from "./component/SettingsDialog";
@@ -44,6 +45,7 @@ function App() {
         <Search />
         <Group />
         <Workspace />
+        <Macro />
       </div>
     </TabsItem>,
     <TabsItem key="agent" title="小助手">

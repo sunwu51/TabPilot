@@ -1,5 +1,8 @@
 /* global chrome */
 
+import { activateRecorderIfNeeded, setupRecorderStorageWatcher } from "./macro/recorder";
+import { play, probeSelectors, highlightSelectors } from "./macro/player";
+
 const TEXT_LIMIT = 500;
 const HTML_LIMIT = 4000;
 let extractTextLimit = 8000;
@@ -692,5 +695,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  if (msg.type === "macro_play") {
+    play(Array.isArray(msg.steps) ? msg.steps : [])
+      .then(report => sendResponse({ success: true, report }))
+      .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
+    return true;
+  }
+
+  if (msg.type === "macro_probe_selectors") {
+    sendResponse(probeSelectors(Array.isArray(msg.selectors) ? msg.selectors : []));
+    return false;
+  }
+
+  if (msg.type === "macro_highlight_selectors") {
+    const ok = highlightSelectors(
+      Array.isArray(msg.selectors) ? msg.selectors : [],
+      Number(msg.durationMs) || 1200
+    );
+    sendResponse({ success: ok });
+    return false;
+  }
+
+  if (msg.type === "macro_activate_check") {
+    activateRecorderIfNeeded();
+    sendResponse({ success: true });
+    return false;
+  }
+
   return false;
 });
+
+// Macro recording activation: check at startup, and watch storage for changes.
+setupRecorderStorageWatcher();
+activateRecorderIfNeeded();
