@@ -12,6 +12,47 @@ const DOM_LOCATOR_PROPERTIES = {
 // ==================== Tool Definitions ====================
 
 export const TOOLS = [
+
+  {
+    name: "plan_create_for_session",
+    description: "Create or replace the latest high-level execution plan for the current agent session. Use this before starting a complex multi-step task. The plan must be user-readable and should describe meaningful task steps, not low-level tool calls. The application will ask the user to approve or revise the plan before you continue.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short user-facing title of the plan." },
+        steps: {
+          type: "array",
+          description: "High-level task steps in execution order. Keep steps concise, concrete, and outcome-oriented.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Short title of this step." },
+              description: { type: "string", description: "Optional detail explaining what this step will accomplish." }
+            },
+            required: ["title"]
+          }
+        }
+      },
+      required: ["title", "steps"]
+    }
+  },
+  {
+    name: "plan_update_for_session",
+    description: "Update the latest high-level execution plan for the current agent session while carrying out an approved complex task. Use this when a step starts, completes, is skipped, or becomes blocked.",
+    schema: {
+      type: "object",
+      properties: {
+        stepIndex: { type: "number", description: "Zero-based index of the step to update." },
+        status: {
+          type: "string",
+          enum: ["pending", "in_progress", "completed", "blocked", "skipped"],
+          description: "New status for the selected step."
+        },
+        note: { type: "string", description: "Optional short progress note, finding, or blocker for this step." }
+      },
+      required: ["stepIndex", "status"]
+    }
+  },
   {
     name: "tab_list",
     description: "Get a snapshot of all currently open browser tabs. Returns each tab's id, url, title, and lastAccessed, plus capturedAt timing fields so you can judge whether the tab state may be stale and refresh it again if needed. Use when the user asks about open tabs, browser context, or page-related questions and you need to identify the right tab first.",

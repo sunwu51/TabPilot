@@ -46,12 +46,10 @@ export default function UserProfilePanel() {
   return (
     <Dialog
       trigger={
-        <Button
-          className="!text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
-          onPress={loadData}
-        >
-          画像
-        </Button>
+        <button className="chat-toolbar-btn" onClick={loadData} title="画像">
+          <span className="chat-toolbar-icon">👤</span>
+          <span className="chat-toolbar-full-text">画像</span>
+        </button>
       }
     >
       <div

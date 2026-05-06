@@ -1089,7 +1089,7 @@ async function _execEvalJs({ jsScript }) {
  * Open a new tab with the given URL. Optionally focus on it.
  */
 async function _execTabOpen({ url, active }) {
-  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  if (!/^(https?:\/\/|data:)/i.test(url)) url = "https://" + url;
   const shouldFocus = active !== false; // default true
   const tab = await chrome.tabs.create({ url, active: shouldFocus });
   if (shouldFocus) await chrome.windows.update(tab.windowId, { focused: true });
@@ -2305,40 +2305,111 @@ async function _execRemoveStashInBrowser({ title }) {
 }
 
 /**
- * Save content as a file and trigger a browser download via an anchor element.
+ * Save content as a file by triggering a page download. Try the current active
+ * tab first; if that page cannot be scripted (for example chrome:// pages),
+ * fall back to a temporary scriptable tab and close it afterwards.
  */
 async function _execSaveToFile({ fileName, content }) {
   if (!fileName || typeof fileName !== "string") return { error: "fileName is required and must be a string" };
   if (content === undefined || content === null) return { error: "content is required" };
+
+  const text = String(content);
+  const size = new TextEncoder().encode(text).length;
+  let activeTabError = null;
 
   try {
     const tab = await chrome.tabs.query({ active: true, currentWindow: true });
     const targetTabId = tab?.[0]?.id;
     if (!targetTabId) return { error: "No active tab found to trigger download" };
 
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: targetTabId },
-      world: "MAIN",
-      func: (fn, ct) => {
-        const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = fn;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        return true;
-      },
-      args: [fileName, String(content)]
-    });
-
-    if (results?.[0]?.result === true) {
-      return { success: true, fileName, size: new TextEncoder().encode(String(content)).length };
-    }
-    return { error: "Failed to trigger download on the page" };
+    await _triggerFileDownloadInTab(targetTabId, fileName, text);
+    return { success: true, fileName, size, fallback: false };
   } catch (e) {
-    return { error: e.message, hint: "Could not trigger file download" };
+    activeTabError = e;
   }
+
+  let fallbackTabId = null;
+  try {
+    const fallbackTab = await chrome.tabs.create({ url: "https://example.com/", active: false });
+    fallbackTabId = fallbackTab?.id;
+    if (!fallbackTabId) return { error: "Could not open fallback tab for download", activeTabError: activeTabError?.message };
+
+    await _waitForTabLoadComplete(fallbackTabId);
+    await _triggerFileDownloadInTab(fallbackTabId, fileName, text);
+    await _delay(1000);
+    return { success: true, fileName, size, fallback: true, activeTabError: activeTabError?.message };
+  } catch (e) {
+    return {
+      error: e.message,
+      hint: "Could not trigger file download in the active tab or fallback tab",
+      activeTabError: activeTabError?.message
+    };
+  } finally {
+    if (fallbackTabId) {
+      try {
+        await chrome.tabs.remove(fallbackTabId);
+      } catch {
+        // Ignore cleanup failures; the download result/error above is more useful.
+      }
+    }
+  }
+}
+
+async function _triggerFileDownloadInTab(tabId, fileName, content) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: (fn, ct) => {
+      const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fn;
+      a.rel = "noopener";
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return true;
+    },
+    args: [fileName, content]
+  });
+
+  if (results?.[0]?.result !== true) {
+    throw new Error("Failed to trigger download on the page");
+  }
+}
+
+async function _waitForTabLoadComplete(tabId, timeoutMs = 10_000) {
+  const existingTab = await chrome.tabs.get(tabId);
+  if (existingTab?.status === "complete") return;
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      clearTimeout(timer);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onUpdated = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
+    };
+    const timer = setTimeout(() => fail(new Error("Timed out waiting for fallback tab to load")), timeoutMs);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+  });
+}
+
+function _delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

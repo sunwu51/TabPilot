@@ -63,8 +63,10 @@ export default function AgentPanel() {
   const [skillStationTools, setSkillStationTools] = useState([]);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "" });
+  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false });
   const [contextUsage, setContextUsage] = useState(null);
+  const [latestPlan, setLatestPlan] = useState(null);
+  const [planCollapsed, setPlanCollapsed] = useState(false);
   const messagesScrollerRef = useRef(null);
   const messagesEndRef = useRef(null);
   const shouldAutoFollowBottomRef = useRef(true);
@@ -72,10 +74,29 @@ export default function AgentPanel() {
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
+  const sessionPlansRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
   const [pendingApproval, setPendingApproval] = useState(null);
   const approvalResolverRef = useRef(new Map());
+  const planApprovalResolverRef = useRef(new Map());
+  const latestPlanStatusRef = useRef(null);
   const shouldFocusInputWhenReadyRef = useRef(false);
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const attachWrapperRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const textInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!showAttachMenu) return;
+    function onMouseDown(e) {
+      if (!attachWrapperRef.current?.contains(e.target)) {
+        setShowAttachMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [showAttachMenu]);
 
   /**
    * Streamed tokens can arrive faster than a user can read them. We only keep
@@ -98,6 +119,15 @@ export default function AgentPanel() {
     });
   }, [loading, pendingApproval]);
 
+  useEffect(() => {
+    const previousStatus = latestPlanStatusRef.current;
+    const nextStatus = latestPlan?.status || null;
+    if (nextStatus === "completed" && previousStatus !== "completed") {
+      setPlanCollapsed(true);
+    }
+    latestPlanStatusRef.current = nextStatus;
+  }, [latestPlan?.id, latestPlan?.status]);
+
   /** Initialize: load last session or create a new one */
   useEffect(() => {
     (async () => {
@@ -113,10 +143,12 @@ export default function AgentPanel() {
           loadSessionMeta(latest.id)
         ]);
         sessionMessagesRef.current.set(latest.id, msgs);
+        sessionPlansRef.current.set(latest.id, normalizeSessionPlans(meta.plans));
         activeSessionIdRef.current = latest.id;
         setSessionId(latest.id);
         setSessionTitle(latest.title);
         setSessionSystemPrompt(meta.systemPrompt || "");
+        applyLatestPlanFromPlans(meta.plans);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
         setContextUsage(getSessionRuntime(latest.id).contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
@@ -130,10 +162,12 @@ export default function AgentPanel() {
           await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
         }
         sessionMessagesRef.current.set(id, []);
+        sessionPlansRef.current.set(id, []);
         activeSessionIdRef.current = id;
         setSessionId(id);
         setSessionTitle("新会话");
         setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
+        applyLatestPlanFromPlans([]);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
         setContextUsage(null);
@@ -177,7 +211,8 @@ export default function AgentPanel() {
         const nextConfig = changes.llmConfig.newValue || {};
         setLlmConfigInfo({
           apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
-          model: nextConfig.model || ""
+          model: nextConfig.model || "",
+          supportsImageInput: nextConfig.supportsImageInput === true
         });
       }
     }
@@ -250,7 +285,8 @@ export default function AgentPanel() {
     });
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
-      model: llmConfig?.model || ""
+      model: llmConfig?.model || "",
+      supportsImageInput: llmConfig?.supportsImageInput === true
     });
   }
 
@@ -267,6 +303,17 @@ export default function AgentPanel() {
     if (activeSessionIdRef.current === targetSessionId) {
       setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
     }
+  }
+
+
+  function applyLatestPlanFromPlans(plans, { preserveCollapse = false } = {}) {
+    const plan = getLatestPlan(plans);
+    setLatestPlan(plan);
+    if (!preserveCollapse) {
+      setPlanCollapsed(plan?.status === "completed");
+      latestPlanStatusRef.current = plan?.status || null;
+    }
+    return plan;
   }
 
   function getSessionRuntime(targetSessionId) {
@@ -319,10 +366,12 @@ export default function AgentPanel() {
       loadSessionMeta(id)
     ]);
     sessionMessagesRef.current.set(id, msgs);
+    sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
     activeSessionIdRef.current = id;
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
     setSessionSystemPrompt(meta.systemPrompt || "");
+    applyLatestPlanFromPlans(meta.plans);
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setMessages(msgs);
@@ -346,6 +395,11 @@ export default function AgentPanel() {
       approvalResolverRef.current.delete(targetSessionId);
       resolver(false);
     }
+    const planResolver = planApprovalResolverRef.current.get(targetSessionId);
+    if (planResolver) {
+      planApprovalResolverRef.current.delete(targetSessionId);
+      planResolver({ approved: false, feedback: "" });
+    }
     setSessionRuntime(targetSessionId, {
       loading: false,
       abort: null,
@@ -356,6 +410,137 @@ export default function AgentPanel() {
 
   function isSessionAwaitingApproval(targetSessionId) {
     return !!getSessionRuntime(targetSessionId).pendingApproval;
+  }
+
+
+
+  function getSessionPlans(targetSessionId) {
+    return sessionPlansRef.current.get(targetSessionId) || [];
+  }
+
+  async function setSessionPlans(targetSessionId, plans) {
+    const normalizedPlans = normalizeSessionPlans(plans);
+    sessionPlansRef.current.set(targetSessionId, normalizedPlans);
+    if (activeSessionIdRef.current === targetSessionId) {
+      applyLatestPlanFromPlans(normalizedPlans, { preserveCollapse: true });
+    }
+    await saveSessionMeta(targetSessionId, { plans: normalizedPlans });
+    setSessions(await listSessions());
+    return normalizedPlans;
+  }
+
+  function requestPlanApproval(targetSessionId, runId, plan) {
+    return new Promise((resolve) => {
+      planApprovalResolverRef.current.set(targetSessionId, resolve);
+      setSessionRuntime(targetSessionId, {
+        loading: false,
+        abort: null,
+        pendingApproval: {
+          kind: "plan",
+          runId,
+          plan
+        }
+      });
+    });
+  }
+
+  async function handlePlanCreateForSession(targetSessionId, runId, args = {}) {
+    const now = Date.now();
+    const steps = normalizePlanSteps(args.steps);
+    if (steps.length === 0) {
+      return { error: "Plan must include at least one step" };
+    }
+    const plan = {
+      id: `plan_${now}_${Math.random().toString(36).slice(2, 6)}`,
+      title: String(args.title || "执行计划").trim() || "执行计划",
+      status: "draft",
+      createdAt: now,
+      updatedAt: now,
+      steps
+    };
+    const plans = [...getSessionPlans(targetSessionId), plan];
+    setPlanCollapsed(false);
+    await setSessionPlans(targetSessionId, plans);
+
+    const approval = await requestPlanApproval(targetSessionId, runId, plan);
+    if (!approval?.approved) {
+      return {
+        success: true,
+        approved: false,
+        feedback: approval?.feedback || "",
+        message: approval?.feedback
+          ? "User requested changes to the plan. Create a revised plan with plan_create_for_session."
+          : "User rejected the plan. Create a revised plan or ask for clarification."
+      };
+    }
+
+    const approvedPlan = {
+      ...plan,
+      status: "approved",
+      approvedAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    const nextPlans = getSessionPlans(targetSessionId).map(item => item.id === plan.id ? approvedPlan : item);
+    await setSessionPlans(targetSessionId, nextPlans);
+    return {
+      success: true,
+      approved: true,
+      planId: approvedPlan.id,
+      message: "User approved the plan. Start executing it, and update step status with plan_update_for_session."
+    };
+  }
+
+  async function handlePlanUpdateForSession(targetSessionId, args = {}) {
+    const plans = getSessionPlans(targetSessionId);
+    const currentPlan = getLatestPlan(plans);
+    if (!currentPlan) return { error: "No plan exists for this session" };
+    const stepIndex = Number(args.stepIndex);
+    if (!Number.isInteger(stepIndex) || stepIndex < 0 || stepIndex >= currentPlan.steps.length) {
+      return { error: `Invalid stepIndex: ${args.stepIndex}` };
+    }
+    const allowedStatuses = new Set(["pending", "in_progress", "completed", "blocked", "skipped"]);
+    const status = String(args.status || "");
+    if (!allowedStatuses.has(status)) {
+      return { error: `Invalid status: ${args.status}` };
+    }
+    const hasNote = Object.prototype.hasOwnProperty.call(args, "note");
+    const updatedSteps = currentPlan.steps.map((step, index) => index === stepIndex
+      ? {
+        ...step,
+        status,
+        note: hasNote ? String(args.note || "").trim() : (step.note || ""),
+        updatedAt: Date.now()
+      }
+      : step
+    );
+    const updatedPlan = {
+      ...currentPlan,
+      steps: updatedSteps,
+      status: derivePlanStatus(updatedSteps),
+      updatedAt: Date.now()
+    };
+    const nextPlans = plans.map(plan => plan.id === currentPlan.id ? updatedPlan : plan);
+    await setSessionPlans(targetSessionId, nextPlans);
+    return {
+      success: true,
+      planId: updatedPlan.id,
+      stepIndex,
+      status,
+      planStatus: updatedPlan.status
+    };
+  }
+
+  function resolvePlanApproval(approved, feedback = "") {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    shouldFocusInputWhenReadyRef.current = true;
+    const resolver = planApprovalResolverRef.current.get(currentSessionId);
+    planApprovalResolverRef.current.delete(currentSessionId);
+    setSessionRuntime(currentSessionId, {
+      pendingApproval: null,
+      loading: approved
+    });
+    if (resolver) resolver({ approved, feedback: String(feedback || "").trim() });
   }
 
   function requestDangerousToolApproval(targetSessionId, runId, toolCall, approvalMeta) {
@@ -482,11 +667,13 @@ export default function AgentPanel() {
       await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
     }
     sessionMessagesRef.current.set(id, []);
+    sessionPlansRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
     activeSessionIdRef.current = id;
     setSessionId(id);
     setSessionTitle("新会话");
     setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
+    applyLatestPlanFromPlans([]);
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
@@ -515,6 +702,7 @@ export default function AgentPanel() {
     stopSessionGeneration(id);
 
     sessionMessagesRef.current.delete(id);
+    sessionPlansRef.current.delete(id);
     sessionRuntimeRef.current.delete(id);
     await deleteSession(id);
     const updated = await listSessions();
@@ -555,6 +743,24 @@ export default function AgentPanel() {
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
       `- If you need the actual page content, first identify the right tab, then call tab_extract.\n` +
       `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tab_focus to switch to and reactivate the tab, then retry the original tool.\n` +
+      `Planning rules:
+` +
+      `- For simple one-step questions or quick browser operations, answer or act directly without creating a plan.
+` +
+      `- If the user's request is complex, ambiguous, research-heavy, report-oriented, or likely needs multiple meaningful steps, first call plan_create_for_session before starting implementation.
+` +
+      `- Create a plan when the task likely needs 3 or more meaningful steps, involves investigation/comparison/report writing, organizes many tabs/windows/workspaces, or the user explicitly asks for a plan.
+` +
+      `- Do not create a plan for simple factual questions, one obvious tab action, quick clarification, or casual discussion.
+` +
+      `- Plans must be high-level and user-readable. Do not list low-level tool calls as plan steps; prefer outcomes like "Research official documentation" or "Generate the final report".
+` +
+      `- After calling plan_create_for_session, wait for its tool result. If approved is true, start executing the plan. If approved is false and feedback is present, incorporate the feedback and call plan_create_for_session again to replace the latest plan.
+` +
+      `- While executing an approved plan, call plan_update_for_session whenever a step starts, completes, is skipped, or becomes blocked.
+` +
+      `- Keep plan steps concise, concrete, and outcome-oriented.
+` +
       `- Treat questions about "latest", "current", "today", recent releases, prices, availability, laws, policies, API fields/schemas, model lists/capabilities/pricing, SDK behavior, product documentation, or any fast-changing technical detail as time-sensitive. Do not answer these from memory first.\n` +
       `- For time-sensitive questions, first look for an available web search/fetch MCP tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources before responding.\n` +
       `- If no web search/fetch tool is available, use browser tools instead: open a search engine or official documentation page with tab_open, inspect/extract the page with tab_extract and DOM tools, and then answer based on what you found.\n` +
@@ -583,7 +789,8 @@ export default function AgentPanel() {
     });
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
-      model: llmConfig?.model || ""
+      model: llmConfig?.model || "",
+      supportsImageInput: llmConfig?.supportsImageInput === true
     });
     return {
       ...llmConfig,
@@ -642,7 +849,8 @@ export default function AgentPanel() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text && pendingAttachments.length === 0) return;
+    if (loading) return;
 
     const config = await getLLMConfig();
     if (!config.apiKey || !config.baseUrl) {
@@ -650,13 +858,23 @@ export default function AgentPanel() {
       return;
     }
 
-    const userMsg = { role: "user", content: text };
+    const imageAtts = pendingAttachments.filter(a => a.type === "image");
+    const textAtts = pendingAttachments.filter(a => a.type === "text");
+
+    const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
+    const userMsg = {
+      role: "user",
+      content: hasAnyAttachment
+        ? buildUserMessageContent(text, imageAtts, textAtts)
+        : text
+    };
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
     const newMessages = [...getSessionMessages(currentSessionId), userMsg];
     enableAutoFollowBottom("auto");
     setSessionMessages(currentSessionId, newMessages);
     setInput("");
+    setPendingAttachments([]);
     shouldFocusInputWhenReadyRef.current = true;
     const nextRunId = getSessionRuntime(currentSessionId).runId + 1;
     setSessionRuntime(currentSessionId, { loading: true, abort: null, runId: nextRunId });
@@ -732,31 +950,56 @@ export default function AgentPanel() {
           const toolNames = [...new Set(msg.toolCalls.map(tc => tc.name))].join(", ");
           toast(`🔧 执行: ${toolNames}`, { duration: 2000 });
 
+          // Show assistant message + pending placeholders immediately
+          const assistantMsg = buildAssistantToolCallMessage(config.apiType, config.model, streamedContent, msg);
+          const pendingToolMsgs = msg.toolCalls.map(tc => ({
+            role: "tool",
+            tool_call_id: tc.id,
+            tool_name: tc.name,
+            content: null,
+            _pending: true
+          }));
+          setSessionMessages(targetSessionId, [...conversationMessages, assistantMsg, ...pendingToolMsgs]);
+
           const toolResults = [];
           for (const tc of msg.toolCalls) {
             if (!isCurrentRun(targetSessionId, runId)) return;
             let result;
-            const dangerousMeta = getDangerousToolMeta(tc);
-            if (dangerousMeta) {
-              toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
-              const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
+            const t0 = Date.now();
+            if (tc.name === "plan_create_for_session") {
+              result = await handlePlanCreateForSession(targetSessionId, runId, tc.args || {});
               if (!isCurrentRun(targetSessionId, runId)) return;
-              if (!approved) {
-                result = { error: "Execution canceled by user", cancelled: true };
-              } else {
-                setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
-              }
+              setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+            } else if (tc.name === "plan_update_for_session") {
+              result = await handlePlanUpdateForSession(targetSessionId, tc.args || {});
             } else {
-              result = await executeTool(tc.name, tc.args, combinedMcpTools);
+              const dangerousMeta = getDangerousToolMeta(tc);
+              if (dangerousMeta) {
+                toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
+                const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
+                if (!isCurrentRun(targetSessionId, runId)) return;
+                if (!approved) {
+                  result = { error: "Execution canceled by user", cancelled: true };
+                } else {
+                  setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+                  result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                }
+              } else {
+                result = await executeTool(tc.name, tc.args, combinedMcpTools);
+              }
             }
+            const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
+            const toolResultMsg = buildDisplayToolResultMessage({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
             toolResults.push({ id: tc.id, name: tc.name, args: tc.args, result });
+            // Replace the pending placeholder for this tool
+            const currentMsgs = getSessionMessages(targetSessionId);
+            const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
+            setSessionMessages(targetSessionId, updatedMsgs);
           }
 
           if (!isCurrentRun(targetSessionId, runId)) return;
 
-          const assistantMsg = buildAssistantToolCallMessage(config.apiType, config.model, streamedContent, msg);
           const toolResultMsgs = buildToolResultMessages(toolResults);
 
           const continuedMessages = [
@@ -802,6 +1045,124 @@ export default function AgentPanel() {
     setSessionRuntime(targetSessionId, { abort, loading: true });
   }
 
+  // ==================== Attachment Event Handlers ====================
+
+  const TEXT_EXTS = /\.(txt|md|json|csv|xml|yaml|yml|log|js|ts|jsx|tsx|py|java|c|cpp|h|css|html|sh|rb|go|rs)$/i;
+
+  function isTextFile(file) {
+    return file.type.startsWith("text/") || TEXT_EXTS.test(file.name);
+  }
+
+  async function handlePaste(e) {
+    const items = Array.from(e.clipboardData?.items || []);
+    const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
+    const canImage = llmConfigInfo.supportsImageInput;
+
+    let imageFiles = [];
+    if (canImage) {
+      imageFiles = items
+        .filter(it => it.kind === "file" && (it.type.startsWith("image/") || it.type === ""))
+        .map(it => it.getAsFile())
+        .filter(f => f && (f.type.startsWith("image/") || IMAGE_EXT.test(f.name)));
+
+      const allFiles = Array.from(e.clipboardData?.files || []);
+      if (imageFiles.length === 0) {
+        imageFiles = allFiles.filter(f => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
+      }
+    }
+
+    const allFiles = Array.from(e.clipboardData?.files || []);
+    const textFiles = allFiles.filter(f => isTextFile(f) && !f.type.startsWith("image/") && !IMAGE_EXT.test(f.name));
+
+    if (imageFiles.length > 0 || textFiles.length > 0) {
+      e.preventDefault();
+      if (imageFiles.length > 0) await handleImageFiles(imageFiles);
+      if (textFiles.length > 0) await handleTextFiles(textFiles);
+    }
+  }
+
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  async function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const files = Array.from(e.dataTransfer?.files || []);
+    const imgs = files.filter(f => f.type.startsWith("image/"));
+    const texts = files.filter(f => isTextFile(f) && !f.type.startsWith("image/"));
+
+    if (imgs.length > 0) await handleImageFiles(imgs);
+    if (texts.length > 0) await handleTextFiles(texts);
+  }
+
+  async function handleImageFileSelect(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) await handleImageFiles(files);
+    e.target.value = "";
+  }
+
+  async function handleTextFileSelect(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) await handleTextFiles(files);
+    e.target.value = "";
+  }
+
+  async function handleImageFiles(files) {
+    const newItems = [];
+    for (const file of files) {
+      try {
+        const rawDataUrl = await blobToDataUrl(file);
+        const optimizedDataUrl = await optimizeImageDataUrl(rawDataUrl);
+        const parsed = parseImageDataUrl(optimizedDataUrl);
+        if (!parsed) continue;
+        newItems.push({
+          id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: "image",
+          dataUrl: optimizedDataUrl,
+          mediaType: parsed.mediaType,
+          fileName: file.name
+        });
+      } catch (error) {
+        console.error("Failed to process image:", error);
+        toast.error(`图片处理失败: ${file.name}`);
+      }
+    }
+    if (newItems.length > 0) setPendingAttachments(prev => [...prev, ...newItems]);
+  }
+
+  async function handleTextFiles(files) {
+    const newItems = [];
+    for (const file of files) {
+      try {
+        const text = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsText(file);
+        });
+        console.log(`[DEBUG] 读取文件 ${file.name}, 长度: ${text.length}, 前100字符:`, text.substring(0, 100));
+        newItems.push({
+          id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: "text",
+          text,
+          fileName: file.name
+        });
+      } catch (error) {
+        console.error("Failed to read text file:", error);
+        toast.error(`文件读取失败: ${file.name}`);
+      }
+    }
+    if (newItems.length > 0) setPendingAttachments(prev => [...prev, ...newItems]);
+  }
+
+  function handleRemoveAttachment(id) {
+    setPendingAttachments(prev => prev.filter(a => a.id !== id));
+  }
+
+
   function stopGeneration() {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
@@ -815,15 +1176,19 @@ export default function AgentPanel() {
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null });
     setSessionMessages(currentSessionId, []);
+    sessionPlansRef.current.set(currentSessionId, []);
+    applyLatestPlanFromPlans([]);
     setInput("");
     const currentSessionEntry = sessions.find(s => s.id === currentSessionId);
     if (currentSessionEntry?.manualTitle) {
       const preservedTitle = String(sessionTitle || "").trim() || "新会话";
       setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
       await saveSession(currentSessionId, [], preservedTitle);
+      await saveSessionMeta(currentSessionId, { plans: [] });
     } else {
       setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
       await saveSession(currentSessionId, [], "新会话");
+      await saveSessionMeta(currentSessionId, { plans: [] });
     }
     setSessions(await listSessions());
   }
@@ -940,9 +1305,39 @@ export default function AgentPanel() {
     if (index >= msgs.length) return;
 
     const target = msgs[index];
-    if (target?.role !== "user" || Array.isArray(target.content)) return;
+    if (target?.role !== "user") return;
 
-    const text = typeof target.content === "string" ? target.content : String(target.content ?? "");
+    // For multimodal messages, extract text blocks and attachments; for plain string, use as-is
+    let text = "";
+    const restoredAttachments = [];
+
+    if (Array.isArray(target.content)) {
+      const textBlock = target.content.find(b => b.type === "text");
+      text = textBlock?.text ?? "";
+
+      // Restore file attachments
+      for (const block of target.content) {
+        if (block.type === "file") {
+          restoredAttachments.push({
+            id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: "text",
+            text: block.text,
+            fileName: block.fileName
+          });
+        } else if (block.type === "image" && block.source) {
+          // Restore image attachments
+          const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+          restoredAttachments.push({
+            id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: "image",
+            dataUrl,
+            fileName: "image"
+          });
+        }
+      }
+    } else {
+      text = typeof target.content === "string" ? target.content : String(target.content ?? "");
+    }
     stopSessionGeneration(currentSessionId);
 
     const truncated = msgs.slice(0, index);
@@ -950,6 +1345,7 @@ export default function AgentPanel() {
     setSessionRuntime(currentSessionId, { contextUsage: null });
     setSessionMessages(currentSessionId, truncated);
     setInput(text);
+    setPendingAttachments(restoredAttachments);
     void autoSave(currentSessionId, truncated);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -1008,6 +1404,7 @@ export default function AgentPanel() {
           }>
             <ScheduleJobsDialogBody />
           </Dialog>
+          <UserProfilePanel />
           <div className="chat-toolbar-expanded-spacer" />
           <div className="chat-title-inline">
             <span className="chat-session-title">
@@ -1106,6 +1503,14 @@ export default function AgentPanel() {
         </div>
       </div>
 
+      {latestPlan && (
+        <SessionPlanPanel
+          plan={latestPlan}
+          collapsed={planCollapsed}
+          onToggleCollapsed={() => setPlanCollapsed(prev => !prev)}
+        />
+      )}
+
       <div
         className="chat-messages"
         ref={messagesScrollerRef}
@@ -1145,7 +1550,12 @@ export default function AgentPanel() {
       </div>
 
       <div className="chat-input-area">
-        {pendingApproval && (
+        {pendingApproval?.kind === "plan" ? (
+          <PlanApprovalCard
+            plan={pendingApproval.plan}
+            onResolve={resolvePlanApproval}
+          />
+        ) : pendingApproval ? (
           <Card className="!p-2 !mb-1">
             <div className="text-xs font-semibold text-red-600 mb-1">
               {pendingApprovalMeta?.title || "危险工具待确认"}
@@ -1163,12 +1573,31 @@ export default function AgentPanel() {
               </Button>
             </div>
           </Card>
+        ) : null}
+        {pendingAttachments.length > 0 && (
+          <div className="chat-input-images">
+            {pendingAttachments.map(att => att.type === "image" ? (
+              <div key={att.id} className="chat-input-image-item">
+                <img src={att.dataUrl} alt={att.fileName || "预览"} />
+                <button type="button" className="chat-input-image-remove" onClick={() => handleRemoveAttachment(att.id)} aria-label="删除">×</button>
+              </div>
+            ) : (
+              <div key={att.id} className="chat-input-file-item">
+                <span className="chat-input-file-icon">📄</span>
+                <span className="chat-input-file-name">{att.fileName}</span>
+                <button type="button" className="chat-input-image-remove" onClick={() => handleRemoveAttachment(att.id)} aria-label="删除">×</button>
+              </div>
+            ))}
+          </div>
         )}
         <textarea
           ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
           placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
           rows={3}
           readOnly={loading}
@@ -1184,9 +1613,8 @@ export default function AgentPanel() {
         </div>
         <div className="chat-input-actions">
           <div className="chat-input-actions-left">
-            <UserProfilePanel />
-          </div>
-          <div className="chat-input-actions-right">
+            <input ref={imageInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleImageFileSelect} />
+            <input ref={textInputRef} type="file" accept=".txt,.md,.json,.csv,.xml,.yaml,.yml,.log,.js,.ts,.jsx,.tsx,.py,.java,.c,.cpp,.h,.css,.html,.sh,.rb,.go,.rs" multiple style={{ display: "none" }} onChange={handleTextFileSelect} />
             <SkillsConfig
               agentSkills={agentSkills}
               loading={skillsLoading}
@@ -1197,6 +1625,19 @@ export default function AgentPanel() {
               onLoad={handleLoadSkills}
             />
             <McpConfig onToolsChanged={setMcpTools} />
+          </div>
+          <div className="chat-input-actions-right">
+            <div className="chat-attach-wrapper" ref={attachWrapperRef}>
+              <Button className="!text-xs" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
+              {showAttachMenu && (
+                <div className="chat-attach-menu">
+                  {llmConfigInfo.supportsImageInput && (
+                    <button onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}>🖼️ 图片</button>
+                  )}
+                  <button onClick={() => { textInputRef.current?.click(); setShowAttachMenu(false); }}>📄 文本文件</button>
+                </div>
+              )}
+            </div>
             {loading ? (
               <Button className="!text-xs" onPress={stopGeneration}>停止</Button>
             ) : (
@@ -1210,6 +1651,147 @@ export default function AgentPanel() {
 }
 
 // ==================== Helper functions ====================
+
+
+function normalizeSessionPlans(plans) {
+  return Array.isArray(plans) ? plans.filter(Boolean) : [];
+}
+
+function getLatestPlan(plans) {
+  const normalized = normalizeSessionPlans(plans);
+  return normalized.length > 0 ? normalized[normalized.length - 1] : null;
+}
+
+function normalizePlanSteps(steps) {
+  if (!Array.isArray(steps)) return [];
+  return steps
+    .map((step, index) => ({
+      id: step?.id || `step_${index + 1}`,
+      title: String(step?.title || "").trim(),
+      description: String(step?.description || "").trim(),
+      status: normalizePlanStepStatus(step?.status || "pending"),
+      note: String(step?.note || "").trim(),
+      updatedAt: step?.updatedAt || null
+    }))
+    .filter(step => step.title);
+}
+
+function normalizePlanStepStatus(status) {
+  const value = String(status || "pending");
+  return ["pending", "in_progress", "completed", "blocked", "skipped"].includes(value) ? value : "pending";
+}
+
+function derivePlanStatus(steps) {
+  const list = Array.isArray(steps) ? steps : [];
+  if (list.length === 0) return "draft";
+  if (list.some(step => step.status === "blocked")) return "blocked";
+  if (list.every(step => step.status === "completed" || step.status === "skipped")) return "completed";
+  if (list.some(step => step.status === "in_progress" || step.status === "completed" || step.status === "skipped")) return "in_progress";
+  return "approved";
+}
+
+function formatPlanStatus(status) {
+  switch (status) {
+    case "draft": return "待确认";
+    case "approved": return "已确认";
+    case "in_progress": return "执行中";
+    case "completed": return "已完成";
+    case "blocked": return "受阻";
+    case "cancelled": return "已取消";
+    default: return status || "计划";
+  }
+}
+
+function getPlanStepIcon(status) {
+  switch (status) {
+    case "completed": return "✅";
+    case "in_progress": return "🔄";
+    case "blocked": return "⛔";
+    case "skipped": return "⏭️";
+    default: return "⬜";
+  }
+}
+
+function SessionPlanPanel({ plan, collapsed = false, onToggleCollapsed }) {
+  if (!plan) return null;
+  const steps = plan.steps || [];
+  const completedCount = steps.filter(step => step.status === "completed" || step.status === "skipped").length;
+  const currentStep = steps.find(step => step.status === "in_progress") || steps.find(step => step.status === "blocked");
+  return (
+    <div className={`session-plan-panel session-plan-${plan.status || "draft"} ${collapsed ? "session-plan-collapsed" : ""}`}>
+      <button
+        type="button"
+        className="session-plan-header"
+        onClick={onToggleCollapsed}
+        aria-expanded={!collapsed}
+        title={collapsed ? "展开计划" : "收起计划"}
+      >
+        <span className="session-plan-title">📋 {plan.title || "执行计划"}</span>
+        <span className="session-plan-summary">
+          {completedCount}/{steps.length}
+          {currentStep ? ` · ${currentStep.title}` : ""}
+        </span>
+        <span className="session-plan-status">{formatPlanStatus(plan.status)}</span>
+        <span className="session-plan-toggle">{collapsed ? "展开" : "收起"}</span>
+      </button>
+      {!collapsed && (
+        <ol className="session-plan-steps">
+          {steps.map((step, index) => (
+            <li key={step.id || index} className={`session-plan-step session-plan-step-${step.status || "pending"}`}>
+              <span className="session-plan-step-icon">{getPlanStepIcon(step.status)}</span>
+              <span className="session-plan-step-body">
+                <span className="session-plan-step-title">{step.title}</span>
+                {step.note && <span className="session-plan-step-note">{step.note}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function PlanApprovalCard({ plan, onResolve }) {
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  return (
+    <Card className="!p-2 !mb-1 plan-approval-card">
+      <div className="plan-approval-title">执行计划待确认</div>
+      <div className="plan-approval-plan-title">{plan?.title || "执行计划"}</div>
+      <ol className="plan-approval-steps">
+        {(plan?.steps || []).map((step, index) => (
+          <li key={step.id || index}>
+            <span className="plan-approval-step-title">{step.title}</span>
+            {step.description && <span className="plan-approval-step-desc">{step.description}</span>}
+          </li>
+        ))}
+      </ol>
+      {showFeedback && (
+        <textarea
+          className="plan-approval-feedback"
+          value={feedback}
+          onChange={(event) => setFeedback(event.target.value)}
+          placeholder="你希望怎么修改这个计划？"
+          rows={2}
+          autoFocus
+        />
+      )}
+      <div className="chat-input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
+        {showFeedback ? (
+          <>
+            <Button className="!text-xs" onPress={() => setShowFeedback(false)}>返回</Button>
+            <Button className="!text-xs" onPress={() => onResolve(false, feedback)}>提交修改意见</Button>
+          </>
+        ) : (
+          <>
+            <Button className="!text-xs" onPress={() => setShowFeedback(true)}>不 OK，补充要求</Button>
+            <Button className="!text-xs" onPress={() => onResolve(true)}>OK，开始实施</Button>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 function buildContextUsage(apiType, model, usage) {
   if (!usage || typeof usage !== "object") return null;
@@ -1844,7 +2426,8 @@ function buildDisplayToolResultMessage(toolResult) {
     tool_name: toolResult.name,
     content: serializedContent,
     displayImageUrl: parsedImage ? toolResult.result.dataUrl : undefined,
-    displayImageMediaType: parsedImage?.mediaType
+    displayImageMediaType: parsedImage?.mediaType,
+    durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
   };
 }
 
@@ -1932,6 +2515,69 @@ function buildOpenAIToolResultContent(msg, options = {}) {
       }
     }
   ];
+}
+
+// ==================== User Image Input Helpers ====================
+
+function buildUserMessageContent(text, images, textFiles = []) {
+  const content = [];
+
+  if (text && text.trim()) {
+    content.push({ type: "text", text: text.trim() });
+  }
+
+  for (const f of textFiles) {
+    console.log(`[DEBUG] 构建消息内容 - 文件: ${f.fileName}, 文本长度: ${f.text.length}, 前100字符:`, f.text.substring(0, 100));
+    content.push({ type: "file", fileName: f.fileName, text: f.text });
+  }
+
+  for (const img of images) {
+    const parsed = parseImageDataUrl(img.dataUrl);
+    if (parsed) {
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
+      });
+    }
+  }
+
+  return content;
+}
+
+async function optimizeImageDataUrl(dataUrl) {
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = dataUrl;
+    });
+
+    const maxDimension = 1600;
+    const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+    const width = Math.round(img.width * scale);
+    const height = Math.round(img.height * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    ctx.drawImage(img, 0, 0, width, height);
+
+    return canvas.toDataURL("image/jpeg", 0.7);
+  } catch (e) {
+    console.error("Image optimization failed:", e);
+    return dataUrl;
+  }
+}
+
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 function buildAnthropicAssistantContentFromMessage(msg) {
@@ -2158,6 +2804,24 @@ function buildOpenAIApiMessages(messages, options = {}) {
       continue;
     }
 
+    if (msg.role === "user") {
+      if (Array.isArray(msg.content)) {
+        const openaiContent = [];
+        for (const block of msg.content) {
+          if (block.type === "text") {
+            openaiContent.push({ type: "text", text: block.text });
+          } else if (block.type === "file") {
+            openaiContent.push({ type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` });
+          } else if (block.type === "image" && block.source && options.supportsImageInput !== false) {
+            const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+            openaiContent.push({ type: "image_url", image_url: { url: dataUrl, detail: "low" } });
+          }
+        }
+        apiMessages.push({ role: "user", content: openaiContent });
+        continue;
+      }
+    }
+
     if (msg.role === "tool") {
       apiMessages.push({
         role: "tool",
@@ -2202,10 +2866,22 @@ function buildAnthropicApiMessages(messages, options = {}) {
     if (msg.role === "assistant") {
       const content = buildAnthropicAssistantContentFromMessage(msg);
       if (content.length === 0) continue;
-      apiMessages.push({
-        role: "assistant",
-        content
-      });
+      apiMessages.push({ role: "assistant", content });
+      continue;
+    }
+
+    if (msg.role === "user" && Array.isArray(msg.content)) {
+      const anthropicContent = msg.content
+        .filter(block => !(block.type === "image" && options.supportsImageInput === false))
+        .map(block => {
+          if (block.type === "file") {
+            const result = { type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` };
+            console.log(`[DEBUG] Anthropic API - 文件转换: ${block.fileName}, 原始长度: ${block.text.length}, 转换后长度: ${result.text.length}`);
+            return result;
+          }
+          return block;
+        });
+      apiMessages.push({ role: "user", content: anthropicContent });
       continue;
     }
 

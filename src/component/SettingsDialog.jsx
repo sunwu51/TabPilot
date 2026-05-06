@@ -287,7 +287,7 @@ function SettingsDialogBody() {
           />
           <div className="mt-2">
             <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
-              <span className="text-sm">模型支持图片输入（开启后允许截图工具，并把截图作为图片上下文传给模型）</span>
+              <span className="text-sm">模型支持图片输入</span>
             </Checkbox>
           </div>
           <Input

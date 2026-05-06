@@ -17,10 +17,55 @@ export default function ChatMessage({ msg, messageIndex, onRewindToUserMessage }
 
   // User message
   if (role === "user") {
-    if (Array.isArray(content)) return null; // skip Anthropic tool_result
+    // Skip Anthropic tool_result format
+    if (Array.isArray(content) && content.some(block => block.type === "tool_result")) {
+      return null;
+    }
+
     const showRewind =
       typeof messageIndex === "number" &&
       typeof onRewindToUserMessage === "function";
+
+    // Multimodal message (text + images)
+    if (Array.isArray(content)) {
+      return (
+        <div className="chat-msg chat-msg-user">
+          <div className="chat-msg-user-inner">
+            {showRewind && (
+              <Dialog
+                trigger={
+                  <button
+                    type="button"
+                    className="chat-user-rewind-btn"
+                    title="回退到此消息"
+                    aria-label="回退到此消息"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    ↩
+                  </button>
+                }
+              >
+                <div className="text-sm font-semibold text-gray-600 mb-2">回退到此消息</div>
+                <div className="text-xs text-gray-500 mb-3">回退到这条消息后，之后的消息会被删除。</div>
+                <div className="flex justify-end">
+                  <Button
+                    className="!text-xs"
+                    onPress={() => onRewindToUserMessage(messageIndex)}
+                  >
+                    确认回退
+                  </Button>
+                </div>
+              </Dialog>
+            )}
+            <div className="chat-bubble chat-bubble-user">
+              <UserMultimodalContent content={content} />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Plain text message
     return (
       <div className="chat-msg chat-msg-user">
         <div className="chat-msg-user-inner">
@@ -116,6 +161,48 @@ export default function ChatMessage({ msg, messageIndex, onRewindToUserMessage }
   }
 
   return null;
+}
+
+/** Render user multimodal content (text + images) */
+function UserMultimodalContent({ content }) {
+  if (!Array.isArray(content)) return null;
+
+  return (
+    <>
+      {content.map((block, index) => {
+        if (block.type === "text") {
+          return <div key={index}>{block.text}</div>;
+        }
+        if (block.type === "file") {
+          return (
+            <div key={index} style={{ marginTop: index > 0 ? "8px" : "0", display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#374151" }}>
+              <span>📄</span>
+              <span>{block.fileName}</span>
+            </div>
+          );
+        }
+        if (block.type === "image" && block.source) {
+          const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+          return (
+            <div key={index} style={{ marginTop: index > 0 ? "8px" : "0" }}>
+              <img
+                src={dataUrl}
+                alt="用户上传的图片"
+                style={{
+                  display: "block",
+                  maxWidth: "min(50%, 300px)",
+                  height: "auto",
+                  borderRadius: "6px",
+                  background: "#f5f5f5"
+                }}
+              />
+            </div>
+          );
+        }
+        return null;
+      })}
+    </>
+  );
 }
 
 /** Markdown-rendered assistant text bubble */
@@ -230,7 +317,19 @@ function ToolCallBlock({ name, input }) {
 /** Collapsed block showing tool execution result (success or failure) */
 function ToolResultBlock({ msg }) {
   const [expanded, setExpanded] = useState(false);
-  const { content, displayImageUrl, tool_name: toolName } = msg;
+  const { content, displayImageUrl, tool_name: toolName, durationMs } = msg;
+  const durationStr = typeof durationMs === "number" ? ` ${durationMs}ms` : "";
+
+  if (msg._pending) {
+    return (
+      <div className="tool-result-msg">
+        <div className="tool-result-header">
+          <span className="tool-result-arrow">▶</span>
+          <span className="tool-result-label">⏳ {toolName || "tool"}…</span>
+        </div>
+      </div>
+    );
+  }
 
   let label = "tool result";
   let isError = false;
@@ -265,7 +364,7 @@ function ToolResultBlock({ msg }) {
     <div className={`tool-result-msg ${isError ? "tool-result-error" : ""}`} onClick={() => setExpanded(!expanded)}>
       <div className="tool-result-header">
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">{isError ? "❌" : "✅"} {label}</span>
+        <span className="tool-result-label">{isError ? "❌" : "✅"} {label}{durationStr}</span>
       </div>
       {displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: expanded ? "8px" : "0" }}>
