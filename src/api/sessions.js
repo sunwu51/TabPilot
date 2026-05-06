@@ -53,13 +53,14 @@ export async function loadSession(id) {
 /**
  * Load optional metadata for a specific session.
  * @param {string} id - session ID
- * @returns {Promise<{systemPrompt: string}>}
+ * @returns {Promise<{systemPrompt: string, plans: Array}>}
  */
 export async function loadSessionMeta(id) {
   const key = `session_${id}`;
-  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "" } });
+  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [] } });
   return {
-    systemPrompt: result[key]?.systemPrompt || ""
+    systemPrompt: result[key]?.systemPrompt || "",
+    plans: Array.isArray(result[key]?.plans) ? result[key].plans : []
   };
 }
 
@@ -123,7 +124,7 @@ export async function resetSessionTitle(id, title = "新会话") {
 /**
  * Save optional metadata for a session without replacing messages.
  * @param {string} id - session ID
- * @param {{systemPrompt?: string}} meta - partial session metadata
+ * @param {{systemPrompt?: string, plans?: Array}} meta - partial session metadata
  */
 export async function saveSessionMeta(id, meta = {}) {
   const key = `session_${id}`;

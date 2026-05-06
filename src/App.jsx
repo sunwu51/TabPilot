@@ -4,6 +4,7 @@ import { Tabs, TabsItem } from "@sunwu51/camel-ui";
 import Group from "./component/tabManager/Group";
 import Search from "./component/tabManager/Search";
 import Workspace from "./component/tabManager/Workspace";
+import Macro from "./component/tabManager/Macro";
 import AgentPanel from "./component/agent/AgentPanel";
 import BridgePanel from "./component/bridge/BridgePanel";
 import SettingsDialog from "./component/SettingsDialog";
@@ -16,11 +17,13 @@ import SettingsDialog from "./component/SettingsDialog";
  */
 function App() {
   const [bridgeEnabled, setBridgeEnabled] = useState(false);
+  const [betaFeaturesEnabled, setBetaFeaturesEnabled] = useState(true);
   const bridgeEnabledRef = useRef(false);
 
   useEffect(() => {
-    chrome.storage.local.get({ bridgeEnabled: false }, (res) => {
+    chrome.storage.local.get({ bridgeEnabled: false, betaFeaturesEnabled: true }, (res) => {
       setBridgeEnabled(!!res.bridgeEnabled);
+      setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
       bridgeEnabledRef.current = !!res.bridgeEnabled;
     });
     const handleChange = (changes) => {
@@ -33,6 +36,9 @@ function App() {
         }
         bridgeEnabledRef.current = next;
       }
+      if (changes.betaFeaturesEnabled) {
+        setBetaFeaturesEnabled(changes.betaFeaturesEnabled.newValue !== false);
+      }
     };
     chrome.storage.onChanged.addListener(handleChange);
     return () => chrome.storage.onChanged.removeListener(handleChange);
@@ -44,6 +50,7 @@ function App() {
         <Search />
         <Group />
         <Workspace />
+        {betaFeaturesEnabled && <Macro />}
       </div>
     </TabsItem>,
     <TabsItem key="agent" title="小助手">

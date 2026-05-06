@@ -15,6 +15,7 @@ function Search() {
   const [fromHistory, setFromHistory] = useState([])
   const [timestamp, setTimestamp] = useState(0)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const preserveIndexRef = useRef(null)
 
   useEffect(() => {
     (async function _run() {
@@ -42,7 +43,14 @@ function Search() {
         .map(it => ({ history: it, score: lcs(arr, (it.url + it.title).toLowerCase()) }))
         .filter(it => it.score > 0).sort((a, b) => b.score - a.score).slice(0, 3);
       setFromHistory(fromHistory)
-      setSelectedIndex(0)
+
+      const total = fromTabs.length + fromHistory.length;
+      if (preserveIndexRef.current !== null) {
+        setSelectedIndex(Math.min(preserveIndexRef.current, Math.max(total - 1, 0)));
+        preserveIndexRef.current = null;
+      } else {
+        setSelectedIndex(0);
+      }
     })()
   }, [filter, timestamp])
 
@@ -60,6 +68,7 @@ function Search() {
     e?.preventDefault();
     e?.stopPropagation();
     e?.nativeEvent?.stopImmediatePropagation?.();
+    preserveIndexRef.current = selectedIndex;
     await chrome.tabs.remove(tabId);
     setTimestamp(Date.now());
   }

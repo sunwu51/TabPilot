@@ -1,8 +1,14 @@
+import { API_TYPES, normalizeApiType } from "./llm";
+
 const OPENAI_COMPLETIONS_PATH = "/v1/chat/completions";
+const OPENAI_RESPONSES_PATH = "/v1/responses";
 const ANTHROPIC_MESSAGES_PATH = "/v1/messages";
 
 export function getDefaultLlmEndpointPath(apiType) {
-  return apiType === "anthropic" ? ANTHROPIC_MESSAGES_PATH : OPENAI_COMPLETIONS_PATH;
+  const normalizedApiType = normalizeApiType(apiType);
+  if (normalizedApiType === API_TYPES.ANTHROPIC) return ANTHROPIC_MESSAGES_PATH;
+  if (normalizedApiType === API_TYPES.OPENAI_RESPONSES) return OPENAI_RESPONSES_PATH;
+  return OPENAI_COMPLETIONS_PATH;
 }
 
 export function resolveLlmRequestUrl(apiType, baseUrl) {

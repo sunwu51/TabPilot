@@ -1,586 +1,8 @@
 /* global chrome */
-import { callMcpTool } from "./mcp";
-import { resolveLlmRequestUrl } from "./llmEndpoint";
+import { callMcpTool } from "../mcp";
+import { buildMcpToolCallName } from "./tools";
+import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 
-const DOM_LOCATOR_PROPERTIES = {
-  tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
-  selector: { type: "string", description: "Optional CSS selector used to find elements." },
-  text: { type: "string", description: "Optional text to match against element text or labels." },
-  matchExact: { type: "boolean", description: "Whether text matching should be exact. Defaults to false." },
-  index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
-};
-const DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS = 30;
-const DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 60;
-const DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS = 10;
-const DEFAULT_LLM_FIRST_PACKET_TIMEOUT_SECONDS = 20;
-const MAX_LLM_STREAM_RETRIES = 3;
-const SCHEDULE_STORAGE_KEY = "scheduledJobs";
-const SCHEDULE_RETENTION_MS = 24 * 60 * 60 * 1000;
-const SCHEDULE_FIRE_ALARM_PREFIX = "schedule-fire:";
-const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
-const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
-
-// ==================== Tool Definitions ====================
-
-export const TOOLS = [
-  {
-    name: "tab_list",
-    description: "Get a snapshot of all currently open browser tabs. Returns each tab's id, url, title, and lastAccessed, plus capturedAt timing fields so you can judge whether the tab state may be stale and refresh it again if needed. Use when the user asks about open tabs, browser context, or page-related questions and you need to identify the right tab first.",
-    schema: {
-      type: "object",
-      properties: {
-        maxSize: {
-          type: "number",
-          description: "Maximum number of tabs to return. Defaults to -1 (no limit)."
-        },
-        briefUrl: {
-          type: "boolean",
-          description: "If true, return only the hostname (domain) instead of the full URL. Useful to reduce response size when full URLs are not needed."
-        }
-      },
-      required: []
-    }
-  },
-  {
-    name: "tab_extract",
-    description: "Extract the text content of a browser tab. Also returns tab metadata including title, url, and lastAccessed when available. Use when you need to read page content to answer the user's question.",
-    schema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "The browser tab ID to extract content from" }
-      },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "tab_scroll",
-    description: "Scroll a browser tab and return the updated scroll position. Use when you need to inspect another part of the currently visible page before taking another screenshot or reading the layout. If tabId is omitted, scrolls the current active tab.",
-    schema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
-        deltaY: { type: "number", description: "Optional vertical scroll delta in pixels. Positive scrolls down, negative scrolls up." },
-        pageFraction: { type: "number", description: "Optional fraction of one viewport height to scroll, such as 0.8 or -1." },
-        position: {
-          type: "string",
-          enum: ["top", "bottom"],
-          description: "Optional absolute scroll target. Use 'top' or 'bottom'."
-        },
-        behavior: {
-          type: "string",
-          enum: ["auto", "smooth"],
-          description: "Scroll behavior. Defaults to 'auto'."
-        }
-      },
-      required: []
-    }
-  },
-  {
-    name: "dom_query",
-    description: "Query the current page DOM and return matching elements with text, attributes, positions, and match count. Use this to inspect the page structure before interacting with it.",
-    schema: {
-      type: "object",
-      properties: {
-        ...DOM_LOCATOR_PROPERTIES,
-        maxResults: { type: "number", description: "Maximum number of matching elements to return (default 5, max 20)." }
-      },
-      required: []
-    }
-  },
-  {
-    name: "dom_click",
-    description: "Click a DOM element on the page by selector or text match. Use this for buttons, links, tabs, menus, and other clickable elements.",
-    schema: {
-      type: "object",
-      properties: DOM_LOCATOR_PROPERTIES,
-      required: []
-    }
-  },
-  {
-    name: "dom_set_value",
-    description: "Set the value of an input, textarea, or select element and dispatch input/change events. Use this to fill forms or update controls.",
-    schema: {
-      type: "object",
-      properties: {
-        ...DOM_LOCATOR_PROPERTIES,
-        value: { type: "string", description: "The value to set on the target form element." }
-      },
-      required: ["value"]
-    }
-  },
-  {
-    name: "dom_style",
-    description: "Temporarily apply inline CSS styles to a matched DOM element. Useful for visual debugging or emphasizing an element for the user.",
-    schema: {
-      type: "object",
-      properties: {
-        ...DOM_LOCATOR_PROPERTIES,
-        styles: {
-          type: "object",
-          description: "Object mapping CSS property names to values, e.g. {\"outline\":\"3px solid red\"}"
-        },
-        durationMs: { type: "number", description: "How long to keep the styles before restoring them (default 2000ms)." }
-      },
-      required: ["styles"]
-    }
-  },
-  {
-    name: "dom_get_html",
-    description: "Get the inner or outer HTML of a matched DOM element. Use this when you need markup context for a specific part of the page.",
-    schema: {
-      type: "object",
-      properties: {
-        ...DOM_LOCATOR_PROPERTIES,
-        mode: {
-          type: "string",
-          enum: ["outer", "inner"],
-          description: "Whether to return the element's outerHTML or innerHTML. Defaults to outer."
-        },
-        maxLength: { type: "number", description: "Maximum HTML length to return (default 4000, max 20000)." }
-      },
-      required: []
-    }
-  },
-  {
-    name: "dom_highlight",
-    description: "Scroll the page to a matched DOM element and flash a visible highlight around it for about one second so the user can spot it on the page.",
-    schema: {
-      type: "object",
-      properties: {
-        ...DOM_LOCATOR_PROPERTIES,
-        durationMs: { type: "number", description: "How long the highlight should remain visible (default 1000ms)." }
-      },
-      required: []
-    }
-  },
-  {
-    name: "eval_js",
-    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page in the page's main JavaScript context. Use only when structured DOM tools are insufficient. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
-    schema: {
-      type: "object",
-      properties: {
-        jsScript: { type: "string", description: "JavaScript source code to execute in the page's main world. Use `return ...` if you want a result value back." }
-      },
-      required: ["jsScript"]
-    }
-  },
-  {
-    name: "tab_open",
-    description: "Open a new browser tab with the given URL. By default focuses on the new tab. Returns tab metadata including lastAccessed when available.",
-    schema: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "The URL to open" },
-        active: { type: "boolean", description: "Whether to focus on the new tab (default true). Set false to open in background." }
-      },
-      required: ["url"]
-    }
-  },
-  {
-    name: "tab_focus",
-    description: "Switch focus to an existing browser tab by its ID. If the tab is in a different browser window, move it into the current window first, then focus it. Returns tab metadata including windowId and lastAccessed when available.",
-    schema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "The tab ID to focus on" }
-      },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "tab_close",
-    description: "Close one or more browser tabs by their IDs. Returns metadata for each tab before it was closed, including lastAccessed when available.",
-    schema: {
-      type: "object",
-      properties: {
-        tabIds: {
-          type: "array",
-          items: { type: "number" },
-          description: "Array of tab IDs to close"
-        }
-      },
-      required: ["tabIds"]
-    }
-  },
-  {
-    name: "tab_group",
-    description: "Group multiple browser tabs together with a label and color. Use when the user asks to organize tabs.",
-    schema: {
-      type: "object",
-      properties: {
-        tabIds: {
-          type: "array",
-          items: { type: "number" },
-          description: "Array of tab IDs to group together"
-        },
-        name: { type: "string", description: "Display name for the tab group" },
-        color: {
-          type: "string",
-          enum: ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"],
-          description: "Color for the tab group"
-        }
-      },
-      required: ["tabIds", "name"]
-    }
-  },
-  {
-    name: "group_list",
-    description: "Get a snapshot of all tab groups across browser windows. Returns each group's metadata and current tabs, plus capturedAt timing fields. Use when the user asks about groups or tab organization.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "group_get",
-    description: "Get a snapshot of a specific tab group by its groupId, including current tabs and capturedAt timing fields.",
-    schema: {
-      type: "object",
-      properties: {
-        groupId: { type: "number", description: "The browser tab group ID" }
-      },
-      required: ["groupId"]
-    }
-  },
-  {
-    name: "group_update",
-    description: "Update a tab group's title, color, and/or collapsed state. Returns the updated group snapshot.",
-    schema: {
-      type: "object",
-      properties: {
-        groupId: { type: "number", description: "The browser tab group ID" },
-        name: { type: "string", description: "New display title for the group" },
-        color: {
-          type: "string",
-          enum: ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"],
-          description: "New color for the tab group"
-        },
-        collapsed: { type: "boolean", description: "Whether the group should be collapsed" }
-      },
-      required: ["groupId"]
-    }
-  },
-  {
-    name: "group_add_tabs",
-    description: "Add one or more tabs to an existing tab group. Returns the updated group snapshot.",
-    schema: {
-      type: "object",
-      properties: {
-        groupId: { type: "number", description: "The browser tab group ID" },
-        tabIds: {
-          type: "array",
-          items: { type: "number" },
-          description: "Array of tab IDs to add to the group"
-        }
-      },
-      required: ["groupId", "tabIds"]
-    }
-  },
-  {
-    name: "group_remove_tabs",
-    description: "Remove one or more tabs from their current tab groups. Returns the updated tab metadata after ungrouping.",
-    schema: {
-      type: "object",
-      properties: {
-        tabIds: {
-          type: "array",
-          items: { type: "number" },
-          description: "Array of tab IDs to remove from their current groups"
-        }
-      },
-      required: ["tabIds"]
-    }
-  },
-  {
-    name: "group_ungroup",
-    description: "Dissolve an entire tab group by its groupId. Returns the group snapshot captured before ungrouping and the resulting tabs.",
-    schema: {
-      type: "object",
-      properties: {
-        groupId: { type: "number", description: "The browser tab group ID" }
-      },
-      required: ["groupId"]
-    }
-  },
-  {
-    name: "history_search",
-    description: "Search browser history by keyword. Returns recent matching URLs with titles and visit times. Use when the user asks about previously visited pages.",
-    schema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search keyword" },
-        maxResults: { type: "number", description: "Maximum number of results to return (default 10)" }
-      },
-      required: ["query"]
-    }
-  },
-  {
-    name: "history_recent",
-    description: "List recent browser history entries within a time range. Use when the user asks for recently visited pages without a keyword filter.",
-    schema: {
-      type: "object",
-      properties: {
-        startTime: { type: "number", description: "Optional inclusive start timestamp in milliseconds. Defaults to 7 days ago." },
-        endTime: { type: "number", description: "Optional inclusive end timestamp in milliseconds. Defaults to now." },
-        maxResults: { type: "number", description: "Maximum number of results to return (default 100, max 100)." }
-      },
-      required: []
-    }
-  },
-  {
-    name: "tab_get_active",
-    description: "Get a snapshot of the active tab in the current extension/side-panel window. Use when the user says 'this page', 'current page', 'the page I'm looking at', etc. This does not require Chrome to have operating-system focus. Returns the tab's ID, URL, title, lastAccessed, and capturedAt timing fields so you can then use tab_extract to read its content and judge whether the snapshot may need refreshing.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "tab_screenshot",
-    description:
-      "Capture a screenshot of a browser tab. By default captures only the visible viewport using Chrome's captureVisibleTab (requires that tab to be active in its window). Set fullPage: true to capture the full scrollable page by stitching multiple viewport screenshots. In full-page mode, sticky headers (position:fixed/sticky elements near the top) are automatically hidden after the first frame to prevent content obstruction. Output is width-capped JPEG for readability.",
-    schema: {
-      type: "object",
-      properties: {
-        windowId: { type: "number", description: "Window ID passed to captureVisibleTab (default: the resolved tab's window)" },
-        tabId: { type: "number", description: "Optional tab to capture. When omitted, uses the active tab in the current extension/side-panel window. When set, that tab is activated before capture." },
-        fullPage: { type: "boolean", description: "When true, capture the entire scrollable page by scrolling and stitching viewport screenshots together. Sticky headers are automatically hidden after the first frame to prevent content obstruction." },
-        maxScreens: { type: "number", description: "Maximum number of viewport screenshots to capture for fullPage mode (default: 40, range: 1-100). Only used when fullPage is true." },
-        settleMs: { type: "number", description: "Milliseconds to wait after scrolling for lazy content to render (default: 250, range: 0-5000). Only used when fullPage is true." }
-      },
-      required: []
-    }
-  },
-  {
-    name: "window_list",
-    description: "Get a snapshot of all browser windows. Returns each window's metadata and its current tabs, plus capturedAt timing fields. Use when the user asks about windows, cross-window tab organization, or which window contains a tab.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "window_get_current",
-    description: "Get a snapshot of the current browser window, including its tabs and capturedAt timing fields.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "window_focus",
-    description: "Focus a browser window by its ID. Returns the focused window snapshot.",
-    schema: {
-      type: "object",
-      properties: {
-        windowId: { type: "number", description: "The browser window ID to focus" }
-      },
-      required: ["windowId"]
-    }
-  },
-  {
-    name: "window_move_tab",
-    description: "Move one or more tabs into a target browser window. Returns metadata for the moved tabs and the target window snapshot.",
-    schema: {
-      type: "object",
-      properties: {
-        tabIds: {
-          type: "array",
-          items: { type: "number" },
-          description: "Array of tab IDs to move"
-        },
-        windowId: { type: "number", description: "The target browser window ID" }
-      },
-      required: ["tabIds", "windowId"]
-    }
-  },
-  {
-    name: "window_create",
-    description: "Create a new browser window. You may optionally provide a URL to open and whether the new window should be focused.",
-    schema: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "Optional URL to open in the new window" },
-        focused: { type: "boolean", description: "Whether the new window should be focused (default true)" }
-      },
-      required: []
-    }
-  },
-  {
-    name: "window_close",
-    description: "Close a browser window by its ID. Returns the window snapshot captured before closing.",
-    schema: {
-      type: "object",
-      properties: {
-        windowId: { type: "number", description: "The browser window ID to close" }
-      },
-      required: ["windowId"]
-    }
-  },
-  {
-    name: "get_current_time",
-    description: "Get the current date, time and timezone. Use when you need to know the current time, or when the user asks about time, or before setting a reminder with an absolute timestamp.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "schedule_tool",
-    description: "Schedule a tool call to execute at a future time. You MUST provide both toolName and toolArgs. toolName must be one of the available built-in tools or connected MCP tools. toolArgs must be a JSON object and must strictly match the input format required by the selected toolName. Provide EITHER delaySeconds (relative, preferred) OR timestamp (absolute). Example: schedule tab_open to open a URL in 5 minutes. Recommendation: because scheduled jobs run inside the Chrome host process, they will disappear and cannot execute after Chrome is closed, so avoid creating jobs too far in the future whenever possible.",
-    schema: {
-      type: "object",
-      properties: {
-        delaySeconds: { type: "number", description: "Seconds from now (e.g. 300 for 5 minutes). Preferred." },
-        timestamp: { type: "number", description: "Absolute Unix timestamp in ms. Only if user gives exact datetime." },
-        toolName: { type: "string", description: "Name of the tool to call (e.g. tab_open, tab_close, mcp__xxx)" },
-        toolArgs: { type: "object", description: "Required JSON object of arguments for the selected toolName. The shape and field names must strictly match that tool's input schema." },
-        label: { type: "string", description: "Short human-readable description of this scheduled task" },
-        timeoutSeconds: { type: "number", description: `Maximum execution time after the schedule fires. Defaults to ${DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS} seconds.` }
-      },
-      required: ["toolName", "toolArgs"]
-    }
-  },
-  {
-    name: "list_scheduled",
-    description: "List all scheduled jobs that are pending, running, or completed within the last 24 hours, including their IDs, labels, planned fire times, and statuses.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "cancel_scheduled",
-    description: "Cancel a pending scheduled tool call by its ID. Cancelled jobs remain visible with status=cancelled for 24 hours before cleanup.",
-    schema: {
-      type: "object",
-      properties: {
-        scheduleId: { type: "string", description: "The schedule ID to cancel" }
-      },
-      required: ["scheduleId"]
-    }
-  },
-  {
-    name: "clear_completed_scheduled",
-    description: "Manually clear completed scheduled jobs, including succeeded, failed, and cancelled entries.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "stash_in_browser",
-    description: "Stash information in browser local storage with an optional expiration time. A stash is like a personal memory vault — use it to remember facts, user preferences, context, or notes that should persist across conversations. Stashes are stored per-extension and shared across all tabs. Not related to browser history or browsing records.",
-    schema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "A unique title/key for this stash. Used to look up and manage the stash later." },
-        info: { type: "string", description: "The information content to store in the stash." },
-        expireAt: { type: "number", description: "Expiration timestamp in Unix milliseconds. Use -1 for permanent storage. Defaults to 1 month from now if omitted." }
-      },
-      required: ["title", "info"]
-    }
-  },
-  {
-    name: "unstash_in_browser",
-    description: "Retrieve a previously stashed information entry by its title. Returns the stored info string, or an error if the title is not found or the stash has expired.",
-    schema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "The title/key of the stash to retrieve." }
-      },
-      required: ["title"]
-    }
-  },
-  {
-    name: "list_stashes_in_browser",
-    description: "List all stash titles currently stored in browser local storage. Expired stashes are automatically filtered out. Use this to discover what stashes exist before retrieving them.",
-    schema: {
-      type: "object",
-      properties: {},
-      required: []
-    }
-  },
-  {
-    name: "remove_stash_in_browser",
-    description: "Remove a stash entry by its title. Returns success whether or not the stash existed.",
-    schema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "The title/key of the stash to remove." }
-      },
-      required: ["title"]
-    }
-  },
-  {
-    name: "save_to_file",
-    description: "Save arbitrary string content as a file and trigger a browser download. The file is created as a Blob and downloaded using an anchor element. Use this to export data, save generated text, or create downloadable artifacts for the user.",
-    schema: {
-      type: "object",
-      properties: {
-        fileName: { type: "string", description: "The name of the file to download, including extension (e.g. 'report.md', 'data.json', 'notes.txt')." },
-        content: { type: "string", description: "The full string content to write into the file." }
-      },
-      required: ["fileName", "content"]
-    }
-  }
-];
-
-export const BUILTIN_TOOL_COUNT = TOOLS.length;
-export const BUILTIN_TOOL_NAMES = TOOLS.map(t => t.name);
-
-export function buildMcpToolCallName(serverName, toolName) {
-  return `mcp_${serverName}_${toolName}`;
-}
-
-/**
- * Get tool definitions formatted for the specified API type.
- * Merges built-in tools with MCP tools.
- * @param {string} apiType - "openai" or "anthropic"
- * @param {Array} [mcpTools] - MCP tools from connected servers [{name, description, inputSchema, _serverUrl, _serverHeaders, _toolCallName}]
- * @param {Object} [options]
- * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
- * @param {boolean} [options.supportsImageInput=false] - Whether the selected model accepts image inputs
- * @returns {Array} formatted tool definitions
- */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false } = {}) {
-  // Convert MCP tools to our internal format
-  const externalTools = mcpTools.map(t => ({
-    name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
-    description: `[MCP] ${t.description || t.name}`,
-    schema: t.inputSchema || { type: "object", properties: {} }
-  }));
-
-  const builtInTools = includeBuiltins
-    ? TOOLS.filter(tool => supportsImageInput || tool.name !== "tab_screenshot")
-    : [];
-  const allTools = [...builtInTools, ...externalTools];
-
-  if (apiType === "anthropic") {
-    return allTools.map(t => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.schema
-    }));
-  }
-  return allTools.map(t => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.schema
-    }
-  }));
-}
-
-// ==================== Tool Executors ====================
 
 /**
  * Execute a tool call by name. Routes to the appropriate handler.
@@ -650,6 +72,9 @@ export async function executeTool(name, args, mcpRegistry = []) {
         case "unstash_in_browser": return _execUnstashInBrowser(args);
         case "list_stashes_in_browser": return _execListStashesInBrowser();
         case "remove_stash_in_browser": return _execRemoveStashInBrowser(args);
+        case "list_macros": return _execListMacros(args);
+        case "describe_macro": return _execDescribeMacro(args);
+        case "run_macro": return _execRunMacro(args);
         case "save_to_file": return _execSaveToFile(args);
         default: return { error: `Unknown tool: ${name}` };
       }
@@ -657,8 +82,8 @@ export async function executeTool(name, args, mcpRegistry = []) {
 
     return await withTimeout(
       runBuiltinTool(),
-      DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS * 1000,
-      `Built-in tool timed out after ${DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS}s: ${name}`
+      getBuiltinToolTimeoutSeconds(name) * 1000,
+      `Built-in tool timed out after ${getBuiltinToolTimeoutSeconds(name)}s: ${name}`
     );
   } catch (e) {
     return {
@@ -666,6 +91,53 @@ export async function executeTool(name, args, mcpRegistry = []) {
       hint: "The operation failed."
     };
   }
+}
+
+function getBuiltinToolTimeoutSeconds(name) {
+  if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
+  return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
+}
+
+function _sendMacroManagerMessage(action, payload = {}) {
+  return new Promise(resolve => {
+    try {
+      chrome.runtime.sendMessage({ type: "macro_manager", action, payload }, response => {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(response || { success: false, error: "Empty macro manager response" });
+      });
+    } catch (error) {
+      resolve({ success: false, error: error?.message || String(error) });
+    }
+  });
+}
+
+async function _execListMacros({ query } = {}) {
+  const res = await _sendMacroManagerMessage("list_for_ai", { query });
+  if (!res?.success) return { error: res?.error || "Failed to list macros" };
+  return { macros: res.data || [] };
+}
+
+async function _execDescribeMacro({ id } = {}) {
+  if (!id || typeof id !== "string") return { error: "id is required" };
+  const res = await _sendMacroManagerMessage("describe_for_ai", { id });
+  if (!res?.success) return { error: res?.error || "Failed to describe macro" };
+  if (!res.data) return { error: `Macro not found: ${id}` };
+  return { macro: res.data };
+}
+
+async function _execRunMacro({ id, inputValues = {}, speed = "normal", stepDelayMs } = {}) {
+  if (!id || typeof id !== "string") return { error: "id is required" };
+  const options = { speed };
+  if (stepDelayMs != null) options.stepDelayMs = Number(stepDelayMs);
+  const res = await _sendMacroManagerMessage("replay", { id, inputValues, options });
+  if (!res?.success) return { error: res?.error || "Failed to run macro" };
+  return {
+    tabId: res.tabId,
+    report: res.report
+  };
 }
 
 function withTimeout(promise, timeoutMs, message = "Operation timed out") {
@@ -1667,7 +1139,7 @@ async function _execEvalJs({ jsScript }) {
  * Open a new tab with the given URL. Optionally focus on it.
  */
 async function _execTabOpen({ url, active }) {
-  if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  if (!/^(https?:\/\/|data:)/i.test(url)) url = "https://" + url;
   const shouldFocus = active !== false; // default true
   const tab = await chrome.tabs.create({ url, active: shouldFocus });
   if (shouldFocus) await chrome.windows.update(tab.windowId, { focused: true });
@@ -2768,8 +2240,6 @@ async function _execClearCompletedScheduled() {
   };
 }
 
-const STASH_STORAGE_KEY = "user_stashes";
-const DEFAULT_STASH_EXPIRE_MS = 30 * 24 * 60 * 60 * 1000; // 1 month
 
 async function _getStashes() {
   const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
@@ -2885,745 +2355,111 @@ async function _execRemoveStashInBrowser({ title }) {
 }
 
 /**
- * Save content as a file and trigger a browser download via an anchor element.
+ * Save content as a file by triggering a page download. Try the current active
+ * tab first; if that page cannot be scripted (for example chrome:// pages),
+ * fall back to a temporary scriptable tab and close it afterwards.
  */
 async function _execSaveToFile({ fileName, content }) {
   if (!fileName || typeof fileName !== "string") return { error: "fileName is required and must be a string" };
   if (content === undefined || content === null) return { error: "content is required" };
+
+  const text = String(content);
+  const size = new TextEncoder().encode(text).length;
+  let activeTabError = null;
 
   try {
     const tab = await chrome.tabs.query({ active: true, currentWindow: true });
     const targetTabId = tab?.[0]?.id;
     if (!targetTabId) return { error: "No active tab found to trigger download" };
 
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: targetTabId },
-      world: "MAIN",
-      func: (fn, ct) => {
-        const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = fn;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        return true;
-      },
-      args: [fileName, String(content)]
-    });
-
-    if (results?.[0]?.result === true) {
-      return { success: true, fileName, size: new TextEncoder().encode(String(content)).length };
-    }
-    return { error: "Failed to trigger download on the page" };
+    await _triggerFileDownloadInTab(targetTabId, fileName, text);
+    return { success: true, fileName, size, fallback: false };
   } catch (e) {
-    return { error: e.message, hint: "Could not trigger file download" };
+    activeTabError = e;
   }
-}
 
-// ==================== Streaming Chat ====================
-
-/**
- * Send a streaming chat request to an LLM.
- * Supports both OpenAI-compatible and Anthropic Messages API.
- *
- * Tool calls are collected and included in the onDone callback so the caller
- * can execute them all and send results back in a single round-trip.
- *
- * @param {Object} config - { apiType, baseUrl, apiKey, model }
- * @param {Array} messages - conversation messages
- * @param {Object} callbacks - { onText, onDone, onError, onRetry }
- * @param {Array} [mcpTools] - MCP tools to include
- * @param {Object} [options]
- * @param {boolean} [options.includeBuiltins=true] - Whether to expose built-in browser tools
- * @returns {Function} abort
- */
-export function streamChat(config, messages, { onText, onDone, onError, onRetry }, mcpTools = [], options = {}) {
-  const controller = new AbortController();
-
-  void _streamWithRetry(config, messages, controller.signal, { onText, onDone, onError, onRetry }, mcpTools, options);
-
-  return () => controller.abort();
-}
-
-const DEFAULT_ANTHROPIC_CACHE_CONTROL = { type: "ephemeral" };
-
-function buildOpenAICacheFields(options = {}) {
-  const cacheKey = String(options?.sessionId || "").trim();
-  return cacheKey ? { prompt_cache_key: cacheKey } : {};
-}
-
-// ==================== OpenAI Compatible ====================
-
-async function _streamWithRetry(config, messages, signal, callbacks, mcpTools = [], options = {}) {
-  const failures = [];
-
-  for (let attempt = 1; attempt <= MAX_LLM_STREAM_RETRIES; attempt++) {
-    if (signal.aborted) return;
-
-    try {
-      if (config.apiType === "anthropic") {
-        await _streamAnthropicAttempt(config, messages, signal, callbacks, mcpTools, options);
-      } else {
-        await _streamOpenAIAttempt(config, messages, signal, callbacks, mcpTools, options);
-      }
-      return;
-    } catch (error) {
-      if (isAbortError(error) && signal.aborted) return;
-
-      const normalizedError = normalizeLlmStreamError(error, {
-        apiType: config.apiType,
-        attempt,
-        maxAttempts: MAX_LLM_STREAM_RETRIES
-      });
-
-      failures.push({
-        attempt,
-        code: normalizedError.code || "LLM_ERROR",
-        message: normalizedError.message || "LLM request failed",
-        status: normalizedError.status || null,
-        detail: normalizedError.detail || null
-      });
-
-      if (attempt < MAX_LLM_STREAM_RETRIES) {
-        callbacks.onRetry?.({
-          attempt,
-          nextAttempt: attempt + 1,
-          maxAttempts: MAX_LLM_STREAM_RETRIES,
-          error: normalizedError
-        });
-        try {
-          await delayRetry(attempt, signal);
-        } catch (retryError) {
-          if (isAbortError(retryError)) return;
-          throw retryError;
-        }
-        continue;
-      }
-
-      normalizedError.attempts = attempt;
-      normalizedError.maxAttempts = MAX_LLM_STREAM_RETRIES;
-      normalizedError.failures = failures;
-      callbacks.onError?.(normalizedError);
-      return;
-    }
-  }
-}
-
-async function _streamOpenAIAttempt(config, messages, signal, { onText, onDone }, mcpTools = [], options = {}) {
-  const tools = getTools("openai", mcpTools, options);
-  const url = resolveLlmRequestUrl("openai", config.baseUrl);
-  const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
-
+  let fallbackTabId = null;
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages,
-        tools,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...buildOpenAICacheFields(options)
-      }),
-      signal: timeoutState.signal
-    });
+    const fallbackTab = await chrome.tabs.create({ url: "https://example.com/", active: false });
+    fallbackTabId = fallbackTab?.id;
+    if (!fallbackTabId) return { error: "Could not open fallback tab for download", activeTabError: activeTabError?.message };
 
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw createLlmStreamError({
-        code: `HTTP_${res.status}`,
-        message: `LLM 接口返回 HTTP ${res.status}`,
-        status: res.status,
-        detail: errText || `HTTP ${res.status}`
-      });
-    }
-
-    const reader = res.body?.getReader();
-    if (!reader) {
-      throw createLlmStreamError({
-        code: "EMPTY_RESPONSE_BODY",
-        message: "LLM 未返回响应流"
-      });
-    }
-
-    const decoder = new TextDecoder();
-    let fullContent = "";
-    const reasoningFields = {};
-    const reasoningDetails = [];
-    let toolCallsMap = {};
-    let buffer = "";
-    let sawToolCallDelta = false;
-    let usage = null;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value?.length) {
-        timeoutState.markFirstPacketReceived();
-      }
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) continue;
-        const data = trimmed.slice(6);
-        if (data === "[DONE]") continue;
-
-        try {
-          const json = JSON.parse(data);
-          usage = mergeUsage(usage, extractOpenAIStreamUsage(json));
-          const delta = json.choices?.[0]?.delta;
-          if (!delta) continue;
-
-          if (delta.content) {
-            fullContent += delta.content;
-            onText?.(delta.content);
-          }
-
-          const reasoningDeltas = extractOpenAIReasoningDeltas(delta);
-          for (const [field, chunk] of Object.entries(reasoningDeltas)) {
-            reasoningFields[field] = (reasoningFields[field] || "") + chunk;
-          }
-          if (Array.isArray(delta.reasoning_details)) {
-            reasoningDetails.push(...delta.reasoning_details);
-          }
-
-          if (delta.tool_calls) {
-            sawToolCallDelta = true;
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              if (!toolCallsMap[idx]) toolCallsMap[idx] = { id: "", name: "", arguments: "" };
-              if (tc.id) toolCallsMap[idx].id = tc.id;
-              if (tc.function?.name) toolCallsMap[idx].name = tc.function.name;
-              if (tc.function?.arguments) toolCallsMap[idx].arguments += tc.function.arguments;
-            }
-          }
-        } catch (error) {
-          throw createLlmStreamError({
-            code: "STREAM_PARSE_ERROR",
-            message: "解析 OpenAI 流式响应失败",
-            detail: error?.message || String(error)
-          });
-        }
-      }
-    }
-
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
-    }
-
-    const rawToolCalls = Object.entries(toolCallsMap)
-      .filter(([, tc]) => tc.name)
-      .map(([idx, tc]) => ({
-        index: Number(idx),
-        id: tc.id || `toolcall_${idx}_${Date.now()}`,
-        name: tc.name,
-        arguments: tc.arguments
-      }));
-
-    const parseFailures = [];
-    const toolCalls = rawToolCalls
-      .map(tc => {
-        try {
-          return {
-            id: tc.id,
-            name: tc.name,
-            args: JSON.parse(tc.arguments || "{}"),
-            _raw: tc.arguments || "{}"
-          };
-        } catch (error) {
-          parseFailures.push({ name: tc.name, arguments: tc.arguments, error: error.message });
-          return null;
-        }
-      })
-      .filter(Boolean);
-
-    if (parseFailures.length > 0) {
-      throw createLlmStreamError({
-        code: "TOOL_CALL_PARSE_ERROR",
-        message: "工具调用参数解析失败",
-        detail: parseFailures
-      });
-    }
-
-    if (sawToolCallDelta && toolCalls.length === 0 && !fullContent) {
-      throw createLlmStreamError({
-        code: "EMPTY_TOOL_CALL_STREAM",
-        message: "模型返回了工具调用片段，但未能重建有效工具调用"
-      });
-    }
-
-    onDone?.({
-      role: "assistant",
-      content: fullContent || null,
-      ...reasoningFields,
-      ...(reasoningDetails.length > 0 ? { reasoning_details: reasoningDetails } : {}),
-      ...(usage ? { usage } : {}),
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      _openaiToolCalls: toolCalls.length > 0 ? toolCalls.map(tc => ({
-        id: tc.id, type: "function",
-        function: { name: tc.name, arguments: tc._raw }
-      })) : undefined
-    });
-  } catch (error) {
-    if (timeoutState.didTimeout && !signal.aborted) {
-      throw buildFirstPacketTimeoutError(config);
-    }
-    if (isAbortError(error) && signal.aborted) {
-      throw error;
-    }
-    throw error;
+    await _waitForTabLoadComplete(fallbackTabId);
+    await _triggerFileDownloadInTab(fallbackTabId, fileName, text);
+    await _delay(1000);
+    return { success: true, fileName, size, fallback: true, activeTabError: activeTabError?.message };
+  } catch (e) {
+    return {
+      error: e.message,
+      hint: "Could not trigger file download in the active tab or fallback tab",
+      activeTabError: activeTabError?.message
+    };
   } finally {
-    timeoutState.cleanup();
-  }
-}
-
-function extractOpenAIReasoningDeltas(delta) {
-  if (!delta || typeof delta !== "object") return {};
-
-  const result = {};
-  for (const field of ["reasoning_content", "reasoning", "thinking"]) {
-    const value = extractReasoningText(delta[field]);
-    if (value) result[field] = value;
-  }
-  return result;
-}
-
-function extractReasoningText(value) {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(extractReasoningText).join("");
-  if (value && typeof value === "object") {
-    return [
-      value.reasoning_content,
-      value.thinking,
-      value.text,
-      value.content
-    ].map(extractReasoningText).join("");
-  }
-  return "";
-}
-
-function extractOpenAIStreamUsage(event) {
-  if (!event || typeof event !== "object") return null;
-  return firstUsageObject(
-    event.usage,
-    event.response?.usage,
-    event.message?.usage,
-    event.choices?.[0]?.usage,
-    event.choices?.[0]?.delta?.usage
-  );
-}
-
-function firstUsageObject(...values) {
-  for (const value of values) {
-    if (value && typeof value === "object" && !Array.isArray(value)) return value;
-  }
-  return null;
-}
-
-// ==================== Anthropic Messages API ====================
-
-async function _streamAnthropicAttempt(config, messages, signal, { onText, onDone }, mcpTools = [], options = {}) {
-  const tools = getTools("anthropic", mcpTools, options);
-  const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
-
-  try {
-    let systemPrompt = "";
-    const apiMessages = [];
-    for (const msg of messages) {
-      if (msg.role === "system") systemPrompt = msg.content;
-      else apiMessages.push(msg);
-    }
-
-    const url = resolveLlmRequestUrl("anthropic", config.baseUrl);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": config.apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify({
-        model: config.model,
-        cache_control: DEFAULT_ANTHROPIC_CACHE_CONTROL,
-        system: systemPrompt,
-        messages: apiMessages,
-        tools, max_tokens: 4096, stream: true
-      }),
-      signal: timeoutState.signal
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw createLlmStreamError({
-        code: `HTTP_${res.status}`,
-        message: `LLM 接口返回 HTTP ${res.status}`,
-        status: res.status,
-        detail: errText || `HTTP ${res.status}`
-      });
-    }
-
-    const reader = res.body?.getReader();
-    if (!reader) {
-      throw createLlmStreamError({
-        code: "EMPTY_RESPONSE_BODY",
-        message: "LLM 未返回响应流"
-      });
-    }
-
-    const decoder = new TextDecoder();
-    let fullContent = "";
-    let collectedToolUses = [];
-    const activeContentBlocks = new Map();
-    const rawContentBlocks = [];
-    let buffer = "";
-    let sawToolUseBlock = false;
-    let usage = {};
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value?.length) {
-        timeoutState.markFirstPacketReceived();
-      }
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data: ")) continue;
-        const data = trimmed.slice(6);
-
-        try {
-          const json = JSON.parse(data);
-          usage = mergeAnthropicUsage(usage, extractAnthropicStreamUsage(json));
-
-          if (json.type === "content_block_start") {
-            const index = getAnthropicEventIndex(json);
-            const block = normalizeAnthropicContentBlockStart(json.content_block);
-            if (block) {
-              activeContentBlocks.set(index, block);
-              if (block.type === "tool_use") sawToolUseBlock = true;
-              if (block.type === "text" && block.text) {
-                fullContent += block.text;
-                onText?.(block.text);
-              }
-            }
-          } else if (json.type === "content_block_delta") {
-            const index = getAnthropicEventIndex(json);
-            const block = activeContentBlocks.get(index);
-            if (json.delta?.type === "text_delta") {
-              const text = json.delta.text || "";
-              fullContent += text;
-              if (block?.type === "text") block.text += text;
-              onText?.(text);
-            } else if (json.delta?.type === "input_json_delta" && block?.type === "tool_use") {
-              block.inputJson += json.delta.partial_json || "";
-            } else if (json.delta?.type === "thinking_delta" && block?.type === "thinking") {
-              block.thinking += json.delta.thinking || "";
-            } else if (json.delta?.type === "signature_delta" && block?.type === "thinking") {
-              block.signature = (block.signature || "") + (json.delta.signature || "");
-            }
-          } else if (json.type === "content_block_stop") {
-            const index = getAnthropicEventIndex(json);
-            const block = activeContentBlocks.get(index);
-            if (block) {
-              if (block.type === "tool_use") collectedToolUses.push(block);
-              rawContentBlocks.push(block);
-              activeContentBlocks.delete(index);
-            }
-          }
-        } catch (error) {
-          throw createLlmStreamError({
-            code: "STREAM_PARSE_ERROR",
-            message: "解析 Anthropic 流式响应失败",
-            detail: error?.message || String(error)
-          });
-        }
+    if (fallbackTabId) {
+      try {
+        await chrome.tabs.remove(fallbackTabId);
+      } catch {
+        // Ignore cleanup failures; the download result/error above is more useful.
       }
     }
-
-    if (!timeoutState.firstPacketReceived) {
-      throw buildFirstPacketTimeoutError(config);
-    }
-
-    const parseFailures = [];
-    const parsedToolUsesByBlock = new Map();
-    const toolCalls = collectedToolUses
-      .map((tu, index) => {
-        try {
-          const id = tu.id || `tooluse_${index}_${Date.now()}`;
-          const input = JSON.parse(tu.inputJson || "{}");
-          parsedToolUsesByBlock.set(tu, { id, name: tu.name, input });
-          return {
-            id,
-            name: tu.name,
-            args: input
-          };
-        } catch (error) {
-          parseFailures.push({ name: tu.name, inputJson: tu.inputJson, error: error.message });
-          return null;
-        }
-      })
-      .filter(Boolean);
-
-    if (parseFailures.length > 0) {
-      throw createLlmStreamError({
-        code: "TOOL_CALL_PARSE_ERROR",
-        message: "工具调用参数解析失败",
-        detail: parseFailures
-      });
-    }
-
-    if (sawToolUseBlock && toolCalls.length === 0 && !fullContent) {
-      throw createLlmStreamError({
-        code: "EMPTY_TOOL_CALL_STREAM",
-        message: "模型返回了工具调用片段，但未能重建有效工具调用"
-      });
-    }
-
-    const contentBlocks = rawContentBlocks
-      .map(block => buildAnthropicContentBlock(block, parsedToolUsesByBlock))
-      .filter(Boolean);
-    if (fullContent && !contentBlocks.some(block => block.type === "text")) {
-      contentBlocks.push({ type: "text", text: fullContent });
-    }
-    const thinkingBlocks = contentBlocks.filter(isAnthropicThinkingContentBlock);
-
-    onDone?.({
-      role: "assistant",
-      content: contentBlocks.length > 0 ? contentBlocks : null,
-      ...(thinkingBlocks.length > 0 ? { thinking_blocks: thinkingBlocks } : {}),
-      ...(Object.keys(usage).length > 0 ? { usage } : {}),
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined
-    });
-  } catch (error) {
-    if (timeoutState.didTimeout && !signal.aborted) {
-      throw buildFirstPacketTimeoutError(config);
-    }
-    if (isAbortError(error) && signal.aborted) {
-      throw error;
-    }
-    throw error;
-  } finally {
-    timeoutState.cleanup();
   }
 }
 
-function getAnthropicEventIndex(event) {
-  return Number.isInteger(event?.index) ? event.index : 0;
-}
-
-function normalizeAnthropicContentBlockStart(contentBlock) {
-  if (!contentBlock || typeof contentBlock !== "object") return null;
-
-  if (contentBlock.type === "text") {
-    return { type: "text", text: contentBlock.text || "" };
-  }
-
-  if (contentBlock.type === "tool_use") {
-    return {
-      type: "tool_use",
-      id: contentBlock.id,
-      name: contentBlock.name,
-      inputJson: ""
-    };
-  }
-
-  if (contentBlock.type === "thinking") {
-    return {
-      type: "thinking",
-      thinking: contentBlock.thinking || "",
-      ...(contentBlock.signature ? { signature: contentBlock.signature } : {})
-    };
-  }
-
-  if (contentBlock.type === "redacted_thinking") {
-    return {
-      type: "redacted_thinking",
-      data: contentBlock.data || ""
-    };
-  }
-
-  return { ...contentBlock };
-}
-
-function buildAnthropicContentBlock(block, parsedToolUsesByBlock) {
-  if (!block || typeof block !== "object") return null;
-
-  if (block.type === "text") {
-    return block.text ? { type: "text", text: block.text } : null;
-  }
-
-  if (block.type === "tool_use") {
-    const parsed = parsedToolUsesByBlock.get(block);
-    if (!parsed?.name) return null;
-    return {
-      type: "tool_use",
-      id: parsed.id,
-      name: parsed.name,
-      input: parsed.input
-    };
-  }
-
-  if (block.type === "thinking") {
-    const thinking = block.thinking || "";
-    const signature = block.signature || "";
-    if (!thinking && !signature) return null;
-    return {
-      type: "thinking",
-      thinking,
-      ...(signature ? { signature } : {})
-    };
-  }
-
-  if (block.type === "redacted_thinking") {
-    return block.data ? { type: "redacted_thinking", data: block.data } : null;
-  }
-
-  return block;
-}
-
-function isAnthropicThinkingContentBlock(block) {
-  return block?.type === "thinking" || block?.type === "redacted_thinking";
-}
-
-function extractAnthropicStreamUsage(event) {
-  if (!event || typeof event !== "object") return null;
-  if (event.usage && typeof event.usage === "object") return event.usage;
-  if (event.message?.usage && typeof event.message.usage === "object") return event.message.usage;
-  return null;
-}
-
-function mergeAnthropicUsage(current = {}, next) {
-  return mergeUsage(current, next);
-}
-
-function mergeUsage(current = {}, next) {
-  if (!next || typeof next !== "object") return current || null;
-  return { ...(current || {}), ...next };
-}
-
-function getFirstPacketTimeoutMs(config) {
-  return Math.max(1, Number(config?.firstPacketTimeoutSeconds) || DEFAULT_LLM_FIRST_PACKET_TIMEOUT_SECONDS) * 1000;
-}
-
-function createFirstPacketTimeoutState(parentSignal, timeoutMs) {
-  const controller = new AbortController();
-  let firstPacketReceived = false;
-  let didTimeout = false;
-
-  const abortFromParent = () => {
-    controller.abort(parentSignal?.reason);
-  };
-
-  if (parentSignal?.aborted) {
-    abortFromParent();
-  } else if (parentSignal) {
-    parentSignal.addEventListener("abort", abortFromParent, { once: true });
-  }
-
-  const timeoutId = setTimeout(() => {
-    didTimeout = true;
-    controller.abort();
-  }, timeoutMs);
-
-  return {
-    signal: controller.signal,
-    get firstPacketReceived() {
-      return firstPacketReceived;
+async function _triggerFileDownloadInTab(tabId, fileName, content) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: (fn, ct) => {
+      const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fn;
+      a.rel = "noopener";
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return true;
     },
-    get didTimeout() {
-      return didTimeout;
-    },
-    markFirstPacketReceived() {
-      if (firstPacketReceived) return;
-      firstPacketReceived = true;
-      clearTimeout(timeoutId);
-    },
-    cleanup() {
-      clearTimeout(timeoutId);
-      parentSignal?.removeEventListener?.("abort", abortFromParent);
-    }
-  };
-}
-
-function buildFirstPacketTimeoutError(config) {
-  const timeoutSeconds = Math.max(1, Number(config?.firstPacketTimeoutSeconds) || DEFAULT_LLM_FIRST_PACKET_TIMEOUT_SECONDS);
-  return createLlmStreamError({
-    code: "FIRST_PACKET_TIMEOUT",
-    message: `首包超时，${timeoutSeconds} 秒内未收到响应`,
-    detail: { timeoutSeconds }
+    args: [fileName, content]
   });
-}
 
-function createLlmStreamError({ code, message, status, detail }) {
-  const error = new Error(message || "LLM request failed");
-  error.code = code || "LLM_ERROR";
-  if (status != null) error.status = status;
-  if (detail != null) error.detail = detail;
-  return error;
-}
-
-function normalizeLlmStreamError(error, { apiType, attempt, maxAttempts }) {
-  if (error?.code) {
-    error.apiType = apiType;
-    error.attempt = attempt;
-    error.maxAttempts = maxAttempts;
-    return error;
+  if (results?.[0]?.result !== true) {
+    throw new Error("Failed to trigger download on the page");
   }
-
-  const normalized = createLlmStreamError({
-    code: inferLlmErrorCode(error),
-    message: error?.message || "LLM 请求失败",
-    detail: error?.stack || String(error)
-  });
-  normalized.apiType = apiType;
-  normalized.attempt = attempt;
-  normalized.maxAttempts = maxAttempts;
-  return normalized;
 }
 
-function inferLlmErrorCode(error) {
-  if (isAbortError(error)) return "REQUEST_ABORTED";
-  if (error instanceof TypeError) return "NETWORK_ERROR";
-  return "LLM_ERROR";
-}
+async function _waitForTabLoadComplete(tabId, timeoutMs = 10_000) {
+  const existingTab = await chrome.tabs.get(tabId);
+  if (existingTab?.status === "complete") return;
 
-function isAbortError(error) {
-  return error?.name === "AbortError";
-}
-
-async function delayRetry(attempt, signal) {
-  const delayMs = Math.min(800, attempt * 250);
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener?.("abort", onAbort);
-      resolve();
-    }, delayMs);
-
-    function onAbort() {
+    let settled = false;
+    const cleanup = () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
       clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    }
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener?.("abort", onAbort, { once: true });
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onUpdated = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
+    };
+    const timer = setTimeout(() => fail(new Error("Timed out waiting for fallback tab to load")), timeoutMs);
+    chrome.tabs.onUpdated.addListener(onUpdated);
   });
+}
+
+function _delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

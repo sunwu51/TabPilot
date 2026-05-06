@@ -3,6 +3,7 @@ import { Button, Checkbox, Dialog, Input, Select } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llmEndpoint";
+import { API_TYPES, getDefaultApiType, normalizeApiType } from "../api/llm";
 import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/tabReuse";
 import {
   DEFAULT_WS_BRIDGE_STATUS,
@@ -13,7 +14,7 @@ import {
 
 const DEFAULT_SETTINGS = {
   llmConfig: {
-    apiType: "openai",
+    apiType: getDefaultApiType(),
     baseUrl: "",
     apiKey: "",
     model: "",
@@ -24,6 +25,7 @@ const DEFAULT_SETTINGS = {
   mcpToolTimeoutSeconds: 60,
   reuse: false,
   extractTextLimit: 8000,
+  betaFeaturesEnabled: true,
   bridgeEnabled: false,
   wsServerUrl: ""
 };
@@ -52,6 +54,7 @@ function SettingsDialogBody() {
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
+  const [betaFeaturesEnabled, setBetaFeaturesEnabled] = useState(DEFAULT_SETTINGS.betaFeaturesEnabled);
   const [bridgeEnabled, setBridgeEnabled] = useState(DEFAULT_SETTINGS.bridgeEnabled);
   const [wsServerUrl, setWsServerUrl] = useState(DEFAULT_SETTINGS.wsServerUrl);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
@@ -103,7 +106,7 @@ function SettingsDialogBody() {
         [WS_BRIDGE_STATUS_STORAGE_KEY]: DEFAULT_WS_BRIDGE_STATUS
       });
       const nextLlmConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
-      setApiType(nextLlmConfig.apiType || DEFAULT_SETTINGS.llmConfig.apiType);
+      setApiType(normalizeApiType(nextLlmConfig.apiType || DEFAULT_SETTINGS.llmConfig.apiType));
       setBaseUrl(nextLlmConfig.baseUrl || "");
       setApiKey(nextLlmConfig.apiKey || "");
       setModel(nextLlmConfig.model || "");
@@ -113,6 +116,7 @@ function SettingsDialogBody() {
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
+      setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
       setBridgeEnabled(!!res.bridgeEnabled);
       setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : "");
       setWsBridgeStatus({
@@ -155,6 +159,7 @@ function SettingsDialogBody() {
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
         extractTextLimit,
+        betaFeaturesEnabled,
         bridgeEnabled,
         wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null
       });
@@ -188,10 +193,17 @@ function SettingsDialogBody() {
           <div className="settings-card-title">LLM 配置</div>
           <Select
             label="API 类型"
-            items={["OpenAI 兼容", "Anthropic"]}
-            defaultIndex={apiType === "anthropic" ? 1 : 0}
+            items={["OpenAI Chat Completions", "OpenAI Responses", "Anthropic"]}
+            defaultIndex={apiType === API_TYPES.OPENAI_RESPONSES ? 1 : (apiType === API_TYPES.ANTHROPIC ? 2 : 0)}
             onSelectedItemChange={(changes) => {
-              setApiType(changes.selectedItem === "Anthropic" ? "anthropic" : "openai");
+              const selected = changes.selectedItem;
+              if (selected === "Anthropic") {
+                setApiType(API_TYPES.ANTHROPIC);
+              } else if (selected === "OpenAI Responses") {
+                setApiType(API_TYPES.OPENAI_RESPONSES);
+              } else {
+                setApiType(API_TYPES.OPENAI_CHAT_COMPLETIONS);
+              }
             }}
           />
           <Input
@@ -200,7 +212,7 @@ function SettingsDialogBody() {
             inputClassName="!min-h-8"
             defaultValue={baseUrl}
             onChange={setBaseUrl}
-            placeholder={apiType === "anthropic" ? "https://api.deepseek.com/anthropic/messages" : "https://api.deepseek.com/chat/completions"}
+            placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
           />
           <div className="settings-api-url-hint">
             最终 URL 为 {resolvedApiUrl || "—"}
@@ -214,7 +226,7 @@ function SettingsDialogBody() {
                 type={showApiKey ? "text" : "password"}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={apiType === "anthropic" ? "sk-ant-..." : "sk-..."}
+                placeholder={apiType === API_TYPES.ANTHROPIC ? "sk-ant-..." : "sk-..."}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -265,7 +277,7 @@ function SettingsDialogBody() {
             inputClassName="!min-h-8"
             defaultValue={model}
             onChange={setModel}
-            placeholder={apiType === "anthropic" ? "claude-sonnet-4-20250514" : "deepseek-v4-flash"}
+            placeholder={apiType === API_TYPES.ANTHROPIC ? "claude-sonnet-4-20250514" : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-4.1-mini" : "deepseek-v4-flash")}
           />
           <Input
             label="LLM 首包超时（秒）"
@@ -279,7 +291,7 @@ function SettingsDialogBody() {
           />
           <div className="mt-2">
             <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
-              <span className="text-sm">模型支持图片输入（开启后允许截图工具，并把截图作为图片上下文传给模型）</span>
+              <span className="text-sm">模型支持图片输入</span>
             </Checkbox>
           </div>
           <Input
@@ -328,6 +340,11 @@ function SettingsDialogBody() {
             >
               清空域名复用记忆
             </Button>
+          </div>
+          <div className="mt-2">
+            <Checkbox isSelected={betaFeaturesEnabled} onChange={setBetaFeaturesEnabled}>
+              <span className="text-sm">开启 Beta 功能</span>
+            </Checkbox>
           </div>
         </div>
 
