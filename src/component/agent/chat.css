@@ -1245,6 +1245,16 @@
   position: relative;
 }
 
+.chat-attach-btn {
+  background: #f3f4f6 !important;
+  color: #374151 !important;
+  border-color: #d1d5db !important;
+}
+
+.chat-attach-btn:hover {
+  background: #e5e7eb !important;
+}
+
 .chat-attach-menu {
   position: absolute;
   bottom: calc(100% + 4px);

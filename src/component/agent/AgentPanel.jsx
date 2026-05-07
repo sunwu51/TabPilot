@@ -1682,7 +1682,7 @@ export default function AgentPanel() {
           </div>
           <div className="chat-input-actions-right">
             <div className="chat-attach-wrapper" ref={attachWrapperRef}>
-              <Button className="!text-xs" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
+              <Button className="!text-xs chat-attach-btn" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
               {showAttachMenu && (
                 <div className="chat-attach-menu">
                   {llmConfigInfo.supportsImageInput && (
