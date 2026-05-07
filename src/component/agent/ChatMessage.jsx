@@ -1,9 +1,10 @@
+/* global chrome */
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 /**
  * Render a single chat message based on its role and content.
@@ -12,11 +13,13 @@ import { memo, useState } from "react";
  * @param {number} [props.messageIndex]
  * @param {(index: number) => void} [props.onRewindToUserMessage]
  */
+/* eslint-disable react/prop-types */
 const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUserMessage }) {
   const { role, content } = msg;
 
   // User message
   if (role === "user") {
+    const { sentAt, durationMs } = msg;
     // Skip Anthropic tool_result format
     if (Array.isArray(content) && content.some(block => block.type === "tool_result")) {
       return null;
@@ -60,6 +63,12 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
             <div className="chat-bubble chat-bubble-user">
               <UserMultimodalContent content={content} />
             </div>
+            {sentAt && (
+              <div className="chat-msg-time-row">
+                <div>{formatTime(sentAt)}</div>
+                {typeof durationMs === "number" && <div className="chat-msg-duration">{formatDuration(durationMs)}</div>}
+              </div>
+            )}
           </div>
         </div>
       );
@@ -98,6 +107,12 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
             </Dialog>
           )}
           <div className="chat-bubble chat-bubble-user">{content}</div>
+          {sentAt && (
+            <div className="chat-msg-time-row">
+              <div>{formatTime(sentAt)}</div>
+              {typeof durationMs === "number" && <div className="chat-msg-duration">{formatDuration(durationMs)}</div>}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -167,6 +182,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
 export default ChatMessage;
 
 /** Render user multimodal content (text + images) */
+/* eslint-disable react/prop-types */
 function UserMultimodalContent({ content }) {
   if (!Array.isArray(content)) return null;
 
@@ -211,6 +227,20 @@ function UserMultimodalContent({ content }) {
 /** Markdown-rendered assistant text bubble */
 export function AssistantTextBubble({ text }) {
   const [copied, setCopied] = useState(false);
+  const [hideCopyButton, setHideCopyButton] = useState(false);
+
+  useEffect(() => {
+    chrome.storage.local.get({ hideCopyButton: false }, (res) => {
+      setHideCopyButton(!!res.hideCopyButton);
+    });
+    const handleChange = (changes) => {
+      if (changes.hideCopyButton) {
+        setHideCopyButton(!!changes.hideCopyButton.newValue);
+      }
+    };
+    chrome.storage.onChanged.addListener(handleChange);
+    return () => chrome.storage.onChanged.removeListener(handleChange);
+  }, []);
 
   async function handleCopy(event) {
     event.stopPropagation();
@@ -233,21 +263,23 @@ export function AssistantTextBubble({ text }) {
         >
           {text}
         </ReactMarkdown>
-        <div className="chat-bubble-copy-row">
-          <button
-            type="button"
-            className={`chat-bubble-copy-btn ${copied ? "chat-bubble-copy-btn-copied" : ""}`}
-            onClick={handleCopy}
-          >
-            {copied ? "已复制" : "复制"}
-          </button>
-        </div>
+        {!hideCopyButton && (
+          <div className="chat-bubble-copy-row">
+            <button
+              type="button"
+              className={`chat-bubble-copy-btn ${copied ? "chat-bubble-copy-btn-copied" : ""}`}
+              onClick={handleCopy}
+            >
+              {copied ? "已复制" : "复制"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function CodeBlock({ children, className = "", node, ...props }) {
+function CodeBlock({ children, className = "", ...props }) {
   const [copied, setCopied] = useState(false);
   const codeText = extractReactText(children);
 
@@ -283,6 +315,7 @@ function CodeBlock({ children, className = "", node, ...props }) {
  * Collapsed block showing which tool was called.
  * Handles various data shapes defensively.
  */
+/* eslint-disable react/prop-types */
 function ToolCallBlock({ name, input }) {
   const [expanded, setExpanded] = useState(false);
   const label = name || "tool";
@@ -318,6 +351,7 @@ function ToolCallBlock({ name, input }) {
 }
 
 /** Collapsed block showing tool execution result (success or failure) */
+/* eslint-disable react/prop-types */
 function ToolResultBlock({ msg }) {
   const [expanded, setExpanded] = useState(false);
   const { content, displayImageUrl, tool_name: toolName, durationMs } = msg;
@@ -367,7 +401,7 @@ function ToolResultBlock({ msg }) {
     <div className={`tool-result-msg ${isError ? "tool-result-error" : ""}`} onClick={() => setExpanded(!expanded)}>
       <div className="tool-result-header">
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">{isError ? "❌" : "✅"} {label}{durationStr}</span>
+        <span className="tool-result-label">{isError ? "❌" : "✅"} <span className="tool-duration">{durationStr}</span>{label}</span>
       </div>
       {displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: expanded ? "8px" : "0" }}>
@@ -393,6 +427,7 @@ function ToolResultBlock({ msg }) {
   );
 }
 
+/* eslint-disable react/prop-types */
 function ErrorResultBlock({ msg }) {
   const [expanded, setExpanded] = useState(false);
   const payload = typeof msg.content === "string" ? safeJsonParse(msg.content) : (msg.content || {});
@@ -434,6 +469,20 @@ function extractReactText(value) {
   if (Array.isArray(value)) return value.map(extractReactText).join("");
   if (typeof value === "object" && value.props) return extractReactText(value.props.children);
   return "";
+}
+
+function formatTime(ts) {
+  try {
+    return new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+function formatDuration(ms) {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
 }
 
 async function copyTextToClipboard(text) {

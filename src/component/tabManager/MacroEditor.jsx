@@ -67,19 +67,6 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
         }));
     }
 
-    function moveStep(idx, delta) {
-        const target = idx + delta;
-        if (target < 0 || target >= steps.length) return;
-        setSteps(prev => {
-            const next = [...prev];
-            const [item] = next.splice(idx, 1);
-            next.splice(target, 0, item);
-            return next;
-        });
-        // Reset expansion to track the moved row.
-        setExpanded(new Set());
-    }
-
     function deleteStep(idx) {
         setSteps(prev => prev.filter((_, i) => i !== idx));
         setExpanded(new Set());
@@ -253,7 +240,6 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
 function StepRow({
     index,
     step,
-    total,
     expanded,
     onToggle,
     onUpdate,

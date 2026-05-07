@@ -60,7 +60,7 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
     let sawToolCallDelta = false;
     let usage = null;
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value?.length) {

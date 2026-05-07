@@ -15,6 +15,7 @@ const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
  *
  * @param {Function} onToolsChanged - called with updated MCP tools array
  */
+/* eslint-disable react/prop-types */
 export default function McpConfig({ onToolsChanged }) {
   const [servers, setServers] = useState([]);
   const [newName, setNewName] = useState("");
@@ -124,6 +125,7 @@ export default function McpConfig({ onToolsChanged }) {
       await _saveServers(reconnected);
       _notifyTools(reconnected, { showWarning: false });
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Notify parent of updated MCP tools with server routing info */

@@ -78,7 +78,7 @@ async function _parseSSEResponse(res) {
   let buffer = "";
   let lastResult = null;
 
-  while (true) {
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });

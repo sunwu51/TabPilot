@@ -597,6 +597,23 @@
   justify-content: flex-end;
 }
 
+.tool-duration {
+  font-weight: 700;
+}
+
+.chat-msg-duration {
+  font-weight: 600;
+  color: #000;
+}
+
+.chat-msg-time-row {
+  font-size: 10px;
+  color: #9ca3af;
+  text-align: right;
+  margin-top: 2px;
+  padding-right: 2px;
+}
+
 .chat-msg-user-inner {
   display: flex;
   flex-direction: row-reverse;

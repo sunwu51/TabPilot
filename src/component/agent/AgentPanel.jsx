@@ -87,10 +87,12 @@ export default function AgentPanel() {
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [_inputFocused, setInputFocused] = useState(false);
   const attachWrapperRef = useRef(null);
   const imageInputRef = useRef(null);
   const textInputRef = useRef(null);
+  const sessionStreamingRef = useRef(new Map());
 
   useEffect(() => {
     if (!showAttachMenu) return;
@@ -126,6 +128,7 @@ export default function AgentPanel() {
 
   useEffect(() => {
     resizeChatInput();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input]);
 
   useEffect(() => {
@@ -185,6 +188,7 @@ export default function AgentPanel() {
         setSessions(await listSessions());
       }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -389,7 +393,7 @@ export default function AgentPanel() {
   }
 
   async function openSession(id) {
-    setStreamingContent(null);
+    setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
     const cached = sessionMessagesRef.current.get(id);
     const [msgs, meta] = await Promise.all([
       cached ?? loadSession(id),
@@ -417,6 +421,7 @@ export default function AgentPanel() {
     if (activeSessionIdRef.current === targetSessionId) {
       shouldFocusInputWhenReadyRef.current = true;
       setStreamingContent(null);
+      sessionStreamingRef.current.delete(targetSessionId);
     }
     if (runtime.abort) {
       runtime.abort();
@@ -899,6 +904,7 @@ export default function AgentPanel() {
     const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
     const userMsg = {
       role: "user",
+      sentAt: Date.now(),
       content: hasAnyAttachment
         ? buildUserMessageContent(text, imageAtts, textAtts)
         : text
@@ -937,13 +943,16 @@ export default function AgentPanel() {
     const abort = streamChat(config, fullMessages, {
       onText: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
+        if (activeSessionIdRef.current !== targetSessionId) return;
         streamedContent += chunk;
+        sessionStreamingRef.current.set(targetSessionId, streamedContent);
         setStreamingContent(streamedContent);
       },
 
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         streamedContent = "";
+        sessionStreamingRef.current.delete(targetSessionId);
         setStreamingContent("");
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
@@ -951,6 +960,7 @@ export default function AgentPanel() {
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        sessionStreamingRef.current.delete(targetSessionId);
         try {
           // Streaming phase is over; clear the old request abort handle before tool execution.
           setSessionRuntime(targetSessionId, { abort: null, loading: true });
@@ -960,9 +970,10 @@ export default function AgentPanel() {
           }
 
           if (!msg.toolCalls) {
-            // Final response — replace streaming placeholder with clean message
+            // Final response — stamp duration on last user message
+            const stampedMessages = stampLastUserDuration(conversationMessages);
             const finalMessages = [
-              ...conversationMessages,
+              ...stampedMessages,
               buildFinalAssistantMessage(config.apiType, config.model, streamedContent, msg)
             ];
             setSessionMessages(targetSessionId, finalMessages);
@@ -999,14 +1010,20 @@ export default function AgentPanel() {
             } else {
               const dangerousMeta = getDangerousToolMeta(tc);
               if (dangerousMeta) {
-                toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
-                const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
-                if (!isCurrentRun(targetSessionId, runId)) return;
-                if (!approved) {
-                  result = { error: "Execution canceled by user", cancelled: true };
-                } else {
+                const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
+                if (dangerousToolSkipApproval) {
                   setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
                   result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                } else {
+                  toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
+                  const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
+                  if (!isCurrentRun(targetSessionId, runId)) return;
+                  if (!approved) {
+                    result = { error: "Execution canceled by user", cancelled: true };
+                  } else {
+                    setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+                    result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                  }
                 }
               } else {
                 result = await executeTool(tc.name, tc.args, combinedMcpTools);
@@ -1015,7 +1032,7 @@ export default function AgentPanel() {
             const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
             const toolResultMsg = buildDisplayToolResultMessage({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
-            toolResults.push({ id: tc.id, name: tc.name, args: tc.args, result });
+            toolResults.push({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
             // Replace the pending placeholder for this tool
             const currentMsgs = getSessionMessages(targetSessionId);
             const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
@@ -1049,8 +1066,10 @@ export default function AgentPanel() {
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        sessionStreamingRef.current.delete(targetSessionId);
         toast.error(`LLM 错误: ${err.message}`);
-        const finalMessages = [...conversationMessages, buildLlmErrorDisplayMessage(err)];
+        const stampedMessages = stampLastUserDuration(conversationMessages);
+        const finalMessages = [...stampedMessages, buildLlmErrorDisplayMessage(err)];
         setSessionMessages(targetSessionId, finalMessages);
         setSessionRuntime(targetSessionId, { loading: false, abort: null });
         void autoSave(targetSessionId, finalMessages);
@@ -1507,7 +1526,7 @@ export default function AgentPanel() {
                           <span className="chat-history-item-status">● 生成中</span>
                         )}
                       </span>
-                      <span className="chat-history-item-time">{formatTime(s.updatedAt)}</span>
+                      <span className="chat-history-item-time">{formatTime(s.startedAt || s.updatedAt)}</span>
                     </div>
                     <button
                       className="chat-history-item-delete"
@@ -1766,6 +1785,7 @@ function getPlanStepIcon(status) {
   }
 }
 
+/* eslint-disable react/prop-types */
 function SessionPlanPanel({ plan, collapsed = false, onToggleCollapsed }) {
   if (!plan) return null;
   const steps = plan.steps || [];
@@ -1805,6 +1825,7 @@ function SessionPlanPanel({ plan, collapsed = false, onToggleCollapsed }) {
   );
 }
 
+/* eslint-disable react/prop-types */
 function PlanApprovalCard({ plan, onResolve }) {
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -1938,6 +1959,7 @@ function formatContextUsageK(contextUsage) {
   return `${value.toFixed(2)}K`;
 }
 
+/* eslint-disable react/prop-types */
 function SessionSystemPromptDialogBody({ initialValue = "", initiallyApplyToNewSessions = false, onSave }) {
   const [draft, setDraft] = useState(initialValue || "");
   const [applyToNewSessions, setApplyToNewSessions] = useState(!!initiallyApplyToNewSessions);
@@ -2457,6 +2479,18 @@ function buildLlmErrorDisplayMessage(error) {
       detail: error?.detail || null
     }
   };
+}
+
+function stampLastUserDuration(messages) {
+  const now = Date.now();
+  const updated = [...messages];
+  for (let i = updated.length - 1; i >= 0; i--) {
+    if (updated[i].role === "user" && typeof updated[i].sentAt === "number") {
+      updated[i] = { ...updated[i], durationMs: now - updated[i].sentAt };
+      break;
+    }
+  }
+  return updated;
 }
 
 function buildDisplayToolResultMessage(toolResult) {

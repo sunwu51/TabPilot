@@ -1,5 +1,4 @@
-/* global chrome */
-import { Button, Dialog, Switch } from "@sunwu51/camel-ui";
+import { Dialog, Switch } from "@sunwu51/camel-ui";
 import { useState, useCallback, useEffect } from "react";
 import {
   getProfileSummary,

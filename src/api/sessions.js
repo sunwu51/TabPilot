@@ -13,12 +13,13 @@ export function generateSessionId() {
 }
 
 /**
- * Get the sessions index list, sorted by updatedAt descending (most recent first).
- * @returns {Promise<Array<{id: string, title: string, createdAt: number, updatedAt: number}>>}
+ * Get the sessions index list, sorted by startedAt descending (most recent first).
+ * Falls back to updatedAt for legacy sessions without startedAt.
+ * @returns {Promise<Array<{id: string, title: string, createdAt: number, updatedAt: number, startedAt: number}>>}
  */
 export async function listSessions() {
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
-  return sessions_index.sort((a, b) => b.updatedAt - a.updatedAt);
+  return sessions_index.sort((a, b) => (b.startedAt || b.updatedAt) - (a.startedAt || a.updatedAt));
 }
 
 /**
@@ -34,6 +35,7 @@ export async function createSession(id, title) {
     title: title || "新会话",
     createdAt: now,
     updatedAt: now,
+    startedAt: 0,
     manualTitle: false
   });
   await chrome.storage.local.set({ sessions_index });
@@ -80,6 +82,7 @@ export async function saveSession(id, messages, title) {
   const entry = sessions_index.find(s => s.id === id);
   if (entry) {
     if (title && !entry.manualTitle) entry.title = title;
+    if (!entry.startedAt && messages && messages.length > 0) entry.startedAt = Date.now();
     entry.updatedAt = Date.now();
   }
   await chrome.storage.local.set({ sessions_index });

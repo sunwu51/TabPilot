@@ -1139,7 +1139,7 @@ async function _execEvalJs({ jsScript }) {
  * Open a new tab with the given URL. Optionally focus on it.
  */
 async function _execTabOpen({ url, active }) {
-  if (!/^(https?:\/\/|data:)/i.test(url)) url = "https://" + url;
+  if (!/^(https?:\/\/|data:|file:\/\/)/i.test(url)) url = "https://" + url;
   const shouldFocus = active !== false; // default true
   const tab = await chrome.tabs.create({ url, active: shouldFocus });
   if (shouldFocus) await chrome.windows.update(tab.windowId, { focused: true });

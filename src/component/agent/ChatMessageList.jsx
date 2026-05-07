@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import ChatMessage from "./ChatMessage";
 
+/* eslint-disable react/prop-types */
 const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindToUserMessage }) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
@@ -41,6 +42,7 @@ const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindT
 
 export default ChatMessageList;
 
+/* eslint-disable react/prop-types */
 function CollapsedToolGroup({ items, toolCallCount, onRewindToUserMessage }) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
@@ -69,6 +71,7 @@ function CollapsedToolGroup({ items, toolCallCount, onRewindToUserMessage }) {
   );
 }
 
+/* eslint-disable react/prop-types */
 function ToolMessageSequence({ items, onRewindToUserMessage }) {
   return (
     <>
@@ -89,6 +92,7 @@ function ToolMessageSequence({ items, onRewindToUserMessage }) {
   );
 }
 
+/* eslint-disable react/prop-types */
 function MergedToolCallBlock({ item }) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
@@ -100,6 +104,8 @@ function MergedToolCallBlock({ item }) {
   const inputDisplay = formatToolDisplayValue(item.input);
   const label = `${name}${inputDetail ? `(${inputDetail})` : ""}`;
   const suffix = hasResult && result.label ? ` · ${result.label}` : "";
+  const durationMs = item.resultMessage?.durationMs;
+  const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
   const icon = hasResult ? (isError ? "❌" : "✅") : "🔧";
 
   return (
@@ -112,7 +118,7 @@ function MergedToolCallBlock({ item }) {
         onKeyDown={(event) => handleToggleKeyDown(event, toggleExpanded)}
       >
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">{icon} {label}{suffix}</span>
+        <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}{suffix}</span>
       </div>
       {result.displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: expanded ? "8px" : "0" }}>

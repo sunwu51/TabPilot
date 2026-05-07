@@ -1,3 +1,4 @@
+/* global chrome */
 import { Toaster } from "react-hot-toast";
 import { useState, useEffect, useRef } from "react";
 import { Tabs, TabsItem } from "@sunwu51/camel-ui";

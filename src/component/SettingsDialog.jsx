@@ -26,7 +26,9 @@ const DEFAULT_SETTINGS = {
   extractTextLimit: 8000,
   betaFeaturesEnabled: true,
   bridgeEnabled: false,
-  wsServerUrl: ""
+  wsServerUrl: "",
+  hideCopyButton: false,
+  dangerousToolSkipApproval: false
 };
 
 /**
@@ -55,6 +57,8 @@ function SettingsDialogBody() {
   const [betaFeaturesEnabled, setBetaFeaturesEnabled] = useState(DEFAULT_SETTINGS.betaFeaturesEnabled);
   const [bridgeEnabled, setBridgeEnabled] = useState(DEFAULT_SETTINGS.bridgeEnabled);
   const [wsServerUrl, setWsServerUrl] = useState(DEFAULT_SETTINGS.wsServerUrl);
+  const [hideCopyButton, setHideCopyButton] = useState(DEFAULT_SETTINGS.hideCopyButton);
+  const [dangerousToolSkipApproval, setDangerousToolSkipApproval] = useState(DEFAULT_SETTINGS.dangerousToolSkipApproval);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -108,6 +112,8 @@ function SettingsDialogBody() {
       setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
       setBridgeEnabled(!!res.bridgeEnabled);
       setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : "");
+      setHideCopyButton(!!res.hideCopyButton);
+      setDangerousToolSkipApproval(!!res.dangerousToolSkipApproval);
       setWsBridgeStatus({
         ...DEFAULT_WS_BRIDGE_STATUS,
         ...(res[WS_BRIDGE_STATUS_STORAGE_KEY] || {})
@@ -149,7 +155,9 @@ function SettingsDialogBody() {
         extractTextLimit,
         betaFeaturesEnabled,
         bridgeEnabled,
-        wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null
+        wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null,
+        hideCopyButton,
+        dangerousToolSkipApproval
       });
       toast.success("设置已保存");
       closeDialog();
@@ -277,11 +285,6 @@ function SettingsDialogBody() {
             }}
             placeholder="20"
           />
-          <div className="mt-2">
-            <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
-              <span className="text-sm">模型支持图片输入</span>
-            </Checkbox>
-          </div>
           <Input
             label="MCP 工具超时（秒）"
             labelClassName="!text-sm !font-medium !text-gray-500"
@@ -292,10 +295,6 @@ function SettingsDialogBody() {
             }}
             placeholder="60"
           />
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-title">标签管理</div>
           <Select
             label="页面内容读取的最大长度"
             items={extractTextLimitOptions.map((item) => item.label)}
@@ -306,8 +305,25 @@ function SettingsDialogBody() {
             }}
           />
           <div className="mt-2">
+            <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
+              <span className="text-sm">模型支持图片输入</span>
+            </Checkbox>
+          </div>
+          <div className="mt-2">
+            <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
+              <span className="text-sm">隐藏助手消息的复制按钮</span>
+            </Checkbox>
+            <Checkbox isSelected={dangerousToolSkipApproval} onChange={setDangerousToolSkipApproval}>
+              <span className="text-sm text-red-600">危险工具无需审批（危险）</span>
+            </Checkbox>
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">标签管理</div>
+          <div className="mt-2">
             <Checkbox isSelected={reuse} onChange={setReuse}>
-              <span className="text-sm">复用 Tab（命中已存在页面时优先询问是否复用，并可记住域名选择）</span>
+              <span className="text-sm">复用 Tab</span>
             </Checkbox>
           </div>
           <div className="settings-reuse-memory-row">
