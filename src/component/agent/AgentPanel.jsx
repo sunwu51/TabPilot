@@ -799,6 +799,7 @@ export default function AgentPanel() {
       `- When answering time-sensitive or documentation/API questions after searching, include concise source context such as the site/document name and relevant dates or version notes when available. If verification fails, clearly say what could not be verified instead of guessing.\n` +
       `- Prefer primary sources for technical and product facts, especially official API documentation, release notes, model documentation, SDK docs, or standards documents. Use secondary sources only when primary sources are unavailable or to cross-check.\n` +
       `- Dangerous tools such as eval_js or MCP tools marked as dangerous require explicit user confirmation before execution. The application will present that confirmation UI automatically, so do not ask the user to reply with confirmation in text.\n` +
+      `- If the user asks you to set a reminder and there is no reminder/notification tool available in the tool list, create a new tab with tab_open using a data: URL that displays the reminder content clearly. For example: data:text/html;charset=utf-8,<h1>立即喝水</h1><p>15 分钟后提醒</p>.\n` +
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
       `- Respond in the same language as the user.` +
@@ -1577,7 +1578,7 @@ export default function AgentPanel() {
                 messages={messages}
                 onRewindToUserMessage={handleRewindToUserMessage}
               />
-              {streamingContent !== null && (
+              {streamingContent !== null && streamingContent.length > 0 && (
                 <AssistantTextBubble text={streamingContent} />
               )}
               {loading && streamingContent === "" && (
