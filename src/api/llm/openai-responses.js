@@ -55,7 +55,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
     const outputItems = new Map();
     const toolCallsById = new Map();
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value?.length) {

@@ -28,6 +28,7 @@ import {
   mergeLoadedSkills
 } from "../../api/skills";
 import ChatMessageList from "./ChatMessageList";
+import { AssistantTextBubble } from "./ChatMessage";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
@@ -67,9 +68,12 @@ export default function AgentPanel() {
   const [contextUsage, setContextUsage] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
+  const [streamingContent, setStreamingContent] = useState(null);
   const messagesScrollerRef = useRef(null);
+  const messagesContentRef = useRef(null);
   const messagesEndRef = useRef(null);
   const shouldAutoFollowBottomRef = useRef(true);
+  const resizeObserverRef = useRef(null);
   const inputRef = useRef(null);
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
@@ -83,10 +87,12 @@ export default function AgentPanel() {
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
+  // eslint-disable-next-line no-unused-vars
+  const [_inputFocused, setInputFocused] = useState(false);
   const attachWrapperRef = useRef(null);
   const imageInputRef = useRef(null);
   const textInputRef = useRef(null);
+  const sessionStreamingRef = useRef(new Map());
 
   useEffect(() => {
     if (!showAttachMenu) return;
@@ -106,11 +112,11 @@ export default function AgentPanel() {
    */
   useEffect(() => {
     if (!shouldAutoFollowBottomRef.current) {
-      setShowJumpToBottom(messages.length > 0);
+      setShowJumpToBottom(messages.length > 0 || streamingContent !== null);
       return;
     }
     scrollMessagesToBottom("auto");
-  }, [messages]);
+  }, [messages, streamingContent]);
 
   useEffect(() => {
     if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
@@ -122,7 +128,8 @@ export default function AgentPanel() {
 
   useEffect(() => {
     resizeChatInput();
-  }, [input, inputFocused]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input]);
 
   useEffect(() => {
     const previousStatus = latestPlanStatusRef.current;
@@ -181,6 +188,7 @@ export default function AgentPanel() {
         setSessions(await listSessions());
       }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -238,6 +246,26 @@ export default function AgentPanel() {
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [showHistory]);
+
+  /** 监听聊天内容容器尺寸变化，处理工具展开/收起时回到底部按钮的状态 */
+  useEffect(() => {
+    if (!messagesContentRef.current) return;
+
+    const handleResize = () => {
+      const nearBottom = isMessagesScrollerNearBottom();
+      shouldAutoFollowBottomRef.current = nearBottom;
+      setShowJumpToBottom(!nearBottom && messages.length > 0);
+    };
+
+    resizeObserverRef.current = new ResizeObserver(handleResize);
+    resizeObserverRef.current.observe(messagesContentRef.current);
+
+    return () => {
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+      }
+    };
+  }, [messages.length]);
 
   const combinedMcpTools = mergeMcpToolLists(mcpTools, skillStationTools);
 
@@ -365,6 +393,7 @@ export default function AgentPanel() {
   }
 
   async function openSession(id) {
+    setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
     const cached = sessionMessagesRef.current.get(id);
     const [msgs, meta] = await Promise.all([
       cached ?? loadSession(id),
@@ -391,6 +420,8 @@ export default function AgentPanel() {
     const runtime = getSessionRuntime(targetSessionId);
     if (activeSessionIdRef.current === targetSessionId) {
       shouldFocusInputWhenReadyRef.current = true;
+      setStreamingContent(null);
+      sessionStreamingRef.current.delete(targetSessionId);
     }
     if (runtime.abort) {
       runtime.abort();
@@ -732,6 +763,7 @@ export default function AgentPanel() {
       : "";
     return (
       `You are a browser assistant running inside a browser environment.\n\n` +
+      `The current date is ${new Date().toLocaleDateString()}.\n\n` +
       `You can use browser tools to inspect open tabs, tab groups, and windows, focus tabs and windows, move tabs between windows, open tabs, close tabs, create windows, close windows, group tabs, update groups, inspect page DOM, interact with page elements, extract page content, and search browser history.\n\n` +
       platformBlock +
       `Important rules:\n` +
@@ -772,6 +804,7 @@ export default function AgentPanel() {
       `- When answering time-sensitive or documentation/API questions after searching, include concise source context such as the site/document name and relevant dates or version notes when available. If verification fails, clearly say what could not be verified instead of guessing.\n` +
       `- Prefer primary sources for technical and product facts, especially official API documentation, release notes, model documentation, SDK docs, or standards documents. Use secondary sources only when primary sources are unavailable or to cross-check.\n` +
       `- Dangerous tools such as eval_js or MCP tools marked as dangerous require explicit user confirmation before execution. The application will present that confirmation UI automatically, so do not ask the user to reply with confirmation in text.\n` +
+      `- If the user asks you to set a reminder and there is no reminder/notification tool available in the tool list, create a new tab with tab_open using a data: URL that displays the reminder content clearly. For example: data:text/html;charset=utf-8,<h1>立即喝水</h1><p>15 分钟后提醒</p>.\n` +
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
       `- Respond in the same language as the user.` +
@@ -871,6 +904,7 @@ export default function AgentPanel() {
     const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
     const userMsg = {
       role: "user",
+      sentAt: Date.now(),
       content: hasAnyAttachment
         ? buildUserMessageContent(text, imageAtts, textAtts)
         : text
@@ -903,37 +937,30 @@ export default function AgentPanel() {
 
     let streamedContent = "";
 
-    setSessionMessages(targetSessionId, [...conversationMessages, { role: "assistant", content: "", _streaming: true }]);
+    setSessionMessages(targetSessionId, conversationMessages);
+    setStreamingContent("");
 
     const abort = streamChat(config, fullMessages, {
       onText: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
+        if (activeSessionIdRef.current !== targetSessionId) return;
         streamedContent += chunk;
-        const prevMessages = getSessionMessages(targetSessionId);
-        const updated = [...prevMessages];
-          // Only update the streaming placeholder, never overwrite tool messages
-          const lastIdx = updated.length - 1;
-          if (lastIdx >= 0 && updated[lastIdx]._streaming) {
-            updated[lastIdx] = { role: "assistant", content: streamedContent, _streaming: true };
-          }
-        setSessionMessages(targetSessionId, updated);
+        sessionStreamingRef.current.set(targetSessionId, streamedContent);
+        setStreamingContent(streamedContent);
       },
 
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         streamedContent = "";
-        const prevMessages = getSessionMessages(targetSessionId);
-        const updated = [...prevMessages];
-        const lastIdx = updated.length - 1;
-        if (lastIdx >= 0 && updated[lastIdx]._streaming) {
-          updated[lastIdx] = { role: "assistant", content: "", _streaming: true };
-        }
-        setSessionMessages(targetSessionId, updated);
+        sessionStreamingRef.current.delete(targetSessionId);
+        setStreamingContent("");
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
 
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
+        setStreamingContent(null);
+        sessionStreamingRef.current.delete(targetSessionId);
         try {
           // Streaming phase is over; clear the old request abort handle before tool execution.
           setSessionRuntime(targetSessionId, { abort: null, loading: true });
@@ -943,9 +970,10 @@ export default function AgentPanel() {
           }
 
           if (!msg.toolCalls) {
-            // Final response — replace streaming placeholder with clean message
+            // Final response — stamp duration on last user message
+            const stampedMessages = stampLastUserDuration(conversationMessages);
             const finalMessages = [
-              ...conversationMessages,
+              ...stampedMessages,
               buildFinalAssistantMessage(config.apiType, config.model, streamedContent, msg)
             ];
             setSessionMessages(targetSessionId, finalMessages);
@@ -982,14 +1010,20 @@ export default function AgentPanel() {
             } else {
               const dangerousMeta = getDangerousToolMeta(tc);
               if (dangerousMeta) {
-                toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
-                const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
-                if (!isCurrentRun(targetSessionId, runId)) return;
-                if (!approved) {
-                  result = { error: "Execution canceled by user", cancelled: true };
-                } else {
+                const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
+                if (dangerousToolSkipApproval) {
                   setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
                   result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                } else {
+                  toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
+                  const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
+                  if (!isCurrentRun(targetSessionId, runId)) return;
+                  if (!approved) {
+                    result = { error: "Execution canceled by user", cancelled: true };
+                  } else {
+                    setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+                    result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                  }
                 }
               } else {
                 result = await executeTool(tc.name, tc.args, combinedMcpTools);
@@ -998,7 +1032,7 @@ export default function AgentPanel() {
             const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
             const toolResultMsg = buildDisplayToolResultMessage({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
-            toolResults.push({ id: tc.id, name: tc.name, args: tc.args, result });
+            toolResults.push({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
             // Replace the pending placeholder for this tool
             const currentMsgs = getSessionMessages(targetSessionId);
             const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
@@ -1031,11 +1065,11 @@ export default function AgentPanel() {
 
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
+        setStreamingContent(null);
+        sessionStreamingRef.current.delete(targetSessionId);
         toast.error(`LLM 错误: ${err.message}`);
-        const finalMessages = replaceStreamingPlaceholder(
-          getSessionMessages(targetSessionId),
-          buildLlmErrorDisplayMessage(err)
-        );
+        const stampedMessages = stampLastUserDuration(conversationMessages);
+        const finalMessages = [...stampedMessages, buildLlmErrorDisplayMessage(err)];
         setSessionMessages(targetSessionId, finalMessages);
         setSessionRuntime(targetSessionId, { loading: false, abort: null });
         void autoSave(targetSessionId, finalMessages);
@@ -1305,11 +1339,6 @@ export default function AgentPanel() {
   function resizeChatInput() {
     const textarea = inputRef.current;
     if (!textarea) return;
-    if (!inputFocused) {
-      textarea.style.height = "";
-      textarea.style.overflowY = "";
-      return;
-    }
     textarea.style.height = "auto";
     const maxHeight = Math.max(120, Math.floor(window.innerHeight * 0.5));
     const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
@@ -1497,7 +1526,7 @@ export default function AgentPanel() {
                           <span className="chat-history-item-status">● 生成中</span>
                         )}
                       </span>
-                      <span className="chat-history-item-time">{formatTime(s.updatedAt)}</span>
+                      <span className="chat-history-item-time">{formatTime(s.startedAt || s.updatedAt)}</span>
                     </div>
                     <button
                       className="chat-history-item-delete"
@@ -1553,27 +1582,32 @@ export default function AgentPanel() {
         ref={messagesScrollerRef}
         onScroll={handleMessagesScroll}
       >
-        {messages.length === 0 ? (
-          <div className="chat-empty">
-            <div>
-              <p>👋 你好，我是浏览器助手</p>
-              <p style={{ marginTop: "8px" }}>我可以通过工具获取当前标签页和浏览器上下文</p>
-              <p>也可以读取页面内容来回答问题</p>
-            </div>
-          </div>
-        ) : (
-          <>
-            <ChatMessageList
-              messages={messages}
-              onRewindToUserMessage={handleRewindToUserMessage}
-            />
-            {loading && messages[messages.length - 1]?.content === "" && (
-              <div className="chat-msg chat-msg-assistant">
-                <div className="chat-bubble chat-bubble-assistant loading-dots">思考中</div>
+        <div ref={messagesContentRef} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {messages.length === 0 ? (
+            <div className="chat-empty">
+              <div>
+                <p>👋 你好，我是浏览器助手</p>
+                <p style={{ marginTop: "8px" }}>我可以通过工具获取当前标签页和浏览器上下文</p>
+                <p>也可以读取页面内容来回答问题</p>
               </div>
-            )}
-          </>
-        )}
+            </div>
+          ) : (
+            <>
+              <ChatMessageList
+                messages={messages}
+                onRewindToUserMessage={handleRewindToUserMessage}
+              />
+              {streamingContent !== null && streamingContent.length > 0 && (
+                <AssistantTextBubble text={streamingContent} />
+              )}
+              {loading && streamingContent === "" && (
+                <div className="chat-msg chat-msg-assistant">
+                  <div className="chat-bubble chat-bubble-assistant loading-dots">思考中</div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
         <div ref={messagesEndRef} />
         {showJumpToBottom && (
           <button
@@ -1667,7 +1701,7 @@ export default function AgentPanel() {
           </div>
           <div className="chat-input-actions-right">
             <div className="chat-attach-wrapper" ref={attachWrapperRef}>
-              <Button className="!text-xs" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
+              <Button className="!text-xs chat-attach-btn" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
               {showAttachMenu && (
                 <div className="chat-attach-menu">
                   {llmConfigInfo.supportsImageInput && (
@@ -1751,6 +1785,7 @@ function getPlanStepIcon(status) {
   }
 }
 
+/* eslint-disable react/prop-types */
 function SessionPlanPanel({ plan, collapsed = false, onToggleCollapsed }) {
   if (!plan) return null;
   const steps = plan.steps || [];
@@ -1790,6 +1825,7 @@ function SessionPlanPanel({ plan, collapsed = false, onToggleCollapsed }) {
   );
 }
 
+/* eslint-disable react/prop-types */
 function PlanApprovalCard({ plan, onResolve }) {
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -1923,6 +1959,7 @@ function formatContextUsageK(contextUsage) {
   return `${value.toFixed(2)}K`;
 }
 
+/* eslint-disable react/prop-types */
 function SessionSystemPromptDialogBody({ initialValue = "", initiallyApplyToNewSessions = false, onSave }) {
   const [draft, setDraft] = useState(initialValue || "");
   const [applyToNewSessions, setApplyToNewSessions] = useState(!!initiallyApplyToNewSessions);
@@ -2425,17 +2462,6 @@ function buildToolResultMessages(toolResults) {
   return toolResults.map(tr => buildDisplayToolResultMessage(tr));
 }
 
-function replaceStreamingPlaceholder(messages, replacement) {
-  const updated = [...(messages || [])];
-  const lastIdx = updated.length - 1;
-  if (lastIdx >= 0 && updated[lastIdx]?._streaming) {
-    updated[lastIdx] = replacement;
-    return updated;
-  }
-  updated.push(replacement);
-  return updated;
-}
-
 function buildLlmErrorDisplayMessage(error) {
   const code = error?.code || "LLM_ERROR";
   const message = error?.message || "LLM 请求失败";
@@ -2453,6 +2479,18 @@ function buildLlmErrorDisplayMessage(error) {
       detail: error?.detail || null
     }
   };
+}
+
+function stampLastUserDuration(messages) {
+  const now = Date.now();
+  const updated = [...messages];
+  for (let i = updated.length - 1; i >= 0; i--) {
+    if (updated[i].role === "user" && typeof updated[i].sentAt === "number") {
+      updated[i] = { ...updated[i], durationMs: now - updated[i].sentAt };
+      break;
+    }
+  }
+  return updated;
 }
 
 function buildDisplayToolResultMessage(toolResult) {

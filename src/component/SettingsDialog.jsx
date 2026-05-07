@@ -21,13 +21,14 @@ const DEFAULT_SETTINGS = {
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false
   },
-  suspendTimeout: 0,
   mcpToolTimeoutSeconds: 60,
   reuse: false,
   extractTextLimit: 8000,
   betaFeaturesEnabled: true,
   bridgeEnabled: false,
-  wsServerUrl: ""
+  wsServerUrl: "",
+  hideCopyButton: false,
+  dangerousToolSkipApproval: false
 };
 
 /**
@@ -50,27 +51,20 @@ function SettingsDialogBody() {
   const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
-  const [suspendTimeout, setSuspendTimeout] = useState(DEFAULT_SETTINGS.suspendTimeout);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
   const [betaFeaturesEnabled, setBetaFeaturesEnabled] = useState(DEFAULT_SETTINGS.betaFeaturesEnabled);
   const [bridgeEnabled, setBridgeEnabled] = useState(DEFAULT_SETTINGS.bridgeEnabled);
   const [wsServerUrl, setWsServerUrl] = useState(DEFAULT_SETTINGS.wsServerUrl);
+  const [hideCopyButton, setHideCopyButton] = useState(DEFAULT_SETTINGS.hideCopyButton);
+  const [dangerousToolSkipApproval, setDangerousToolSkipApproval] = useState(DEFAULT_SETTINGS.dangerousToolSkipApproval);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const rootRef = useRef(null);
-  const suspendOptions = [
-    { label: "关闭", value: 0 },
-    { label: "15 分钟", value: 15 },
-    { label: "30 分钟", value: 30 },
-    { label: "1 小时", value: 60 },
-    { label: "2 小时", value: 120 },
-    { label: "1 天", value: 1440 }
-  ];
   const extractTextLimitOptions = [
     { label: "8k", value: 8000 },
     { label: "16k", value: 16000 },
@@ -112,13 +106,14 @@ function SettingsDialogBody() {
       setModel(nextLlmConfig.model || "");
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
-      setSuspendTimeout(Number(res.suspendTimeout) || 0);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
       setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
       setBridgeEnabled(!!res.bridgeEnabled);
       setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : "");
+      setHideCopyButton(!!res.hideCopyButton);
+      setDangerousToolSkipApproval(!!res.dangerousToolSkipApproval);
       setWsBridgeStatus({
         ...DEFAULT_WS_BRIDGE_STATUS,
         ...(res[WS_BRIDGE_STATUS_STORAGE_KEY] || {})
@@ -155,13 +150,14 @@ function SettingsDialogBody() {
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput
         },
-        suspendTimeout,
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
         extractTextLimit,
         betaFeaturesEnabled,
         bridgeEnabled,
-        wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null
+        wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null,
+        hideCopyButton,
+        dangerousToolSkipApproval
       });
       toast.success("设置已保存");
       closeDialog();
@@ -289,11 +285,6 @@ function SettingsDialogBody() {
             }}
             placeholder="20"
           />
-          <div className="mt-2">
-            <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
-              <span className="text-sm">模型支持图片输入</span>
-            </Checkbox>
-          </div>
           <Input
             label="MCP 工具超时（秒）"
             labelClassName="!text-sm !font-medium !text-gray-500"
@@ -304,10 +295,6 @@ function SettingsDialogBody() {
             }}
             placeholder="60"
           />
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-title">标签管理</div>
           <Select
             label="页面内容读取的最大长度"
             items={extractTextLimitOptions.map((item) => item.label)}
@@ -317,18 +304,26 @@ function SettingsDialogBody() {
               setExtractTextLimit(selected ? selected.value : DEFAULT_SETTINGS.extractTextLimit);
             }}
           />
-          <Select
-            label="自动释放长期不用标签的内存"
-            items={suspendOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, suspendOptions.findIndex((item) => item.value === suspendTimeout))}
-            onSelectedItemChange={(changes) => {
-              const selected = suspendOptions.find((item) => item.label === changes.selectedItem);
-              setSuspendTimeout(selected ? selected.value : 0);
-            }}
-          />
+          <div className="mt-2">
+            <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
+              <span className="text-sm">模型支持图片输入</span>
+            </Checkbox>
+          </div>
+          <div className="mt-2">
+            <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
+              <span className="text-sm">隐藏助手消息的复制按钮</span>
+            </Checkbox>
+            <Checkbox isSelected={dangerousToolSkipApproval} onChange={setDangerousToolSkipApproval}>
+              <span className="text-sm text-red-600">危险工具无需审批（危险）</span>
+            </Checkbox>
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">标签管理</div>
           <div className="mt-2">
             <Checkbox isSelected={reuse} onChange={setReuse}>
-              <span className="text-sm">复用 Tab（命中已存在页面时优先询问是否复用，并可记住域名选择）</span>
+              <span className="text-sm">复用 Tab</span>
             </Checkbox>
           </div>
           <div className="settings-reuse-memory-row">

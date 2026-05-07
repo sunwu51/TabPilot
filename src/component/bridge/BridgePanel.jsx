@@ -131,6 +131,7 @@ export default function BridgePanel() {
   );
 }
 
+/* eslint-disable react/prop-types */
 function BridgeRecord({ record }) {
   const { time, toolName, args, result, isError, duration } = record;
   const [expanded, setExpanded] = useState(false);
@@ -139,9 +140,6 @@ function BridgeRecord({ record }) {
 
   const detail = formatToolDetail(args);
   const resultPreview = typeof result === "string" ? result : JSON.stringify(result);
-  const truncated = resultPreview.length > 120
-    ? resultPreview.slice(0, 120) + "..."
-    : resultPreview;
 
   return (
     <div

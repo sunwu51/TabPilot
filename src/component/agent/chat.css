@@ -597,6 +597,23 @@
   justify-content: flex-end;
 }
 
+.tool-duration {
+  font-weight: 700;
+}
+
+.chat-msg-duration {
+  font-weight: 600;
+  color: #000;
+}
+
+.chat-msg-time-row {
+  font-size: 10px;
+  color: #9ca3af;
+  text-align: right;
+  margin-top: 2px;
+  padding-right: 2px;
+}
+
 .chat-msg-user-inner {
   display: flex;
   flex-direction: row-reverse;
@@ -1243,6 +1260,16 @@
 /* ========== Attach Menu ========== */
 .chat-attach-wrapper {
   position: relative;
+}
+
+.chat-attach-btn {
+  background: #f3f4f6 !important;
+  color: #374151 !important;
+  border-color: #d1d5db !important;
+}
+
+.chat-attach-btn:hover {
+  background: #e5e7eb !important;
 }
 
 .chat-attach-menu {

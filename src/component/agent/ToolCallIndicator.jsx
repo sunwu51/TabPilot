@@ -2,6 +2,7 @@
  * Visual indicator shown in the message stream when the AI
  * is extracting content from a browser tab via tab_extract tool.
  */
+/* eslint-disable react/prop-types */
 export default function ToolCallIndicator({ tabTitle, loading }) {
   return (
     <div className="tool-call-indicator">

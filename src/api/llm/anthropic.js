@@ -64,7 +64,7 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
     let sawToolUseBlock = false;
     let usage = {};
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       if (value?.length) {
