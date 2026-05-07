@@ -178,7 +178,7 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
     }
 
     return (
-        <div ref={rootRef} className="flex flex-col gap-2" style={{ minWidth: 480, maxWidth: 640 }}>
+        <div ref={rootRef} className="flex flex-col gap-2" style={{ maxWidth: 480 }}>
             <div className="text-base font-bold">编辑宏</div>
 
             <div className="flex flex-col gap-1">
@@ -221,7 +221,6 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
                         onUpdateSelector={(selIdx, value) => updateSelectorAt(idx, selIdx, value)}
                         onAddSelector={(value) => addSelector(idx, value)}
                         onRemoveSelector={(selIdx) => removeSelector(idx, selIdx)}
-                        onMove={(delta) => moveStep(idx, delta)}
                         onDelete={() => deleteStep(idx)}
                         onInsertAfter={(type) => insertStep(idx + 1, type)}
                         onTestSelector={testSelector}
@@ -261,7 +260,6 @@ function StepRow({
     onUpdateSelector,
     onAddSelector,
     onRemoveSelector,
-    onMove,
     onDelete,
     onInsertAfter,
     onTestSelector,
@@ -284,20 +282,6 @@ function StepRow({
                     <span className="text-gray-600">{summary}</span>
                 </button>
                 <div className="flex gap-1 flex-shrink-0">
-                    <Button
-                        className="!text-xs !p-0 !px-2 !min-h-6"
-                        isDisabled={index === 0}
-                        onPress={() => onMove(-1)}
-                    >
-                        ↑
-                    </Button>
-                    <Button
-                        className="!text-xs !p-0 !px-2 !min-h-6"
-                        isDisabled={index === total - 1}
-                        onPress={() => onMove(1)}
-                    >
-                        ↓
-                    </Button>
                     <Button
                         className="!text-xs !p-0 !px-2 !min-h-6 !bg-red-500 !text-white"
                         onPress={onDelete}

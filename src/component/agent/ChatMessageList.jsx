@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import ChatMessage from "./ChatMessage";
 
-export default function ChatMessageList({ messages = [], onRewindToUserMessage }) {
+const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindToUserMessage }) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
   return (
@@ -37,7 +37,9 @@ export default function ChatMessageList({ messages = [], onRewindToUserMessage }
       })}
     </>
   );
-}
+}, (prevProps, nextProps) => prevProps.messages === nextProps.messages);
+
+export default ChatMessageList;
 
 function CollapsedToolGroup({ items, toolCallCount, onRewindToUserMessage }) {
   const [expanded, setExpanded] = useState(false);
@@ -427,7 +429,7 @@ function stringifyToolJson(value) {
 }
 
 function isToolLikeMessage(message) {
-  if (!message || message.__streaming) return false;
+  if (!message) return false;
   if (message.role === "tool") return true;
   if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
   if (message.role === "assistant" && Array.isArray(message.content)) {

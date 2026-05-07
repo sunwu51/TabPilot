@@ -3,7 +3,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
-import { useState } from "react";
+import { memo, useState } from "react";
 
 /**
  * Render a single chat message based on its role and content.
@@ -12,7 +12,7 @@ import { useState } from "react";
  * @param {number} [props.messageIndex]
  * @param {(index: number) => void} [props.onRewindToUserMessage]
  */
-export default function ChatMessage({ msg, messageIndex, onRewindToUserMessage }) {
+const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUserMessage }) {
   const { role, content } = msg;
 
   // User message
@@ -161,7 +161,10 @@ export default function ChatMessage({ msg, messageIndex, onRewindToUserMessage }
   }
 
   return null;
-}
+
+});
+
+export default ChatMessage;
 
 /** Render user multimodal content (text + images) */
 function UserMultimodalContent({ content }) {
@@ -206,7 +209,7 @@ function UserMultimodalContent({ content }) {
 }
 
 /** Markdown-rendered assistant text bubble */
-function AssistantTextBubble({ text }) {
+export function AssistantTextBubble({ text }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy(event) {

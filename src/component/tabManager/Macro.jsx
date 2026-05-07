@@ -43,6 +43,14 @@ export default function Macro() {
 
     async function startRecording() {
         const name = newName.trim() || defaultMacroName();
+        if (macros.length >= 10) {
+            const oldest = macros[0];
+            const del = await sendMacroMessage({ action: "delete", payload: { id: oldest.id } });
+            if (del?.success) {
+                toast(`宏数量已达上限 (10)，已自动删除最早的「${oldest.name}」`);
+                setMacros(prev => prev.filter(m => m.id !== oldest.id));
+            }
+        }
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!activeTab || !activeTab.url || !activeTab.url.startsWith("http")) {
             toast.error("请先在一个 http(s) 页面上发起录制");
@@ -134,7 +142,7 @@ export default function Macro() {
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
                 <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏 <span className="text-gray-400">(beta)</span></span>
                 <Button className="w-24 !text-xs" onPress={() => setShowStartForm(!showStartForm)} isDisabled={!!recording}>
-                    {recording ? "录制中..." : (showStartForm ? "取消" : "新增/录制")}
+                    {recording ? "录制中..." : (showStartForm ? "取消" : "录制")}
                 </Button>
             </div>
 
@@ -206,7 +214,7 @@ export default function Macro() {
             </div>
 
             {macros.length === 0 && (
-                <div className="text-xs text-gray-400 text-center py-2">还没有宏，点上方「新增/录制」开始</div>
+                <div className="text-xs text-gray-400 text-center py-2">还没有宏，点上方「录制」开始</div>
             )}
             {macros.length > 0 && filtered.length === 0 && (
                 <div className="text-xs text-gray-400 text-center py-2">没有匹配的宏</div>

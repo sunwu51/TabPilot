@@ -1145,15 +1145,10 @@ chrome.tabs.onRemoved.addListener(async function (tabId) {
 
 chrome.tabs.onActivated.addListener(async function (activeInfo) {
     try { await chrome.runtime.sendMessage({ type: 'active', tabId: activeInfo.tabId }); } catch (e) {/* ignore */}
-    let { tabActivity } = await chrome.storage.local.get({ tabActivity: {} });
-    tabActivity[activeInfo.tabId] = Date.now();
-    await chrome.storage.local.set({ tabActivity });
 });
 
-// ========== Auto memory release ==========
-
 chrome.runtime.onInstalled.addListener(() => {
-    chrome.alarms?.create("check-idle-tabs", { periodInMinutes: 1 });
+    chrome.alarms?.create("ws-bridge-health", { periodInMinutes: 1 });
     void restoreScheduledJobs();
     void startWsBridge();
 });
@@ -1167,8 +1162,8 @@ void restoreScheduledJobs();
 void startWsBridge();
 
 if (chrome.alarms) {
-    chrome.alarms.get("check-idle-tabs", (alarm) => {
-        if (!alarm) chrome.alarms.create("check-idle-tabs", { periodInMinutes: 1 });
+    chrome.alarms.get("ws-bridge-health", (alarm) => {
+        if (!alarm) chrome.alarms.create("ws-bridge-health", { periodInMinutes: 1 });
     });
 
     chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -1182,26 +1177,8 @@ if (chrome.alarms) {
             return;
         }
 
-        if (alarm.name !== "check-idle-tabs") return;
+        if (alarm.name !== "ws-bridge-health") return;
 
         await ensureWsBridgeHealthy();
-
-        let { suspendTimeout, tabActivity } = await chrome.storage.local.get({
-            suspendTimeout: 0,
-            tabActivity: {}
-        });
-        if (!suspendTimeout || suspendTimeout <= 0) return;
-
-        const now = Date.now();
-        const timeoutMs = suspendTimeout * 60 * 1000;
-        const tabs = await chrome.tabs.query({});
-
-        for (const tab of tabs) {
-            if (tab.active || tab.pinned || tab.discarded || !tab.url || !tab.url.startsWith("http")) continue;
-            const lastActive = tabActivity[tab.id] || 0;
-            if (lastActive > 0 && (now - lastActive) > timeoutMs) {
-                try { await chrome.tabs.discard(tab.id); } catch (e) {/* ignore */}
-            }
-        }
     });
 }

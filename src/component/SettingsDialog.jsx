@@ -21,7 +21,6 @@ const DEFAULT_SETTINGS = {
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false
   },
-  suspendTimeout: 0,
   mcpToolTimeoutSeconds: 60,
   reuse: false,
   extractTextLimit: 8000,
@@ -50,7 +49,6 @@ function SettingsDialogBody() {
   const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
-  const [suspendTimeout, setSuspendTimeout] = useState(DEFAULT_SETTINGS.suspendTimeout);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
@@ -63,14 +61,6 @@ function SettingsDialogBody() {
   const [saving, setSaving] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const rootRef = useRef(null);
-  const suspendOptions = [
-    { label: "关闭", value: 0 },
-    { label: "15 分钟", value: 15 },
-    { label: "30 分钟", value: 30 },
-    { label: "1 小时", value: 60 },
-    { label: "2 小时", value: 120 },
-    { label: "1 天", value: 1440 }
-  ];
   const extractTextLimitOptions = [
     { label: "8k", value: 8000 },
     { label: "16k", value: 16000 },
@@ -112,7 +102,6 @@ function SettingsDialogBody() {
       setModel(nextLlmConfig.model || "");
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
-      setSuspendTimeout(Number(res.suspendTimeout) || 0);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
@@ -155,7 +144,6 @@ function SettingsDialogBody() {
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput
         },
-        suspendTimeout,
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
         extractTextLimit,
@@ -315,15 +303,6 @@ function SettingsDialogBody() {
             onSelectedItemChange={(changes) => {
               const selected = extractTextLimitOptions.find((item) => item.label === changes.selectedItem);
               setExtractTextLimit(selected ? selected.value : DEFAULT_SETTINGS.extractTextLimit);
-            }}
-          />
-          <Select
-            label="自动释放长期不用标签的内存"
-            items={suspendOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, suspendOptions.findIndex((item) => item.value === suspendTimeout))}
-            onSelectedItemChange={(changes) => {
-              const selected = suspendOptions.find((item) => item.label === changes.selectedItem);
-              setSuspendTimeout(selected ? selected.value : 0);
             }}
           />
           <div className="mt-2">
