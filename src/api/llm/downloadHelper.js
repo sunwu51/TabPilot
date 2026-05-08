@@ -20,6 +20,10 @@ function _textToDataUrl(text, mimeType = "text/plain;charset=utf-8") {
  *   - `url`: an http(s) URL (browser cookies/session are sent), or a base64 data: URL
  *   - `content`: a plain text string written into the file (encoded with `mimeType`)
  *
+ * `mimeType` only affects `content` downloads because those are re-encoded into
+ * data: URLs locally. For URL downloads, the remote response or data: URL
+ * itself determines the MIME type.
+ *
  * Returns an object describing the result; never throws.
  */
 export async function triggerBrowserDownload({ fileName, url, content, mimeType = "text/plain;charset=utf-8" } = {}) {

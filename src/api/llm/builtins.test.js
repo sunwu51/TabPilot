@@ -100,7 +100,28 @@ describe("built-in tool execution", () => {
 
     await expect(executeTool("download", { fileName: "a.txt", content: "hello" }))
       .resolves.toMatchObject({ success: true, fileName: "a.txt", content: "hello", downloadId: 42 });
-    expect(triggerBrowserDownload).toHaveBeenCalledWith({ fileName: "a.txt", content: "hello" });
+    expect(triggerBrowserDownload).toHaveBeenCalledWith({ fileName: "a.txt", content: "hello", mimeType: undefined });
+  });
+
+  it("passes optional mimeType for content downloads", async () => {
+    const { triggerBrowserDownload } = await import("./downloadHelper");
+
+    await expect(executeTool("download", {
+      fileName: "report.md",
+      content: "# Report",
+      mimeType: "text/markdown;charset=utf-8"
+    })).resolves.toMatchObject({
+      success: true,
+      fileName: "report.md",
+      content: "# Report",
+      mimeType: "text/markdown;charset=utf-8",
+      downloadId: 42
+    });
+    expect(triggerBrowserDownload).toHaveBeenCalledWith({
+      fileName: "report.md",
+      content: "# Report",
+      mimeType: "text/markdown;charset=utf-8"
+    });
   });
 
   it("serializes recent downloads", async () => {
@@ -151,4 +172,3 @@ describe("built-in tool execution", () => {
     });
   });
 });
-
