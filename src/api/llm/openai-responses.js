@@ -5,7 +5,7 @@ import { getTools } from "./tools";
 import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completions";
 
 export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onDone }, mcpTools = [], options = {}) {
-  const tools = getTools(API_TYPES.OPENAI_CHAT_COMPLETIONS, mcpTools, options);
+  const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 

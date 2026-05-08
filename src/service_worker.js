@@ -807,7 +807,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                         const macros = await listMacros();
                         const query = String(msg.payload?.query || "").trim().toLowerCase();
                         const filtered = query
-                            ? macros.filter(m => m.name.toLowerCase().includes(query) || m.id.toLowerCase().includes(query))
+                            ? macros.filter(m => m.name.toLowerCase().includes(query))
                             : macros;
                         sendResponse({
                             success: true,

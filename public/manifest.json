@@ -1,7 +1,7 @@
 {
     "name": "tab manager",
     "description": "tab manager",
-    "version": "1.5.1",
+    "version": "1.5.2",
     "background": {
         "service_worker": "service_worker.js",
         "type": "module"
@@ -24,7 +24,8 @@
         "sidePanel",
         "history",
         "storage",
-        "scripting"
+        "scripting",
+        "downloads"
     ],
     "side_panel": {
         "default_path": "sidepanel.html"

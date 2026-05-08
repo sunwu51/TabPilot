@@ -1,7 +1,7 @@
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
-import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool } from "../../api/llm";
+import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, triggerBrowserDownload } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
@@ -1252,7 +1252,8 @@ export default function AgentPanel() {
     });
 
     try {
-      downloadMarkdownFile(`${currentSessionId}.md`, markdown);
+      const result = await downloadMarkdownFile(`${currentSessionId}.md`, markdown);
+      if (result?.error) throw new Error(result.error);
       toast.success(`已导出 ${currentSessionId}.md`);
     } catch (error) {
       console.error("Failed to export session:", error);
@@ -2397,16 +2398,11 @@ function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
 }
 
 function downloadMarkdownFile(filename, markdown) {
-  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = filename;
-  link.rel = "noopener";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  return triggerBrowserDownload({
+    fileName: filename,
+    content: markdown,
+    mimeType: "text/markdown;charset=utf-8"
+  });
 }
 
 function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
@@ -2908,7 +2904,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(msg);
+    apiMessages.push(buildPlainApiMessage(msg));
   }
 
   return apiMessages;
@@ -2962,10 +2958,27 @@ function buildAnthropicApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(msg);
+    apiMessages.push(buildPlainApiMessage(msg));
   }
 
   return apiMessages;
+}
+
+function buildPlainApiMessage(msg) {
+  if (!msg || typeof msg !== "object") return msg;
+
+  const apiMessage = { ...msg };
+  for (const field of [
+    "sentAt",
+    "durationMs",
+    "displayImageUrl",
+    "displayImageMediaType",
+    "_usageApiType",
+    "_usageModel"
+  ]) {
+    delete apiMessage[field];
+  }
+  return apiMessage;
 }
 
 function buildApiMessages(apiType, messages, options = {}) {
