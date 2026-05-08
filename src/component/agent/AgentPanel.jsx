@@ -2904,7 +2904,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(msg);
+    apiMessages.push(buildPlainApiMessage(msg));
   }
 
   return apiMessages;
@@ -2958,10 +2958,27 @@ function buildAnthropicApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(msg);
+    apiMessages.push(buildPlainApiMessage(msg));
   }
 
   return apiMessages;
+}
+
+function buildPlainApiMessage(msg) {
+  if (!msg || typeof msg !== "object") return msg;
+
+  const apiMessage = { ...msg };
+  for (const field of [
+    "sentAt",
+    "durationMs",
+    "displayImageUrl",
+    "displayImageMediaType",
+    "_usageApiType",
+    "_usageModel"
+  ]) {
+    delete apiMessage[field];
+  }
+  return apiMessage;
 }
 
 function buildApiMessages(apiType, messages, options = {}) {
