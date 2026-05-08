@@ -556,7 +556,7 @@ export const TOOLS = [
     schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Optional search text matched against macro name or id." }
+        query: { type: "string", description: "Optional search text matched against macro name." }
       },
       required: []
     }
@@ -663,7 +663,7 @@ export function buildMcpToolCallName(serverName, toolName) {
 /**
  * Get tool definitions formatted for the specified API type.
  * Merges built-in tools with MCP tools.
- * @param {string} apiType - "openai" or "anthropic"
+ * @param {string} apiType - OpenAI Chat Completions, OpenAI Responses, or Anthropic API type.
  * @param {Array} [mcpTools] - MCP tools from connected servers [{name, description, inputSchema, _serverUrl, _serverHeaders, _toolCallName}]
  * @param {Object} [options]
  * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
@@ -695,6 +695,15 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
       name: t.name,
       description: t.description,
       input_schema: t.schema
+    }));
+  }
+  if (normalizedApiType === API_TYPES.OPENAI_RESPONSES) {
+    return allTools.map(t => ({
+      type: "function",
+      name: t.name,
+      description: t.description,
+      parameters: t.schema,
+      strict: false
     }));
   }
   return allTools.map(t => ({

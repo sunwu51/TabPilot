@@ -1132,7 +1132,6 @@ async function __evalJsPageRunner(source) {
   let cspEvalBlocked = false;
   try {
     const wrapped = "return (async () => {\n" + source + "\n})();";
-    // eslint-disable-next-line no-new-func
     const fn = new Function(wrapped);
     const result = await fn();
     return {

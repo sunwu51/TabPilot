@@ -1,6 +1,6 @@
 /* global chrome */
 import { Button, Card, Input } from "@sunwu51/camel-ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import MacroEditor from "./MacroEditor";
 
@@ -15,6 +15,7 @@ export default function Macro() {
     const [confirmDeleteId, setConfirmDeleteId] = useState(null);
     const [replayingId, setReplayingId] = useState(null);
     const [replaySpeed, setReplaySpeed] = useState("normal");
+    const importInputRef = useRef(null);
 
     async function loadAll() {
         const res = await sendMacroMessage({ action: "list" });
@@ -36,9 +37,7 @@ export default function Macro() {
     const filtered = useMemo(() => {
         const q = search.trim().toLowerCase();
         if (!q) return macros;
-        return macros.filter(m =>
-            m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
-        );
+        return macros.filter(m => m.name.toLowerCase().includes(q));
     }, [macros, search]);
 
     async function startRecording() {
@@ -130,20 +129,77 @@ export default function Macro() {
         }
     }
 
-    function copyId(id) {
-        navigator.clipboard?.writeText(id).then(
-            () => toast.success("已复制 ID"),
-            () => toast.error("复制失败")
-        );
+    function exportMacros() {
+        const payload = {
+            type: "tabmanager.macros",
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            macros
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `tabmanager-macros-${formatDateForFilename(new Date())}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success(`已导出 ${macros.length} 个宏`);
+    }
+
+    async function importMacrosFromFile(file) {
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            const imported = normalizeImportedMacros(parsed);
+            if (imported.length === 0) {
+                toast.error("未找到可导入的宏");
+                return;
+            }
+            let saved = 0;
+            for (const macro of imported) {
+                const res = await sendMacroMessage({ action: "save", payload: macro });
+                if (res?.success) saved += 1;
+            }
+            await loadAll();
+            toast.success(`已导入 ${saved}/${imported.length} 个宏`);
+        } catch (error) {
+            toast.error(`导入失败: ${error?.message || "文件格式不正确"}`);
+        } finally {
+            if (importInputRef.current) importInputRef.current.value = "";
+        }
     }
 
     return (
         <Card>
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
                 <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏 <span className="text-gray-400">(beta)</span></span>
-                <Button className="w-24 !text-xs" onPress={() => setShowStartForm(!showStartForm)} isDisabled={!!recording}>
-                    {recording ? "录制中..." : (showStartForm ? "取消" : "录制")}
-                </Button>
+                <div className="flex gap-1">
+                    <Button
+                        className="!text-xs !px-2"
+                        onPress={() => importInputRef.current?.click()}
+                        isDisabled={!!recording}
+                    >
+                        导入
+                    </Button>
+                    <Button
+                        className="!text-xs !px-2"
+                        onPress={exportMacros}
+                        isDisabled={macros.length === 0}
+                    >
+                        导出
+                    </Button>
+                    <Button className="w-20 !text-xs" onPress={() => setShowStartForm(!showStartForm)} isDisabled={!!recording}>
+                        {recording ? "录制中..." : (showStartForm ? "取消" : "录制")}
+                    </Button>
+                </div>
+                <input
+                    ref={importInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    className="hidden"
+                    onChange={e => importMacrosFromFile(e.target.files?.[0])}
+                />
             </div>
 
             {recording && (
@@ -193,7 +249,7 @@ export default function Macro() {
                 <Input
                     aria-label="搜索宏"
                     inputClassName="!min-h-8"
-                    placeholder="按 name / id 搜索"
+                    placeholder="按名称搜索"
                     onChange={setSearch}
                 />
             </div>
@@ -238,12 +294,6 @@ export default function Macro() {
                                 onPress={() => replayMacro(macro.id)}
                             >
                                 {replayingId === macro.id ? "回放中..." : "回放"}
-                            </Button>
-                            <Button
-                                className="!text-xs !p-0 !px-2 !min-h-6 !bg-gray-100 !text-gray-700"
-                                onPress={() => copyId(macro.id)}
-                            >
-                                ID
                             </Button>
                             {confirmDeleteId === macro.id ? (
                                 <>
@@ -297,4 +347,45 @@ function defaultMacroName() {
 
 function buildReplayOptions(speed) {
     return { speed };
+}
+
+function normalizeImportedMacros(data) {
+    const rawMacros = Array.isArray(data)
+        ? data
+        : (Array.isArray(data?.macros) ? data.macros : []);
+    return rawMacros
+        .map(item => normalizeImportedMacro(item))
+        .filter(Boolean);
+}
+
+function normalizeImportedMacro(item) {
+    if (!item || typeof item !== "object") return null;
+    const id = String(item.id || "").trim() || `macro_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const name = String(item.name || "").trim() || id;
+    const startUrl = String(item.startUrl || "").trim();
+    const steps = Array.isArray(item.steps) ? item.steps : [];
+    if (!startUrl || steps.length === 0) return null;
+    return {
+        ...item,
+        id,
+        name,
+        startUrl,
+        origin: String(item.origin || "").trim() || safeOrigin(startUrl),
+        createdAt: Number(item.createdAt) || Date.now(),
+        updatedAt: Date.now(),
+        steps
+    };
+}
+
+function safeOrigin(url) {
+    try {
+        return new URL(url).origin;
+    } catch {
+        return "";
+    }
+}
+
+function formatDateForFilename(date) {
+    const pad = n => String(n).padStart(2, "0");
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
 }
