@@ -1,21 +1,26 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [
     react(),
   ],
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./test/setup.js"],
+  },
   build: {
     rollupOptions: {
       input: {
-        service_worker: 'src/service_worker.js',
-        content: 'src/content.js',
-        sidepanel: 'sidepanel.html',
+        service_worker: "src/service_worker.js",
+        content: "src/content.js",
+        sidepanel: "sidepanel.html",
       },
       output: {
-        entryFileNames: '[name].js',
-        assetFileNames: '[name].[ext]',
-        chunkFileNames: '[name].js',
+        entryFileNames: "[name].js",
+        assetFileNames: "[name].[ext]",
+        chunkFileNames: "[name].js",
       },
     },
     outDir: "dist"
