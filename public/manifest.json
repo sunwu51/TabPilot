@@ -24,7 +24,8 @@
         "sidePanel",
         "history",
         "storage",
-        "scripting"
+        "scripting",
+        "downloads"
     ],
     "side_panel": {
         "default_path": "sidepanel.html"

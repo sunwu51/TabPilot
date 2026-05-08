@@ -1,6 +1,7 @@
 /* global chrome */
 import { callMcpTool } from "../mcp";
 import { buildMcpToolCallName } from "./tools";
+import { triggerBrowserDownload } from "./downloadHelper";
 import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 
 
@@ -75,10 +76,19 @@ export async function executeTool(name, args, mcpRegistry = []) {
         case "list_macros": return _execListMacros(args);
         case "describe_macro": return _execDescribeMacro(args);
         case "run_macro": return _execRunMacro(args);
-        case "save_to_file": return _execSaveToFile(args);
+        case "download": return _execDownload(args);
+        case "download_list": return _execDownloadList(args);
+        case "download_search": return _execDownloadSearch(args);
+        case "sleep": return _execSleep(args);
         default: return { error: `Unknown tool: ${name}` };
       }
     };
+
+    // `sleep` intentionally has no timeout — its whole purpose is to wait.
+    // Input validation in _execSleep already caps the duration at 300s.
+    if (name === "sleep") {
+      return await runBuiltinTool();
+    }
 
     return await withTimeout(
       runBuiltinTool(),
@@ -292,6 +302,19 @@ function _normalizeGroupId(groupId) {
 }
 
 /**
+ * Normalize Chrome's splitViewId field (Chrome 140+) for tool responses.
+ * Returns null when the tab is not part of any split view (or on older Chrome
+ * builds that don't expose the field at all).
+ */
+function _normalizeSplitViewId(splitViewId) {
+  if (typeof splitViewId !== "number") return null;
+  const noneId = chrome?.tabs?.SPLIT_VIEW_ID_NONE;
+  if (typeof noneId === "number" && splitViewId === noneId) return null;
+  if (splitViewId < 0) return null;
+  return splitViewId;
+}
+
+/**
  * Serialize common tab metadata for tool responses.
  */
 function _serializeTabMetadata(tab) {
@@ -301,6 +324,7 @@ function _serializeTabMetadata(tab) {
     title: tab.title || "",
     windowId: tab.windowId,
     groupId: _normalizeGroupId(tab.groupId),
+    splitViewId: _normalizeSplitViewId(tab.splitViewId),
     ..._buildLastAccessed(tab.lastAccessed)
   };
 }
@@ -849,6 +873,7 @@ async function _executePageAction(tab, action, params, failureHint) {
       tabId: tab.id,
       windowId: tab.windowId,
       groupId: _normalizeGroupId(tab.groupId),
+      splitViewId: _normalizeSplitViewId(tab.splitViewId),
       ..._buildLastAccessed(tab.lastAccessed),
       ...data
     };
@@ -897,6 +922,7 @@ async function _execTabExtract({ tabId }) {
       tabId: resolved.tab.id,
       windowId: resolved.tab.windowId,
       groupId: _normalizeGroupId(resolved.tab.groupId),
+      splitViewId: _normalizeSplitViewId(resolved.tab.splitViewId),
       ..._buildLastAccessed(resolved.tab.lastAccessed)
     };
   } catch (e) {
@@ -1015,6 +1041,22 @@ async function _execDomHighlight({ tabId, selector, text, matchExact, index, dur
 /**
  * Execute arbitrary JavaScript on the current page.
  * Dangerous: should only be reached after explicit user approval.
+ *
+ * Why this is structured the way it is:
+ *
+ * The runner CANNOT use `new Function(userCode)` on the extension side —
+ * MV3 extension CSP is `script-src 'self'` and forbids `unsafe-eval`, and
+ * MV3 does not allow extensions to opt out. So the user code must be passed
+ * as a STRING ARGUMENT to a statically-defined runner function, which is
+ * serialized by chrome.scripting and re-parsed in the page main world.
+ *
+ * Inside the page, two strategies are tried in order:
+ *   1. `new Function(source)` — needs page CSP `script-src 'unsafe-eval'`
+ *   2. `<script>` element with inline source — needs page CSP
+ *      `script-src-elem 'unsafe-inline'`
+ *
+ * Most pages allow at least one. Pages that block both (e.g. CSP-3 strict
+ * with no nonce) get a clear error rather than a silent timeout.
  */
 async function _execEvalJs({ jsScript }) {
   const resolved = await _resolveControllableTab(undefined, "run code on");
@@ -1022,96 +1064,20 @@ async function _execEvalJs({ jsScript }) {
 
   const world = "MAIN";
   try {
-    const runnerFunc = async (source) => {
-      const channel = `__tab_manager_eval_js_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      return await new Promise((resolve) => {
-        let settled = false;
-
-        function finish(payload) {
-          if (settled) return;
-          settled = true;
-          window.removeEventListener(channel, onResult);
-          resolve(payload);
-        }
-
-        function onResult(event) {
-          finish(event?.detail || { error: "No result returned from injected script" });
-        }
-
-        window.addEventListener(channel, onResult, { once: true });
-
-        const script = document.createElement("script");
-        script.type = "text/javascript";
-        script.textContent = `
-          (async () => {
-            const channel = ${JSON.stringify(channel)};
-            function normalizeResult(value) {
-              if (value === undefined) return { kind: "undefined", value: null };
-              if (value === null) return null;
-              try {
-                const json = JSON.stringify(value);
-                if (json === undefined) {
-                  return { kind: typeof value, value: String(value) };
-                }
-                return JSON.parse(json);
-              } catch (e) {
-                return { kind: typeof value, value: String(value) };
-              }
-            }
-
-            try {
-              const result = await (async () => {
-                ${source}
-              })();
-              window.dispatchEvent(new CustomEvent(channel, {
-                detail: {
-                  success: true,
-                  url: document.URL,
-                  title: document.title,
-                  result: normalizeResult(result)
-                }
-              }));
-            } catch (error) {
-              window.dispatchEvent(new CustomEvent(channel, {
-                detail: {
-                  error: error && error.message ? error.message : String(error),
-                  stack: error && error.stack ? String(error.stack).slice(0, 4000) : null,
-                  url: document.URL,
-                  title: document.title
-                }
-              }));
-            }
-          })();
-        `;
-
-        const parent = document.documentElement || document.head || document.body;
-        if (!parent) {
-          finish({ error: "Unable to inject script into this page" });
-          return;
-        }
-
-        parent.appendChild(script);
-        script.remove();
-
-        setTimeout(() => {
-          finish({
-            error: "Injected script did not return a result. It may have been blocked by the page CSP.",
-            url: document.URL,
-            title: document.title
-          });
-        }, 11000);
-      });
-    };
-
+    // Inner timeout (8s) is intentionally tighter than the outer
+    // DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS (10s) so an informative inner
+    // error surfaces before the generic outer timeout fires.
     const results = await Promise.race([
       chrome.scripting.executeScript({
         target: { tabId: resolved.tab.id },
         world,
-        func: runnerFunc,
+        func: __evalJsPageRunner,
         args: [jsScript]
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Timed out waiting for JavaScript execution")), 12000);
+        setTimeout(() => reject(new Error(
+          "eval_js timed out after 8s — the script may be in an infinite loop, awaiting a promise that never resolves, or otherwise hung."
+        )), 8000);
       })
     ]);
 
@@ -1123,6 +1089,7 @@ async function _execEvalJs({ jsScript }) {
       tabId: resolved.tab.id,
       windowId: resolved.tab.windowId,
       groupId: _normalizeGroupId(resolved.tab.groupId),
+      splitViewId: _normalizeSplitViewId(resolved.tab.splitViewId),
       ..._buildLastAccessed(resolved.tab.lastAccessed),
       ...data
     };
@@ -1133,6 +1100,140 @@ async function _execEvalJs({ jsScript }) {
       hint: "The script could not be executed on this page."
     };
   }
+}
+
+/**
+ * Self-contained runner injected into the target page main world by
+ * chrome.scripting.executeScript. Receives the user's source as a string,
+ * tries Function-constructor execution first, falls back to <script> tag
+ * injection, and returns the result (or a CSP-aware error).
+ *
+ * Must not close over any extension-side variables — chrome.scripting
+ * serializes via toString() and re-parses in the page context.
+ */
+async function __evalJsPageRunner(source) {
+  function normalizeResult(value) {
+    if (value === undefined) return { kind: "undefined", value: null };
+    if (value === null) return null;
+    try {
+      const json = JSON.stringify(value);
+      if (json === undefined) return { kind: typeof value, value: String(value) };
+      return JSON.parse(json);
+    } catch (e) {
+      return { kind: typeof value, value: String(value) };
+    }
+  }
+
+  function isCspEvalError(message) {
+    return /unsafe-eval|Refused to evaluate|EvalError/i.test(String(message || ""));
+  }
+
+  // ---- Strategy 1: Function constructor (page CSP: needs unsafe-eval) ----
+  let cspEvalBlocked = false;
+  try {
+    const wrapped = "return (async () => {\n" + source + "\n})();";
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(wrapped);
+    const result = await fn();
+    return {
+      success: true,
+      strategy: "function",
+      url: document.URL,
+      title: document.title,
+      result: normalizeResult(result)
+    };
+  } catch (e) {
+    const message = e && e.message ? e.message : String(e);
+    if (!isCspEvalError(message)) {
+      // Real syntax/runtime error from user code — return immediately,
+      // don't waste a fallback round-trip on it.
+      return {
+        error: message,
+        stack: e && e.stack ? String(e.stack).slice(0, 4000) : null,
+        strategy: "function",
+        url: document.URL,
+        title: document.title
+      };
+    }
+    cspEvalBlocked = true;
+  }
+
+  // ---- Strategy 2: <script> tag (page CSP: needs unsafe-inline) ----
+  const channel = "__tab_manager_eval_js_" + Date.now() + "_" + Math.random().toString(36).slice(2);
+  const scriptResult = await new Promise((resolve) => {
+    let settled = false;
+    function finish(payload) {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener(channel, onResult);
+      resolve(payload);
+    }
+    function onResult(event) {
+      finish(event && event.detail ? event.detail : { error: "No result returned from injected script" });
+    }
+    window.addEventListener(channel, onResult, { once: true });
+
+    const script = document.createElement("script");
+    script.type = "text/javascript";
+    script.textContent =
+      "(async () => {\n" +
+      "  try {\n" +
+      "    const __result = await (async () => {\n" +
+      source + "\n" +
+      "    })();\n" +
+      "    window.dispatchEvent(new CustomEvent(" + JSON.stringify(channel) + ", { detail: { success: true, result: __result } }));\n" +
+      "  } catch (e) {\n" +
+      "    window.dispatchEvent(new CustomEvent(" + JSON.stringify(channel) + ", { detail: { error: (e && e.message) ? e.message : String(e), stack: (e && e.stack) ? String(e.stack).slice(0, 4000) : null } }));\n" +
+      "  }\n" +
+      "})();";
+
+    const parent = document.documentElement || document.head || document.body;
+    if (!parent) {
+      finish({ error: "Unable to inject script into this page" });
+      return;
+    }
+    parent.appendChild(script);
+    script.remove();
+
+    // Wait a tick: if CSP blocked the inline script, the dispatchEvent will
+    // never fire. 6s gives a slow real script room to finish but stays well
+    // under the outer 8s race.
+    setTimeout(() => {
+      finish({ error: "csp_inline_blocked" });
+    }, 6000);
+  });
+
+  if (scriptResult && scriptResult.success) {
+    return {
+      success: true,
+      strategy: "script-tag",
+      url: document.URL,
+      title: document.title,
+      result: normalizeResult(scriptResult.result)
+    };
+  }
+
+  // Real runtime error from the script-tag path
+  if (scriptResult && scriptResult.error && scriptResult.error !== "csp_inline_blocked") {
+    return {
+      error: scriptResult.error,
+      stack: scriptResult.stack || null,
+      strategy: "script-tag",
+      url: document.URL,
+      title: document.title
+    };
+  }
+
+  // Both strategies blocked by page CSP.
+  return {
+    error: "Page CSP blocks both Function-constructor (script-src 'unsafe-eval') and inline <script> elements (script-src-elem 'unsafe-inline'). Cannot execute arbitrary JavaScript on this page.",
+    strategy: "both-blocked",
+    cspEvalBlocked,
+    cspInlineBlocked: true,
+    url: document.URL,
+    title: document.title,
+    hint: "Try a less restrictive page, or use the structured DOM tools (dom_query, dom_click, dom_set_value) which do not require dynamic code execution."
+  };
 }
 
 /**
@@ -1151,6 +1252,7 @@ async function _execTabOpen({ url, active }) {
     title: tab.title || "",
     windowId: tab.windowId,
     groupId: _normalizeGroupId(tab.groupId),
+    splitViewId: _normalizeSplitViewId(tab.splitViewId),
     ..._buildLastAccessed(tab.lastAccessed)
   };
 }
@@ -1178,6 +1280,7 @@ async function _execTabFocus({ tabId }) {
     url: tab.url,
     windowId: tab.windowId,
     groupId: _normalizeGroupId(tab.groupId),
+    splitViewId: _normalizeSplitViewId(tab.splitViewId),
     previousWindowId,
     movedToCurrentWindow,
     ..._buildLastAccessed(tab.lastAccessed)
@@ -1414,6 +1517,7 @@ async function _execTabGetActive() {
     title: tab.title,
     windowId: tab.windowId,
     groupId: _normalizeGroupId(tab.groupId),
+    splitViewId: _normalizeSplitViewId(tab.splitViewId),
     ..._buildLastAccessed(tab.lastAccessed)
   };
 }
@@ -2355,111 +2459,113 @@ async function _execRemoveStashInBrowser({ title }) {
 }
 
 /**
- * Save content as a file by triggering a page download. Try the current active
- * tab first; if that page cannot be scripted (for example chrome:// pages),
- * fall back to a temporary scriptable tab and close it afterwards.
+ * Pause the agent loop for a fixed duration. Capped to [1, 300] seconds.
  */
-async function _execSaveToFile({ fileName, content }) {
-  if (!fileName || typeof fileName !== "string") return { error: "fileName is required and must be a string" };
-  if (content === undefined || content === null) return { error: "content is required" };
-
-  const text = String(content);
-  const size = new TextEncoder().encode(text).length;
-  let activeTabError = null;
-
-  try {
-    const tab = await chrome.tabs.query({ active: true, currentWindow: true });
-    const targetTabId = tab?.[0]?.id;
-    if (!targetTabId) return { error: "No active tab found to trigger download" };
-
-    await _triggerFileDownloadInTab(targetTabId, fileName, text);
-    return { success: true, fileName, size, fallback: false };
-  } catch (e) {
-    activeTabError = e;
+async function _execSleep({ seconds } = {}) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n)) return { error: "seconds is required and must be a number" };
+  const intSeconds = Math.floor(n);
+  if (intSeconds < 1 || intSeconds > 300) {
+    return { error: "seconds must be an integer between 1 and 300 (inclusive)" };
   }
+  const startedAt = Date.now();
+  await _sleepMs(intSeconds * 1000);
+  return {
+    success: true,
+    requestedSeconds: intSeconds,
+    actualMs: Date.now() - startedAt
+  };
+}
 
-  let fallbackTabId = null;
+/**
+ * Download a file using chrome.downloads API. Delegates to the shared helper
+ * so the same code path serves both LLM-invoked downloads and UI-side exports.
+ */
+async function _execDownload({ fileName, url, content } = {}) {
+  return await triggerBrowserDownload({ fileName, url, content });
+}
+
+/**
+ * Serialize a chrome.downloads DownloadItem into a compact LLM-friendly shape.
+ * `filename` is the absolute path on the local filesystem.
+ */
+function _serializeDownloadItem(item) {
+  return {
+    id: item.id,
+    url: item.url || "",
+    finalUrl: item.finalUrl || "",
+    filename: item.filename || "",
+    state: item.state || "",
+    mime: item.mime || "",
+    totalBytes: typeof item.totalBytes === "number" ? item.totalBytes : null,
+    bytesReceived: typeof item.bytesReceived === "number" ? item.bytesReceived : null,
+    startTime: item.startTime || null,
+    endTime: item.endTime || null,
+    paused: !!item.paused,
+    exists: item.exists !== false,
+    error: item.error || null,
+    danger: item.danger || null
+  };
+}
+
+/**
+ * List the most recent downloads.
+ */
+async function _execDownloadList({ limit } = {}) {
+  if (!chrome?.downloads?.search) {
+    return { error: "chrome.downloads API is unavailable in this context" };
+  }
+  const max = Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 20));
   try {
-    const fallbackTab = await chrome.tabs.create({ url: "https://example.com/", active: false });
-    fallbackTabId = fallbackTab?.id;
-    if (!fallbackTabId) return { error: "Could not open fallback tab for download", activeTabError: activeTabError?.message };
-
-    await _waitForTabLoadComplete(fallbackTabId);
-    await _triggerFileDownloadInTab(fallbackTabId, fileName, text);
-    await _delay(1000);
-    return { success: true, fileName, size, fallback: true, activeTabError: activeTabError?.message };
-  } catch (e) {
+    const items = await chrome.downloads.search({ limit: max, orderBy: ["-startTime"] });
     return {
-      error: e.message,
-      hint: "Could not trigger file download in the active tab or fallback tab",
-      activeTabError: activeTabError?.message
+      count: items.length,
+      downloads: items.map(_serializeDownloadItem)
     };
-  } finally {
-    if (fallbackTabId) {
-      try {
-        await chrome.tabs.remove(fallbackTabId);
-      } catch {
-        // Ignore cleanup failures; the download result/error above is more useful.
-      }
-    }
+  } catch (e) {
+    return { error: e?.message || String(e) };
   }
 }
 
-async function _triggerFileDownloadInTab(tabId, fileName, content) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: (fn, ct) => {
-      const blob = new Blob([ct], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fn;
-      a.rel = "noopener";
-      (document.body || document.documentElement).appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      return true;
-    },
-    args: [fileName, content]
-  });
-
-  if (results?.[0]?.result !== true) {
-    throw new Error("Failed to trigger download on the page");
+/**
+ * Search downloads with optional filters.
+ */
+async function _execDownloadSearch({ query, filenameRegex, urlRegex, state, startedAfter, startedBefore, limit } = {}) {
+  if (!chrome?.downloads?.search) {
+    return { error: "chrome.downloads API is unavailable in this context" };
   }
-}
 
-async function _waitForTabLoadComplete(tabId, timeoutMs = 10_000) {
-  const existingTab = await chrome.tabs.get(tabId);
-  if (existingTab?.status === "complete") return;
+  const q = { orderBy: ["-startTime"] };
 
-  await new Promise((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      clearTimeout(timer);
-    };
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve();
-    };
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-    const onUpdated = (updatedTabId, changeInfo) => {
-      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
-    };
-    const timer = setTimeout(() => fail(new Error("Timed out waiting for fallback tab to load")), timeoutMs);
-    chrome.tabs.onUpdated.addListener(onUpdated);
-  });
-}
+  if (typeof query === "string" && query.trim()) {
+    // chrome.downloads.search expects an array of terms; all must match.
+    q.query = query.trim().split(/\s+/);
+  }
+  if (typeof filenameRegex === "string" && filenameRegex.length > 0) {
+    q.filenameRegex = filenameRegex;
+  }
+  if (typeof urlRegex === "string" && urlRegex.length > 0) {
+    q.urlRegex = urlRegex;
+  }
+  if (state && ["in_progress", "interrupted", "complete"].includes(state)) {
+    q.state = state;
+  }
+  if (Number.isFinite(startedAfter)) {
+    q.startedAfter = new Date(startedAfter).toISOString();
+  }
+  if (Number.isFinite(startedBefore)) {
+    q.startedBefore = new Date(startedBefore).toISOString();
+  }
+  q.limit = Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 50));
 
-function _delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    const items = await chrome.downloads.search(q);
+    return {
+      count: items.length,
+      query: q,
+      downloads: items.map(_serializeDownloadItem)
+    };
+  } catch (e) {
+    return { error: e?.message || String(e) };
+  }
 }

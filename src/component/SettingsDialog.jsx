@@ -313,6 +313,8 @@ function SettingsDialogBody() {
             <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
               <span className="text-sm">隐藏助手消息的复制按钮</span>
             </Checkbox>
+          </div>
+          <div className="mt-2">
             <Checkbox isSelected={dangerousToolSkipApproval} onChange={setDangerousToolSkipApproval}>
               <span className="text-sm text-red-600">危险工具无需审批（危险）</span>
             </Checkbox>

@@ -597,15 +597,58 @@ export const TOOLS = [
     }
   },
   {
-    name: "save_to_file",
-    description: "Save arbitrary string content as a file and trigger a browser download. The file is created as a Blob and downloaded using an anchor element. Use this to export data, save generated text, or create downloadable artifacts for the user.",
+    name: "download",
+    description: "Trigger a browser download and save it to the user's Downloads folder. Provide EITHER `url` (an http(s):// link or a base64 data: URL) OR `content` (a plain text string to write into the file), together with `fileName`. When `url` is given, the browser performs the download with the user's existing cookies/session, which works for pages that require authentication. Use `content` for generating reports, notes, or other text artifacts on the fly.",
     schema: {
       type: "object",
       properties: {
-        fileName: { type: "string", description: "The name of the file to download, including extension (e.g. 'report.md', 'data.json', 'notes.txt')." },
-        content: { type: "string", description: "The full string content to write into the file." }
+        fileName: { type: "string", description: "The name of the file to save, including extension (e.g. 'report.md', 'data.json', 'image.png')." },
+        url: { type: "string", description: "Optional source URL. Supports http(s):// links (cookies are sent) and base64 data: URLs (e.g. 'data:image/png;base64,...'). Mutually exclusive with `content`." },
+        content: { type: "string", description: "Optional plain text content to save into the file. Mutually exclusive with `url`." }
       },
-      required: ["fileName", "content"]
+      required: ["fileName"]
+    }
+  },
+  {
+    name: "download_list",
+    description: "List the most recent browser downloads (newest first). Each entry includes the absolute local file path under `filename`, plus state/size/mime info. Use this when the user asks 'what did I download recently' or to find a file path you previously saved with the `download` tool.",
+    schema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Maximum number of records to return (default 20, max 100)." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "download_search",
+    description: "Search browser download history with filters. Each result includes `filename` (absolute local path), `url`, `state`, `mime`, `totalBytes`, `startTime`/`endTime`, etc. Use this when the user asks for a specific past download, or to find a file path by URL or name fragment.",
+    schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Free-text terms (space-separated). All terms must appear in the URL or filename. Case-insensitive substring match." },
+        filenameRegex: { type: "string", description: "Optional regular expression matched against the absolute file path." },
+        urlRegex: { type: "string", description: "Optional regular expression matched against the source URL." },
+        state: { type: "string", enum: ["in_progress", "interrupted", "complete"], description: "Filter by download state." },
+        startedAfter: { type: "number", description: "Only return downloads started at or after this Unix timestamp in milliseconds." },
+        startedBefore: { type: "number", description: "Only return downloads started at or before this Unix timestamp in milliseconds." },
+        limit: { type: "number", description: "Maximum number of records to return (default 50, max 100)." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "sleep",
+    description: "Pause the agent for a fixed number of seconds. Use this when you must wait for a page transition, an external job, or a tool result that is not yet available, instead of polling repeatedly. Prefer sleep over tight retry loops. Range: 1 to 300 seconds (max 5 minutes per call). This tool has no built-in timeout.",
+    schema: {
+      type: "object",
+      properties: {
+        seconds: {
+          type: "number",
+          description: "How long to sleep, in seconds. Must be an integer between 1 and 300 (inclusive)."
+        }
+      },
+      required: ["seconds"]
     }
   }
 ];
