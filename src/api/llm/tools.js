@@ -598,13 +598,14 @@ export const TOOLS = [
   },
   {
     name: "download",
-    description: "Trigger a browser download and save it to the user's Downloads folder. Provide EITHER `url` (an http(s):// link or a base64 data: URL) OR `content` (a plain text string to write into the file), together with `fileName`. When `url` is given, the browser performs the download with the user's existing cookies/session, which works for pages that require authentication. Use `content` for generating reports, notes, or other text artifacts on the fly.",
+    description: "Trigger a browser download and save it to the user's Downloads folder. Provide EITHER `url` (an http(s):// link or a base64 data: URL) OR `content` (a plain text string to write into the file), together with `fileName`. When `url` is given, the browser performs the download with the user's existing cookies/session, which works for pages that require authentication. Use `content` for generating reports, notes, or other text artifacts on the fly. The optional `mimeType` only affects `content` text downloads; it does not change the MIME type of `url` downloads.",
     schema: {
       type: "object",
       properties: {
         fileName: { type: "string", description: "The name of the file to save, including extension (e.g. 'report.md', 'data.json', 'image.png')." },
         url: { type: "string", description: "Optional source URL. Supports http(s):// links (cookies are sent) and base64 data: URLs (e.g. 'data:image/png;base64,...'). Mutually exclusive with `content`." },
-        content: { type: "string", description: "Optional plain text content to save into the file. Mutually exclusive with `url`." }
+        content: { type: "string", description: "Optional plain text content to save into the file. Mutually exclusive with `url`." },
+        mimeType: { type: "string", description: "Optional MIME type for `content` text downloads, such as 'text/markdown;charset=utf-8', 'application/json;charset=utf-8', 'text/csv;charset=utf-8', or 'text/html;charset=utf-8'. Ignored for `url` downloads; for http(s) URLs the server/browser determines MIME, and for data: URLs the MIME is already embedded in the URL." }
       },
       required: ["fileName"]
     }

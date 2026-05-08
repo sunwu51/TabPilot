@@ -2480,8 +2480,8 @@ async function _execSleep({ seconds } = {}) {
  * Download a file using chrome.downloads API. Delegates to the shared helper
  * so the same code path serves both LLM-invoked downloads and UI-side exports.
  */
-async function _execDownload({ fileName, url, content } = {}) {
-  return await triggerBrowserDownload({ fileName, url, content });
+async function _execDownload({ fileName, url, content, mimeType } = {}) {
+  return await triggerBrowserDownload({ fileName, url, content, mimeType });
 }
 
 /**
