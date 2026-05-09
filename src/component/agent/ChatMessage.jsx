@@ -14,8 +14,16 @@ import { memo, useEffect, useState } from "react";
  * @param {(index: number) => void} [props.onRewindToUserMessage]
  */
 /* eslint-disable react/prop-types */
-const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUserMessage }) {
+const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUserMessage, searchState }) {
   const { role, content } = msg;
+  const messageSearchState = isSearchableChatMessage(msg)
+    ? buildMessageSearchState(searchState, messageIndex)
+    : null;
+  const searchAnchorProps = messageSearchState
+    ? {
+        "data-chat-search-message-index": messageIndex
+      }
+    : {};
 
   // User message
   if (role === "user") {
@@ -32,7 +40,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
     // Multimodal message (text + images)
     if (Array.isArray(content)) {
       return (
-        <div className="chat-msg chat-msg-user">
+        <div className="chat-msg chat-msg-user" {...searchAnchorProps}>
           <div className="chat-msg-user-inner">
             {showRewind && (
               <Dialog
@@ -61,7 +69,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
               </Dialog>
             )}
             <div className="chat-bubble chat-bubble-user">
-              <UserMultimodalContent content={content} />
+              <UserMultimodalContent content={content} searchState={messageSearchState} />
             </div>
             {sentAt && (
               <div className="chat-msg-time-row">
@@ -76,7 +84,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
 
     // Plain text message
     return (
-      <div className="chat-msg chat-msg-user">
+      <div className="chat-msg chat-msg-user" {...searchAnchorProps}>
         <div className="chat-msg-user-inner">
           {showRewind && (
             <Dialog
@@ -106,7 +114,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
               </div>
             </Dialog>
           )}
-          <div className="chat-bubble chat-bubble-user">{content}</div>
+          <div className="chat-bubble chat-bubble-user">{renderHighlightedText(content, messageSearchState)}</div>
           {sentAt && (
             <div className="chat-msg-time-row">
               <div>{formatTime(sentAt)}</div>
@@ -137,7 +145,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
         const block = content[i];
         if (!block) continue;
         if (block.type === "text" && block.text) {
-          rendered.push(<AssistantTextBubble key={`t${i}`} text={block.text} />);
+          rendered.push(<AssistantTextBubble key={`t${i}`} text={block.text} searchState={messageSearchState} />);
         } else if (block.type === "tool_use") {
           rendered.push(<ToolCallBlock key={`tc${i}`} name={block.name} input={block.input} />);
         }
@@ -148,7 +156,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       // Render text content if present
       if (content && typeof content === "string") {
-        rendered.push(<AssistantTextBubble key="text" text={content} />);
+        rendered.push(<AssistantTextBubble key="text" text={content} searchState={messageSearchState} />);
       }
       for (let i = 0; i < msg.tool_calls.length; i++) {
         const tc = msg.tool_calls[i];
@@ -168,7 +176,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
 
     // Plain text only
     if (content && typeof content === "string") {
-      return <AssistantTextBubble text={content} />;
+      return <AssistantTextBubble text={content} searchState={messageSearchState} />;
     }
 
     // Empty or null content with no tool_calls — skip
@@ -183,14 +191,14 @@ export default ChatMessage;
 
 /** Render user multimodal content (text + images) */
 /* eslint-disable react/prop-types */
-function UserMultimodalContent({ content }) {
+function UserMultimodalContent({ content, searchState }) {
   if (!Array.isArray(content)) return null;
 
   return (
     <>
       {content.map((block, index) => {
         if (block.type === "text") {
-          return <div key={index}>{block.text}</div>;
+          return <div key={index}>{renderHighlightedText(block.text, searchState)}</div>;
         }
         if (block.type === "file") {
           return (
@@ -225,9 +233,10 @@ function UserMultimodalContent({ content }) {
 }
 
 /** Markdown-rendered assistant text bubble */
-export function AssistantTextBubble({ text }) {
+export function AssistantTextBubble({ text, searchState }) {
   const [copied, setCopied] = useState(false);
   const [hideCopyButton, setHideCopyButton] = useState(false);
+  const hasSearchHits = !!searchState?.query && findTextHits(text, searchState.query).length > 0;
 
   useEffect(() => {
     chrome.storage.local.get({ hideCopyButton: false }, (res) => {
@@ -254,15 +263,21 @@ export function AssistantTextBubble({ text }) {
   }
 
   return (
-    <div className="chat-msg chat-msg-assistant">
+    <div className="chat-msg chat-msg-assistant" {...(searchState ? {
+      "data-chat-search-message-index": searchState.messageIndex
+    } : {})}>
       <div className="chat-bubble chat-bubble-assistant">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-          components={{ pre: CodeBlock }}
-        >
-          {text}
-        </ReactMarkdown>
+        {hasSearchHits ? (
+          <div className="chat-search-raw-markdown">{renderHighlightedText(text, searchState)}</div>
+        ) : (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={buildAssistantRehypePlugins()}
+            components={{ pre: CodeBlock }}
+          >
+            {text}
+          </ReactMarkdown>
+        )}
         {!hideCopyButton && (
           <div className="chat-bubble-copy-row">
             <button
@@ -461,6 +476,75 @@ function safeJsonParse(value) {
   } catch (error) {
     return { raw: value };
   }
+}
+
+function buildMessageSearchState(searchState, messageIndex) {
+  if (!searchState || typeof messageIndex !== "number") return null;
+  const query = String(searchState.query || "").trim();
+  if (!query) return null;
+  return {
+    messageIndex,
+    query
+  };
+}
+
+function isSearchableChatMessage(message) {
+  if (!message) return false;
+  if (message.role !== "user" && message.role !== "assistant") return false;
+  if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return false;
+  if (Array.isArray(message.content) && message.content.some(block => block?.type === "tool_use" || block?.type === "tool_result")) {
+    return false;
+  }
+  return true;
+}
+
+function buildAssistantRehypePlugins() {
+  return [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+}
+
+function renderHighlightedText(value, searchState) {
+  const text = String(value ?? "");
+  if (!searchState?.query) return text;
+
+  const sortedHits = findTextHits(text, searchState.query);
+  if (sortedHits.length === 0) return text;
+  const parts = [];
+  let cursor = 0;
+  sortedHits.forEach((hit, index) => {
+    const start = Math.max(cursor, Math.min(text.length, hit.start));
+    const end = Math.max(start, Math.min(text.length, hit.end));
+    if (start > cursor) parts.push(text.slice(cursor, start));
+    if (end > start) {
+      parts.push(
+        <mark
+          key={`hit-${hit.start}-${index}`}
+          className="chat-search-hit"
+          data-chat-search-hit="true"
+          data-chat-search-message-index={searchState.messageIndex}
+        >
+          {text.slice(start, end)}
+        </mark>
+      );
+    }
+    cursor = end;
+  });
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
+}
+
+function findTextHits(text, query) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!normalizedQuery) return [];
+  const lowerText = String(text || "").toLowerCase();
+  const hits = [];
+  let fromIndex = 0;
+  while (fromIndex < lowerText.length) {
+    const start = lowerText.indexOf(normalizedQuery, fromIndex);
+    if (start < 0) break;
+    hits.push({ start, end: start + normalizedQuery.length });
+    fromIndex = start + Math.max(1, normalizedQuery.length);
+  }
+  return hits;
 }
 
 function extractReactText(value) {

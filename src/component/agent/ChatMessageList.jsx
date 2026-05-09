@@ -1,8 +1,10 @@
 import { memo, useMemo, useState } from "react";
 import ChatMessage from "./ChatMessage";
 
+const HIDDEN_TOOL_CARD_NAMES = new Set(["plan_create_for_session", "plan_update_for_session"]);
+
 /* eslint-disable react/prop-types */
-const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindToUserMessage }) {
+const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindToUserMessage, searchState }) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
   return (
@@ -33,12 +35,13 @@ const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindT
             msg={group.message}
             messageIndex={group.index}
             onRewindToUserMessage={onRewindToUserMessage}
+            searchState={searchState}
           />
         );
       })}
     </>
   );
-}, (prevProps, nextProps) => prevProps.messages === nextProps.messages);
+}, (prevProps, nextProps) => prevProps.messages === nextProps.messages && prevProps.searchState === nextProps.searchState);
 
 export default ChatMessageList;
 
@@ -179,6 +182,8 @@ function groupMessages(messages) {
     }
 
     const items = buildToolSequenceItems(group, start);
+    if (items.length === 0) continue;
+
     const toolCallCount = items.filter(item => item.type === "tool").length;
     if (toolCallCount > 5) {
       result.push({
@@ -221,6 +226,10 @@ function buildToolSequenceItems(messages, startIndex) {
           continue;
         }
 
+        if (isHiddenToolCardName(renderItem.name)) {
+          continue;
+        }
+
         const toolItem = {
           type: "tool",
           id: renderItem.id || "",
@@ -238,6 +247,10 @@ function buildToolSequenceItems(messages, startIndex) {
     }
 
     if (message.role === "tool") {
+      if (isHiddenToolCardName(message.tool_name)) {
+        continue;
+      }
+
       const id = message.tool_call_id;
       let toolItem = id ? toolItemsById.get(id) : anonymousToolItems.find(item => !item.resultMessage);
       if (!toolItem) {
@@ -272,6 +285,7 @@ function extractAssistantRenderItems(message) {
       if (block.type === "text" && block.text) {
         items.push({ type: "message", message: { role: "assistant", content: block.text } });
       } else if (block.type === "tool_use") {
+        if (isHiddenToolCardName(block.name)) continue;
         items.push({
           type: "tool",
           id: block.id || "",
@@ -289,6 +303,8 @@ function extractAssistantRenderItems(message) {
 
   if (Array.isArray(message.tool_calls)) {
     for (const toolCall of message.tool_calls) {
+      const toolName = toolCall?.function?.name || toolCall?.name || "tool";
+      if (isHiddenToolCardName(toolName)) continue;
       items.push(normalizeOpenAIToolCall(toolCall));
     }
   }
@@ -442,4 +458,8 @@ function isToolLikeMessage(message) {
     return message.content.some((block) => block?.type === "tool_use");
   }
   return false;
+}
+
+function isHiddenToolCardName(name) {
+  return HIDDEN_TOOL_CARD_NAMES.has(String(name || ""));
 }

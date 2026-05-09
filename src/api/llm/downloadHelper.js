@@ -1,6 +1,37 @@
 /* global chrome */
 
 /**
+ * Sentinel error returned when the optional `downloads` permission is missing.
+ * The agent UI watches for this and pops a permission-approval card.
+ */
+export const DOWNLOADS_PERMISSION_REQUIRED = "downloads_permission_required";
+
+/**
+ * Check whether the user has granted the optional `downloads` permission.
+ * Returns false in any non-extension context.
+ */
+export async function hasDownloadsPermission() {
+  if (!chrome?.permissions?.contains) return false;
+  try {
+    return await chrome.permissions.contains({ permissions: ["downloads"] });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build the standard "needs permission" error envelope. Tool callers return
+ * this so the chat runtime can intercept it and prompt the user.
+ */
+export function downloadsPermissionRequiredError() {
+  return {
+    error: "downloads permission not granted",
+    code: DOWNLOADS_PERMISSION_REQUIRED,
+    permission: "downloads"
+  };
+}
+
+/**
  * Encode a JS string into a base64 data URL via UTF-8.
  */
 function _textToDataUrl(text, mimeType = "text/plain;charset=utf-8") {
@@ -32,6 +63,9 @@ export async function triggerBrowserDownload({ fileName, url, content, mimeType 
   }
   if (!chrome?.downloads?.download) {
     return { error: "chrome.downloads API is unavailable in this context" };
+  }
+  if (!(await hasDownloadsPermission())) {
+    return downloadsPermissionRequiredError();
   }
 
   const hasUrl = typeof url === "string" && url.length > 0;
