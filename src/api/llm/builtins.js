@@ -1,7 +1,7 @@
 /* global chrome */
 import { callMcpTool } from "../mcp";
 import { buildMcpToolCallName } from "./tools";
-import { triggerBrowserDownload } from "./downloadHelper";
+import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
 import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 
 
@@ -2514,6 +2514,9 @@ async function _execDownloadList({ limit } = {}) {
   if (!chrome?.downloads?.search) {
     return { error: "chrome.downloads API is unavailable in this context" };
   }
+  if (!(await hasDownloadsPermission())) {
+    return downloadsPermissionRequiredError();
+  }
   const max = Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 20));
   try {
     const items = await chrome.downloads.search({ limit: max, orderBy: ["-startTime"] });
@@ -2532,6 +2535,9 @@ async function _execDownloadList({ limit } = {}) {
 async function _execDownloadSearch({ query, filenameRegex, urlRegex, state, startedAfter, startedBefore, limit } = {}) {
   if (!chrome?.downloads?.search) {
     return { error: "chrome.downloads API is unavailable in this context" };
+  }
+  if (!(await hasDownloadsPermission())) {
+    return downloadsPermissionRequiredError();
   }
 
   const q = { orderBy: ["-startTime"] };

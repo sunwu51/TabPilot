@@ -372,6 +372,9 @@ function SettingsDialogBody() {
       </div>
 
       <div className="settings-dialog-actions">
+        <span className="text-xs text-gray-400" style={{ marginRight: "auto" }}>
+          版本 {chrome?.runtime?.getManifest?.()?.version || "—"}
+        </span>
         <Button
           className="!text-sm !min-h-8 !px-4 !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
           onPress={handleCancel}

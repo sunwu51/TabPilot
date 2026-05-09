@@ -1,7 +1,7 @@
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
-import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, triggerBrowserDownload } from "../../api/llm";
+import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, triggerBrowserDownload, hasDownloadsPermission } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
@@ -83,6 +83,7 @@ export default function AgentPanel() {
   const [pendingApproval, setPendingApproval] = useState(null);
   const approvalResolverRef = useRef(new Map());
   const planApprovalResolverRef = useRef(new Map());
+  const permissionApprovalResolverRef = useRef(new Map());
   const latestPlanStatusRef = useRef(null);
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -436,6 +437,11 @@ export default function AgentPanel() {
       planApprovalResolverRef.current.delete(targetSessionId);
       planResolver({ approved: false, feedback: "" });
     }
+    const permResolver = permissionApprovalResolverRef.current.get(targetSessionId);
+    if (permResolver) {
+      permissionApprovalResolverRef.current.delete(targetSessionId);
+      permResolver({ granted: false });
+    }
     setSessionRuntime(targetSessionId, {
       loading: false,
       abort: null,
@@ -592,6 +598,67 @@ export default function AgentPanel() {
         }
       });
     });
+  }
+
+  function requestPermissionApproval(targetSessionId, runId, toolCall, permissionMeta) {
+    return new Promise((resolve) => {
+      permissionApprovalResolverRef.current.set(targetSessionId, resolve);
+      setSessionRuntime(targetSessionId, {
+        loading: false,
+        abort: null,
+        pendingApproval: {
+          kind: "permission",
+          runId,
+          toolCall,
+          permissionMeta
+        }
+      });
+    });
+  }
+
+  // The "approve" button must invoke chrome.permissions.request directly inside
+  // the click handler so the call retains the user-gesture context required by
+  // Chrome's permission API. Calling this off the user gesture (e.g. after an
+  // await) silently fails to show the permission prompt.
+  async function resolvePermissionApproval(approved) {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    shouldFocusInputWhenReadyRef.current = true;
+    const runtime = getSessionRuntime(currentSessionId);
+    const meta = runtime.pendingApproval?.permissionMeta;
+    const resolver = permissionApprovalResolverRef.current.get(currentSessionId);
+
+    let granted = false;
+    if (approved && meta?.permissions?.length && chrome?.permissions?.request) {
+      try {
+        granted = await chrome.permissions.request({ permissions: meta.permissions });
+      } catch (e) {
+        console.error("permissions.request failed:", e);
+        granted = false;
+      }
+    }
+
+    permissionApprovalResolverRef.current.delete(currentSessionId);
+    setSessionRuntime(currentSessionId, {
+      pendingApproval: null,
+      loading: granted && !!runtime.loading ? runtime.loading : (granted ? true : false)
+    });
+    if (resolver) resolver({ granted });
+  }
+
+  function getPermissionMetaForToolCall(toolCall) {
+    if (!toolCall) return null;
+    if (toolCall.name === "download" || toolCall.name === "download_list" || toolCall.name === "download_search") {
+      return {
+        permissions: ["downloads"],
+        title: "需要新增权限：浏览器下载",
+        description:
+          `工具 \`${toolCall.name}\` 需要 Chrome 的 "downloads" 权限才能访问浏览器下载。` +
+          "授权一次后将持续生效，可以在扩展详情页随时撤销。",
+        confirmLabel: "授权下载权限"
+      };
+    }
+    return null;
   }
 
   function getDangerousToolMeta(toolCall) {
@@ -1008,6 +1075,25 @@ export default function AgentPanel() {
             } else if (tc.name === "plan_update_for_session") {
               result = await handlePlanUpdateForSession(targetSessionId, tc.args || {});
             } else {
+              let permissionDenied = false;
+              const permissionMeta = getPermissionMetaForToolCall(tc);
+              if (permissionMeta && !(await hasDownloadsPermission())) {
+                toast(`${permissionMeta.title}`, { duration: 2500 });
+                const { granted } = await requestPermissionApproval(targetSessionId, runId, tc, permissionMeta);
+                if (!isCurrentRun(targetSessionId, runId)) return;
+                if (granted) {
+                  setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+                } else {
+                  result = {
+                    error: "User denied the required permission: " + (permissionMeta.permissions || []).join(","),
+                    cancelled: true
+                  };
+                  permissionDenied = true;
+                }
+              }
+              if (permissionDenied) {
+                // result already populated; skip dangerous + execution path
+              } else {
               const dangerousMeta = getDangerousToolMeta(tc);
               if (dangerousMeta) {
                 const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
@@ -1027,6 +1113,7 @@ export default function AgentPanel() {
                 }
               } else {
                 result = await executeTool(tc.name, tc.args, combinedMcpTools);
+              }
               }
             }
             const durationMs = Date.now() - t0;
@@ -1627,6 +1714,21 @@ export default function AgentPanel() {
             plan={pendingApproval.plan}
             onResolve={resolvePlanApproval}
           />
+        ) : pendingApproval?.kind === "permission" ? (
+          <Card className="!p-2 !mb-1">
+            <div className="text-xs font-semibold text-amber-600 mb-1">
+              {pendingApproval.permissionMeta?.title || "需要新增权限"}
+            </div>
+            <div className="text-xs text-gray-600 mb-2">
+              {pendingApproval.permissionMeta?.description || "工具需要额外的浏览器权限。"}
+            </div>
+            <div className="chat-input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
+              <Button className="!text-xs" onPress={() => resolvePermissionApproval(false)}>取消</Button>
+              <Button className="!text-xs" onPress={() => resolvePermissionApproval(true)}>
+                {pendingApproval.permissionMeta?.confirmLabel || "授权"}
+              </Button>
+            </div>
+          </Card>
         ) : pendingApproval ? (
           <Card className="!p-2 !mb-1">
             <div className="text-xs font-semibold text-red-600 mb-1">

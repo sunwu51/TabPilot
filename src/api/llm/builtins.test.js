@@ -12,7 +12,13 @@ vi.mock("../mcp", () => ({
 }));
 
 vi.mock("./downloadHelper", () => ({
-  triggerBrowserDownload: vi.fn(async (args) => ({ success: true, ...args, downloadId: 42 }))
+  triggerBrowserDownload: vi.fn(async (args) => ({ success: true, ...args, downloadId: 42 })),
+  hasDownloadsPermission: vi.fn(async () => true),
+  downloadsPermissionRequiredError: () => ({
+    error: "downloads permission not granted",
+    code: "downloads_permission_required",
+    permission: "downloads"
+  })
 }));
 
 describe("built-in tool execution", () => {
