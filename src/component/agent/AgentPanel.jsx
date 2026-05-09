@@ -1,7 +1,7 @@
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
-import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, triggerBrowserDownload, hasDownloadsPermission } from "../../api/llm";
+import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, hasDownloadsPermission } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
@@ -69,6 +69,15 @@ export default function AgentPanel() {
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchScope, setSearchScope] = useState("current");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchHitIndex, setActiveSearchHitIndex] = useState(0);
+  const [searchHitCount, setSearchHitCount] = useState(0);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [globalSearchStatus, setGlobalSearchStatus] = useState("");
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const messagesScrollerRef = useRef(null);
   const messagesContentRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -94,6 +103,10 @@ export default function AgentPanel() {
   const imageInputRef = useRef(null);
   const textInputRef = useRef(null);
   const sessionStreamingRef = useRef(new Map());
+  const clearConfirmResolverRef = useRef(null);
+  const isMacPlatform = platformInfo?.os === "mac";
+  const searchShortcutLabel = isMacPlatform ? "⌘⇧K" : "Alt+K";
+  const clearShortcutLabel = isMacPlatform ? "⌘⇧Backspace" : "Alt+Backspace";
 
   useEffect(() => {
     if (!showAttachMenu) return;
@@ -131,6 +144,48 @@ export default function AgentPanel() {
     resizeChatInput();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input]);
+
+  useEffect(() => {
+    function handleGlobalShortcuts(event) {
+      if (event.defaultPrevented || event.nativeEvent?.isComposing || event.isComposing) return;
+      if (showClearConfirm && event.key === "Escape") {
+        event.preventDefault();
+        resolveClearCurrentSessionConfirm(false);
+        return;
+      }
+      if (isSearchShortcutEvent(event, isMacPlatform)) {
+        event.preventDefault();
+        if (searchMode) closeSearchMode();
+        else if (!pendingApproval) openSearchMode();
+        return;
+      }
+      if (isClearSessionShortcutEvent(event, isMacPlatform)) {
+        event.preventDefault();
+        if (!pendingApproval) void handleClearCurrentSession();
+      }
+    }
+    window.addEventListener("keydown", handleGlobalShortcuts, true);
+    return () => window.removeEventListener("keydown", handleGlobalShortcuts, true);
+  }, [isMacPlatform, pendingApproval, searchMode, showClearConfirm]);
+
+  function isSearchShortcutEvent(event, isMac) {
+    if (String(event.key || "").toLowerCase() !== "k") return false;
+    if (isMac) return event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey;
+    return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+  }
+
+  function isClearSessionShortcutEvent(event, isMac) {
+    const key = String(event.key || "");
+    const isBackspace = key === "Backspace" || key === "Delete";
+    if (!isBackspace) return false;
+    if (isMac) return event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey;
+    return event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+  }
+
+  useEffect(() => {
+    if (searchScope !== "current") return;
+    refreshSearchHitDomState(activeSearchHitIndex, { scroll: searchMode && searchQuery.trim() });
+  }, [activeSearchHitIndex, messages, searchMode, searchQuery, searchScope]);
 
   useEffect(() => {
     const previousStatus = latestPlanStatusRef.current;
@@ -393,13 +448,23 @@ export default function AgentPanel() {
     }
   }
 
-  async function openSession(id) {
+  async function openSession(id, options = {}) {
+    if (!options.preserveSearch) {
+      setSearchMode(false);
+      setSearchScope("current");
+      setSearchQuery("");
+      setActiveSearchHitIndex(0);
+      setSearchHitCount(0);
+      setGlobalSearchLoading(false);
+      setGlobalSearchResults([]);
+      setGlobalSearchStatus("");
+    }
     setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
-    const cached = sessionMessagesRef.current.get(id);
-    const [msgs, meta] = await Promise.all([
-      cached ?? loadSession(id),
-      loadSessionMeta(id)
-    ]);
+      const cached = sessionMessagesRef.current.get(id);
+      const [msgs, meta] = await Promise.all([
+        cached ?? loadSession(id),
+        loadSessionMeta(id)
+      ]);
     sessionMessagesRef.current.set(id, msgs);
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
     activeSessionIdRef.current = id;
@@ -787,7 +852,7 @@ export default function AgentPanel() {
   }
 
   /** Switch to a historical session */
-  async function switchSession(id) {
+  async function switchSession(id, options = {}) {
     // Save current session first
     const currentSessionId = activeSessionIdRef.current;
     if (currentSessionId && currentSessionId !== id) {
@@ -796,7 +861,7 @@ export default function AgentPanel() {
         await autoSave(currentSessionId, currentMessages);
       }
     }
-    await openSession(id);
+    await openSession(id, options);
   }
 
   /** Delete a session from history */
@@ -1298,9 +1363,33 @@ export default function AgentPanel() {
     stopSessionGeneration(currentSessionId);
   }
 
+  function requestClearCurrentSessionConfirm() {
+    setShowClearConfirm(true);
+    return new Promise(resolve => {
+      clearConfirmResolverRef.current = resolve;
+    });
+  }
+
+  function resolveClearCurrentSessionConfirm(approved) {
+    const resolver = clearConfirmResolverRef.current;
+    clearConfirmResolverRef.current = null;
+    setShowClearConfirm(false);
+    if (resolver) resolver(!!approved);
+  }
+
   async function handleClearCurrentSession() {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
+    const currentMessages = getSessionMessages(currentSessionId);
+    const hasContent =
+      (Array.isArray(currentMessages) && currentMessages.length > 0) ||
+      String(input || "").trim() ||
+      pendingAttachments.length > 0 ||
+      getSessionPlans(currentSessionId).length > 0;
+    if (hasContent) {
+      const ok = await requestClearCurrentSessionConfirm();
+      if (!ok) return;
+    }
     stopSessionGeneration(currentSessionId);
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null });
@@ -1424,6 +1513,153 @@ export default function AgentPanel() {
     }
   }
 
+  function handleSearchKeyDown(e) {
+    if (e.nativeEvent?.isComposing) return;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      toggleSearchScope();
+      return;
+    }
+    if (searchScope === "global") {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void runGlobalSearch();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        closeSearchMode();
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      goToSearchHit(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      goToSearchHit(-1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      goToSearchHit(e.shiftKey ? -1 : 1);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearchMode();
+    }
+  }
+
+  function openSearchMode() {
+    setSearchMode(true);
+    setSearchScope("current");
+    setActiveSearchHitIndex(0);
+    setSearchHitCount(0);
+    requestAnimationFrame(() => {
+      document.querySelector(".chat-search-input")?.focus();
+    });
+  }
+
+  function closeSearchMode() {
+    setSearchMode(false);
+    setSearchScope("current");
+    setSearchQuery("");
+    setActiveSearchHitIndex(0);
+    setSearchHitCount(0);
+    setGlobalSearchLoading(false);
+    setGlobalSearchResults([]);
+    setGlobalSearchStatus("");
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }
+
+  function goToSearchHit(delta) {
+    if (searchHitCount === 0) return;
+    setActiveSearchHitIndex(index => (index + delta + searchHitCount) % searchHitCount);
+  }
+
+  function toggleSearchScope() {
+    setSearchScope(scope => {
+      const nextScope = scope === "current" ? "global" : "current";
+      setActiveSearchHitIndex(0);
+      setSearchHitCount(0);
+      setGlobalSearchLoading(false);
+      setGlobalSearchResults([]);
+      setGlobalSearchStatus("");
+      requestAnimationFrame(() => {
+        document.querySelector(".chat-search-input")?.focus();
+      });
+      return nextScope;
+    });
+  }
+
+  async function runGlobalSearch() {
+    const query = searchQuery.trim();
+    if (!query || globalSearchLoading) return;
+    setGlobalSearchLoading(true);
+    setGlobalSearchResults([]);
+    setGlobalSearchStatus("正在搜索历史会话…");
+    try {
+      const indexedSessions = await listSessions();
+      const results = [];
+      for (const item of indexedSessions) {
+        const sessionMessages = sessionMessagesRef.current.get(item.id) || await loadSession(item.id);
+        sessionMessagesRef.current.set(item.id, sessionMessages || []);
+        const result = buildGlobalSessionSearchResult(item, sessionMessages || [], query);
+        if (result) results.push(result);
+        setGlobalSearchStatus(`正在搜索 ${results.length} 个命中会话 / ${indexedSessions.length} 个历史会话…`);
+        // Yield between sessions so large histories do not freeze the side panel.
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      setGlobalSearchResults(results);
+      setGlobalSearchStatus(results.length > 0 ? `找到 ${results.length} 个会话` : "没有找到命中的会话");
+    } catch (error) {
+      console.error("Global session search failed:", error);
+      setGlobalSearchStatus(`全局搜索失败: ${error?.message || String(error)}`);
+    } finally {
+      setGlobalSearchLoading(false);
+    }
+  }
+
+  async function openGlobalSearchResult(result) {
+    if (!result?.sessionId) return;
+    await switchSession(result.sessionId, {
+      preserveSearch: true,
+      searchQueryOverride: searchQuery.trim()
+    });
+    setSearchMode(true);
+    setSearchScope("current");
+    setSearchQuery(searchQuery.trim());
+    setActiveSearchHitIndex(0);
+    setSearchHitCount(0);
+  }
+
+  function refreshSearchHitDomState(preferredIndex = 0, { scroll = false } = {}) {
+    requestAnimationFrame(() => {
+      const scroller = messagesScrollerRef.current;
+      if (!scroller) return;
+      const hitNodes = Array.from(scroller.querySelectorAll("[data-chat-search-hit='true']"));
+      const count = hitNodes.length;
+      setSearchHitCount(count);
+      const nextIndex = count === 0 ? 0 : Math.min(Math.max(0, preferredIndex), count - 1);
+      if (nextIndex !== preferredIndex) {
+        setActiveSearchHitIndex(nextIndex);
+        return;
+      }
+      hitNodes.forEach((node, index) => {
+        node.classList.toggle("chat-search-hit-active", index === nextIndex);
+        if (index === nextIndex) node.setAttribute("data-chat-search-active-hit", "true");
+        else node.removeAttribute("data-chat-search-active-hit");
+      });
+      scroller.querySelectorAll("[data-chat-search-active='true']").forEach(node => {
+        node.removeAttribute("data-chat-search-active");
+      });
+      const activeNode = hitNodes[nextIndex] || null;
+      const activeMessage = activeNode?.closest?.("[data-chat-search-message-index]");
+      if (activeMessage) activeMessage.setAttribute("data-chat-search-active", "true");
+      if (scroll && activeNode) {
+        activeNode.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  }
+
   function resizeChatInput() {
     const textarea = inputRef.current;
     if (!textarea) return;
@@ -1542,10 +1778,41 @@ export default function AgentPanel() {
               onSave={handleSaveSessionSystemPrompt}
             />
           </Dialog>
-          <button className="chat-toolbar-btn" onClick={handleClearCurrentSession} title="清空">
+          <button className="chat-toolbar-btn" onClick={handleClearCurrentSession} title={`清空（${clearShortcutLabel}）`}>
             <span className="chat-toolbar-icon">🗑️</span>
             <span className="chat-toolbar-full-text">清空</span>
           </button>
+          {showClearConfirm && (
+            <div
+              className="dialog-backdrop"
+              onClick={() => resolveClearCurrentSessionConfirm(false)}
+            >
+              <div
+                className="dialog-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="clear-session-dialog-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="dialog-close-button"
+                  onClick={() => resolveClearCurrentSessionConfirm(false)}
+                  aria-label="关闭"
+                >
+                  X
+                </button>
+                <div className="dialog-content">
+                  <div id="clear-session-dialog-title" className="text-sm font-semibold text-gray-700 mb-2">清空当前会话</div>
+                  <div className="text-xs text-gray-500 mb-3">确定要清空当前会话吗？此操作会删除当前会话中的消息和计划。</div>
+                  <div className="chat-input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
+                    <Button className="!text-xs" onPress={() => resolveClearCurrentSessionConfirm(false)}>取消</Button>
+                    <Button className="!text-xs !bg-red-500 !text-white" onPress={() => resolveClearCurrentSessionConfirm(true)}>确认清空</Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <button className="chat-toolbar-btn" onClick={handleExportCurrentSession} title="导出">
             <span className="chat-toolbar-icon">⬇️</span>
             <span className="chat-toolbar-full-text">导出</span>
@@ -1675,7 +1942,7 @@ export default function AgentPanel() {
             <div className="chat-empty">
               <div>
                 <p>👋 你好，我是浏览器助手</p>
-                <p style={{ marginTop: "8px" }}>我可以通过工具获取当前标签页和浏览器上下文</p>
+                <p style={{ marginTop: "8px" }}>可以通过工具获取当前标签页和浏览器上下文</p>
                 <p>也可以读取页面内容来回答问题</p>
               </div>
             </div>
@@ -1684,6 +1951,7 @@ export default function AgentPanel() {
               <ChatMessageList
                 messages={messages}
                 onRewindToUserMessage={handleRewindToUserMessage}
+                searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
               />
               {streamingContent !== null && streamingContent.length > 0 && (
                 <AssistantTextBubble text={streamingContent} />
@@ -1748,79 +2016,151 @@ export default function AgentPanel() {
             </div>
           </Card>
         ) : null}
-        {pendingAttachments.length > 0 && (
-          <div className="chat-input-images">
-            {pendingAttachments.map(att => att.type === "image" ? (
-              <div key={att.id} className="chat-input-image-item">
-                <img src={att.dataUrl} alt={att.fileName || "预览"} />
-                <button type="button" className="chat-input-image-remove" onClick={() => handleRemoveAttachment(att.id)} aria-label="删除">×</button>
-              </div>
-            ) : (
-              <div key={att.id} className="chat-input-file-item">
-                <span className="chat-input-file-icon">📄</span>
-                <span className="chat-input-file-name">{att.fileName}</span>
-                <button type="button" className="chat-input-image-remove" onClick={() => handleRemoveAttachment(att.id)} aria-label="删除">×</button>
-              </div>
-            ))}
-          </div>
-        )}
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onFocus={() => setInputFocused(true)}
-          onBlur={() => setInputFocused(false)}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
-          rows={3}
-          readOnly={loading}
-          disabled={!!pendingApproval}
-        />
-        <div className="chat-input-status-line">
-          <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
-            模型：{formatModelName(llmConfigInfo.model)}
-          </span>
-          <span className="chat-input-status-context" title={`上下文：${formatContextUsageK(contextUsage)}`}>
-            上下文：{formatContextUsageK(contextUsage)}
-          </span>
-        </div>
-        <div className="chat-input-actions">
-          <div className="chat-input-actions-left">
-            <input ref={imageInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleImageFileSelect} />
-            <input ref={textInputRef} type="file" accept=".txt,.md,.json,.csv,.xml,.yaml,.yml,.log,.js,.ts,.jsx,.tsx,.py,.java,.c,.cpp,.h,.css,.html,.sh,.rb,.go,.rs" multiple style={{ display: "none" }} onChange={handleTextFileSelect} />
-            <SkillsConfig
-              agentSkills={agentSkills}
-              loading={skillsLoading}
-              skillToolConnected={skillStationTools.length > 0}
-              skillBridgeTools={skillStationTools}
-              onServerUrlChange={handleSkillsServerUrlChange}
-              onBridgeToolDangerousChange={handleBridgeToolDangerousChange}
-              onLoad={handleLoadSkills}
-            />
-            <McpConfig onToolsChanged={setMcpTools} />
-          </div>
-          <div className="chat-input-actions-right">
-            <div className="chat-attach-wrapper" ref={attachWrapperRef}>
-              <Button className="!text-xs chat-attach-btn" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
-              {showAttachMenu && (
-                <div className="chat-attach-menu">
-                  {llmConfigInfo.supportsImageInput && (
-                    <button onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}>🖼️ 图片</button>
-                  )}
-                  <button onClick={() => { textInputRef.current?.click(); setShowAttachMenu(false); }}>📄 文本文件</button>
-                </div>
+        {searchMode ? (
+          <div className="chat-search-box">
+            <div className="chat-search-input-wrap">
+              <input
+                type="text"
+                className="chat-search-input"
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setActiveSearchHitIndex(0);
+                  setSearchHitCount(0);
+                }}
+                onKeyDown={handleSearchKeyDown}
+                placeholder={searchScope === "global" ? "全局搜索历史会话（Enter 搜索，Tab 切回当前）" : "当前会话搜索（Tab 切换全局）"}
+              />
+              <button
+                type="button"
+                className="chat-search-close-inline-btn"
+                onClick={closeSearchMode}
+                title="关闭搜索"
+                aria-label="关闭搜索"
+              >
+                🗙
+              </button>
+            </div>
+            <div className="chat-search-controls">
+              <span className={`chat-search-count ${searchQuery.trim() && searchScope === "current" && searchHitCount === 0 ? "chat-search-count-empty" : ""}`}>
+                {searchScope === "global"
+                  ? (globalSearchLoading ? "搜索中…" : (globalSearchResults.length > 0 ? `${globalSearchResults.length} 个会话` : "全局模式需要手动触发搜索"))
+                  : (searchQuery.trim() ? (searchHitCount > 0 ? `${activeSearchHitIndex + 1}/${searchHitCount}` : "0/0") : "当前")}
+              </span>
+              <button type="button" className="chat-search-nav-btn" onClick={toggleSearchScope}>{searchScope === "global" ? "当前会话" : "全局搜索"}</button>
+              {searchScope === "global" ? (
+                <button type="button" className="chat-search-nav-btn" onClick={runGlobalSearch} disabled={!searchQuery.trim() || globalSearchLoading}>
+                  搜索
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="chat-search-nav-btn" onClick={() => goToSearchHit(-1)} disabled={searchHitCount === 0}>上一个</button>
+                  <button type="button" className="chat-search-nav-btn" onClick={() => goToSearchHit(1)} disabled={searchHitCount === 0}>下一个</button>
+                </>
               )}
             </div>
-            {loading ? (
-              <Button className="!text-xs" onPress={stopGeneration}>停止</Button>
-            ) : (
-              <Button className="!text-xs" onPress={sendMessage} isDisabled={!!pendingApproval}>发送</Button>
+            {searchScope === "global" && (
+              <div className="chat-global-search-panel">
+                {globalSearchStatus && (
+                  <div className="chat-global-search-status">{globalSearchStatus}</div>
+                )}
+                {globalSearchResults.map(result => (
+                  <button
+                    type="button"
+                    key={result.sessionId}
+                    className="chat-global-search-item"
+                    onClick={() => openGlobalSearchResult(result)}
+                  >
+                    <div className="chat-global-search-title-row">
+                      <span className="chat-global-search-title">{result.title}</span>
+                      <span className="chat-global-search-badge">{result.hitCount}</span>
+                    </div>
+                    <div className="chat-global-search-meta">
+                      创建 {formatTime(result.startedAt || result.updatedAt)} · 最后消息 {result.lastMessageTime ? formatTime(result.lastMessageTime) : "—"}
+                    </div>
+                    <div className="chat-global-search-snippet">{result.snippet}</div>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
-        </div>
+        ) : (
+          <>
+            {pendingAttachments.length > 0 && (
+              <div className="chat-input-images">
+                {pendingAttachments.map(att => att.type === "image" ? (
+                  <div key={att.id} className="chat-input-image-item">
+                    <img src={att.dataUrl} alt={att.fileName || "预览"} />
+                    <button type="button" className="chat-input-image-remove" onClick={() => handleRemoveAttachment(att.id)} aria-label="删除">×</button>
+                  </div>
+                ) : (
+                  <div key={att.id} className="chat-input-file-item">
+                    <span className="chat-input-file-icon">📄</span>
+                    <span className="chat-input-file-name">{att.fileName}</span>
+                    <button type="button" className="chat-input-image-remove" onClick={() => handleRemoveAttachment(att.id)} aria-label="删除">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              placeholder={`输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
+              rows={3}
+              readOnly={loading}
+              disabled={!!pendingApproval}
+            />
+            <div className="chat-input-status-line">
+              <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
+                模型：{formatModelName(llmConfigInfo.model)}
+              </span>
+              <span className="chat-input-status-context" title={`上下文：${formatContextUsageK(contextUsage)}`}>
+                上下文：{formatContextUsageK(contextUsage)}
+              </span>
+            </div>
+            <div className="chat-input-actions">
+              <div className="chat-input-actions-left">
+                <input ref={imageInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleImageFileSelect} />
+                <input ref={textInputRef} type="file" accept=".txt,.md,.json,.csv,.xml,.yaml,.yml,.log,.js,.ts,.jsx,.tsx,.py,.java,.c,.cpp,.h,.css,.html,.sh,.rb,.go,.rs" multiple style={{ display: "none" }} onChange={handleTextFileSelect} />
+                <SkillsConfig
+                  agentSkills={agentSkills}
+                  loading={skillsLoading}
+                  skillToolConnected={skillStationTools.length > 0}
+                  skillBridgeTools={skillStationTools}
+                  onServerUrlChange={handleSkillsServerUrlChange}
+                  onBridgeToolDangerousChange={handleBridgeToolDangerousChange}
+                  onLoad={handleLoadSkills}
+                />
+                <McpConfig onToolsChanged={setMcpTools} />
+              </div>
+              <div className="chat-input-actions-right">
+                <div className="chat-attach-wrapper" ref={attachWrapperRef}>
+                  <Button className="!text-xs chat-attach-btn" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
+                  {showAttachMenu && (
+                    <div className="chat-attach-menu">
+                      {llmConfigInfo.supportsImageInput && (
+                        <button onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}>🖼️ 图片</button>
+                      )}
+                      <button onClick={() => { textInputRef.current?.click(); setShowAttachMenu(false); }}>📄 文本文件</button>
+                    </div>
+                  )}
+                </div>
+                {loading ? (
+                  <Button className="!text-xs" onPress={stopGeneration}>停止</Button>
+                ) : (
+                  <Button className="!text-xs" onPress={sendMessage} isDisabled={!!pendingApproval}>发送</Button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1831,6 +2171,73 @@ export default function AgentPanel() {
 
 function normalizeSessionPlans(plans) {
   return Array.isArray(plans) ? plans.filter(Boolean) : [];
+}
+
+function buildGlobalSessionSearchResult(sessionEntry, messages, query) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!sessionEntry || !normalizedQuery) return null;
+  let hitCount = 0;
+  let firstSnippet = "";
+  let lastMessageTime = null;
+  for (const message of messages || []) {
+    if (!isGlobalSearchableMessage(message)) continue;
+    const timestamp = message.sentAt || message.completedAt || message.updatedAt || null;
+    if (timestamp && (!lastMessageTime || timestamp > lastMessageTime)) lastMessageTime = timestamp;
+    const text = getGlobalSearchableMessageText(message);
+    if (!text) continue;
+    const lowerText = text.toLowerCase();
+    let fromIndex = 0;
+    while (fromIndex < lowerText.length) {
+      const foundAt = lowerText.indexOf(normalizedQuery, fromIndex);
+      if (foundAt < 0) break;
+      hitCount += 1;
+      if (!firstSnippet) firstSnippet = buildSearchSnippet(text, foundAt, normalizedQuery.length);
+      fromIndex = foundAt + Math.max(1, normalizedQuery.length);
+    }
+  }
+  if (hitCount === 0) return null;
+  return {
+    sessionId: sessionEntry.id,
+    title: sessionEntry.title || "新会话",
+    startedAt: sessionEntry.startedAt || 0,
+    updatedAt: sessionEntry.updatedAt || 0,
+    lastMessageTime,
+    hitCount,
+    snippet: firstSnippet || "命中当前关键词"
+  };
+}
+
+function isGlobalSearchableMessage(message) {
+  if (!message) return false;
+  if (message.role !== "user" && message.role !== "assistant") return false;
+  if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return false;
+  if (Array.isArray(message.content) && message.content.some(block => block?.type === "tool_use" || block?.type === "tool_result")) {
+    return false;
+  }
+  return true;
+}
+
+function getGlobalSearchableMessageText(message) {
+  const { content } = message || {};
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map(block => {
+      if (typeof block === "string") return block;
+      if (block?.type === "text" && typeof block.text === "string") return block.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildSearchSnippet(text, hitStart, queryLength) {
+  const source = String(text || "").replace(/\s+/g, " ").trim();
+  if (!source) return "";
+  const safeStart = Math.max(0, Math.min(source.length, hitStart));
+  const start = Math.max(0, safeStart - 36);
+  const end = Math.min(source.length, safeStart + queryLength + 56);
+  return `${start > 0 ? "…" : ""}${source.slice(start, end)}${end < source.length ? "…" : ""}`;
 }
 
 function getLatestPlan(plans) {
@@ -2500,11 +2907,22 @@ function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
 }
 
 function downloadMarkdownFile(filename, markdown) {
-  return triggerBrowserDownload({
-    fileName: filename,
-    content: markdown,
-    mimeType: "text/markdown;charset=utf-8"
-  });
+  const safeFilename = String(filename || "session.md").trim() || "session.md";
+  const blob = new Blob([String(markdown ?? "")], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = safeFilename;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  try {
+    anchor.click();
+    return { success: true, fileName: safeFilename, size: blob.size, source: "side-panel-blob" };
+  } finally {
+    anchor.remove();
+    // Keep the blob URL alive long enough for Chromium to start consuming it.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
