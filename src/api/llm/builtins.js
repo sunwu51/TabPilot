@@ -3,6 +3,7 @@ import { callMcpTool } from "../mcp";
 import { buildMcpToolCallName } from "./tools";
 import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
 import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
+import { deflateStringToQueryParam } from "../../utils/playgroundCodec";
 
 
 /**
@@ -79,6 +80,7 @@ export async function executeTool(name, args, mcpRegistry = []) {
         case "download": return _execDownload(args);
         case "download_list": return _execDownloadList(args);
         case "download_search": return _execDownloadSearch(args);
+        case "html_playground": return _execHtmlPlayground(args);
         case "sleep": return _execSleep(args);
         default: return { error: `Unknown tool: ${name}` };
       }
@@ -2482,6 +2484,32 @@ async function _execSleep({ seconds } = {}) {
  */
 async function _execDownload({ fileName, url, content, mimeType } = {}) {
   return await triggerBrowserDownload({ fileName, url, content, mimeType });
+}
+
+function _buildHtmlPlaygroundUrl({ html = "", css = "", js = "", expanded = false } = {}) {
+  const playgroundUrl = new URL(chrome.runtime.getURL("playground.html"));
+  playgroundUrl.searchParams.set("html", deflateStringToQueryParam(html));
+  playgroundUrl.searchParams.set("css", deflateStringToQueryParam(css));
+  playgroundUrl.searchParams.set("js", deflateStringToQueryParam(js));
+  playgroundUrl.searchParams.set("expanded", expanded ? "1" : "0");
+  return playgroundUrl.toString();
+}
+
+/**
+ * Open the extension HTML playground with compressed html/css/js query params.
+ */
+async function _execHtmlPlayground({ html = "", css = "", js = "", expanded = false } = {}) {
+  const url = _buildHtmlPlaygroundUrl({ html, css, js, expanded });
+  const tab = await chrome.tabs.create({ url, active: true });
+  if (tab?.windowId != null) {
+    await chrome.windows.update(tab.windowId, { focused: true });
+  }
+  return {
+    success: true,
+    tabId: tab?.id,
+    url: tab?.pendingUrl || tab?.url || url,
+    expanded: !!expanded
+  };
 }
 
 /**

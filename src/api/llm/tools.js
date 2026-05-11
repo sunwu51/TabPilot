@@ -639,6 +639,20 @@ export const TOOLS = [
     }
   },
   {
+    name: "html_playground",
+    description: "Generate and open a standalone HTML playground page for previewing HTML/CSS/JS. Use this only when the user explicitly asks to open, preview, display, share, or generate a playground for an HTML/CSS/JS artifact. The `html` field may already contain inline <style> or <script> tags; the separate `css` and `js` fields are additionally injected into the preview document.",
+    schema: {
+      type: "object",
+      properties: {
+        html: { type: "string", description: "HTML body/source to render. It may directly include inline CSS in <style> tags and JavaScript in <script> tags if desired." },
+        css: { type: "string", description: "Additional CSS injected into a <style> tag in the generated preview document." },
+        js: { type: "string", description: "Additional JavaScript injected into a <script> tag in the generated preview document." },
+        expanded: { type: "boolean", description: "Whether the HTML/CSS/JS editor inputs should be expanded initially. Defaults to false, meaning the inputs start collapsed and the iframe preview fills the page." }
+      },
+      required: []
+    }
+  },
+  {
     name: "sleep",
     description: "Pause the agent for a fixed number of seconds. Use this when you must wait for a page transition, an external job, or a tool result that is not yet available, instead of polling repeatedly. Prefer sleep over tight retry loops. Range: 1 to 300 seconds (max 5 minutes per call). This tool has no built-in timeout.",
     schema: {

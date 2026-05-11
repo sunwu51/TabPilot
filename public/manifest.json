@@ -1,7 +1,7 @@
 {
     "name": "tab manager",
     "description": "tab manager",
-    "version": "1.5.4",
+    "version": "1.5.4.1",
     "background": {
         "service_worker": "service_worker.js",
         "type": "module"
@@ -32,6 +32,18 @@
     "side_panel": {
         "default_path": "sidepanel.html"
     },
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "playground.html",
+                "playground.js",
+                "playground.css"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ],
     "host_permissions": [
         "<all_urls>"
     ],

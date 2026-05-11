@@ -104,6 +104,7 @@ export default function AgentPanel() {
   const textInputRef = useRef(null);
   const sessionStreamingRef = useRef(new Map());
   const clearConfirmResolverRef = useRef(null);
+  const clearConfirmButtonRef = useRef(null);
   const isMacPlatform = platformInfo?.os === "mac";
   const searchShortcutLabel = isMacPlatform ? "⌘⇧K" : "Alt+K";
   const clearShortcutLabel = isMacPlatform ? "⌘⇧Backspace" : "Alt+Backspace";
@@ -139,6 +140,13 @@ export default function AgentPanel() {
       inputRef.current?.focus();
     });
   }, [loading, pendingApproval]);
+
+  useEffect(() => {
+    if (!showClearConfirm) return;
+    requestAnimationFrame(() => {
+      clearConfirmButtonRef.current?.focus();
+    });
+  }, [showClearConfirm]);
 
   useEffect(() => {
     resizeChatInput();
@@ -1807,7 +1815,15 @@ export default function AgentPanel() {
                   <div className="text-xs text-gray-500 mb-3">确定要清空当前会话吗？此操作会删除当前会话中的消息和计划。</div>
                   <div className="chat-input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
                     <Button className="!text-xs" onPress={() => resolveClearCurrentSessionConfirm(false)}>取消</Button>
-                    <Button className="!text-xs !bg-red-500 !text-white" onPress={() => resolveClearCurrentSessionConfirm(true)}>确认清空</Button>
+                    <button
+                      ref={clearConfirmButtonRef}
+                      autoFocus
+                      type="button"
+                      className="button !text-xs !bg-red-500 !text-white"
+                      onClick={() => resolveClearCurrentSessionConfirm(true)}
+                    >
+                      确认清空
+                    </button>
                   </div>
                 </div>
               </div>
