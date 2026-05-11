@@ -130,6 +130,26 @@ describe("built-in tool execution", () => {
     });
   });
 
+  it("opens html_playground with encoded query payloads", async () => {
+    const result = await executeTool("html_playground", {
+      html: "<h1>Hello</h1>",
+      css: "h1{color:red}",
+      js: "document.body.dataset.ready='1'",
+      expanded: true
+    });
+
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: expect.stringContaining("chrome-extension://test-extension/playground.html?"),
+      active: true
+    });
+    const createdUrl = new URL(chrome.tabs.create.mock.calls.at(-1)[0].url);
+    expect(createdUrl.searchParams.get("html")).toBeTruthy();
+    expect(createdUrl.searchParams.get("css")).toBeTruthy();
+    expect(createdUrl.searchParams.get("js")).toBeTruthy();
+    expect(createdUrl.searchParams.get("expanded")).toBe("1");
+    expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
+  });
+
   it("serializes recent downloads", async () => {
     chrome.downloads.search.mockResolvedValueOnce([
       { id: 1, url: "https://example.com/a", filename: "C:\\Downloads\\a.txt", state: "complete", totalBytes: 3 }

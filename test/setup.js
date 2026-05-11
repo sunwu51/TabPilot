@@ -40,6 +40,7 @@ export function resetChromeMock(initialStorage = {}) {
   globalThis.chrome = {
     runtime: {
       lastError: null,
+      getURL: vi.fn((path = "") => `chrome-extension://test-extension/${String(path).replace(/^\/+/, "")}`),
       sendMessage: vi.fn((message, callback) => {
         callback?.({ success: true, message });
       }),
@@ -138,4 +139,3 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
-

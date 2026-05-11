@@ -16,6 +16,7 @@ export default defineConfig({
         service_worker: "src/service_worker.js",
         content: "src/content.js",
         sidepanel: "sidepanel.html",
+        playground: "playground.html",
       },
       output: {
         entryFileNames: "[name].js",

@@ -86,5 +86,14 @@ describe("llm tool definitions", () => {
     expect(runMacro.parameters.properties.speed.enum).toEqual(["slow", "normal", "fast", "instant"]);
     expect(BUILTIN_TOOL_NAMES).toContain("run_macro");
   });
-});
 
+  it("exposes html_playground with optional expanded parameter", () => {
+    const playground = getTools(API_TYPES.OPENAI_RESPONSES).find(tool => tool.name === "html_playground");
+
+    expect(playground.parameters.required).toEqual([]);
+    expect(Object.keys(playground.parameters.properties)).toEqual(["html", "css", "js", "expanded"]);
+    expect(playground.parameters.properties.html.description).toContain("<style>");
+    expect(playground.parameters.properties.expanded.description).toContain("Defaults to false");
+    expect(BUILTIN_TOOL_NAMES).toContain("html_playground");
+  });
+});
