@@ -1,6 +1,7 @@
 /* global chrome */
 
 const DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY = "agent_default_new_session_system_prompt";
+const LAST_ACTIVE_SESSION_ID_KEY = "agent_last_active_session_id";
 
 /**
  * Generate a unique session ID: s_{timestamp}_{random4chars}
@@ -20,6 +21,29 @@ export function generateSessionId() {
 export async function listSessions() {
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   return sessions_index.sort((a, b) => (b.startedAt || b.updatedAt) - (a.startedAt || a.updatedAt));
+}
+
+/**
+ * Load the session ID that was last being viewed in the assistant panel.
+ * @returns {Promise<string>}
+ */
+export async function loadLastActiveSessionId() {
+  const result = await chrome.storage.local.get({ [LAST_ACTIVE_SESSION_ID_KEY]: "" });
+  return typeof result[LAST_ACTIVE_SESSION_ID_KEY] === "string" ? result[LAST_ACTIVE_SESSION_ID_KEY] : "";
+}
+
+/**
+ * Persist the session ID that is currently being viewed in the assistant panel.
+ * @param {string} id - session ID
+ */
+export async function saveLastActiveSessionId(id) {
+  const normalizedId = typeof id === "string" ? id : "";
+  if (!normalizedId) {
+    await chrome.storage.local.remove(LAST_ACTIVE_SESSION_ID_KEY);
+    return "";
+  }
+  await chrome.storage.local.set({ [LAST_ACTIVE_SESSION_ID_KEY]: normalizedId });
+  return normalizedId;
 }
 
 /**
@@ -153,7 +177,9 @@ export async function saveSessionMeta(id, meta = {}) {
  */
 export async function deleteSession(id) {
   const key = `session_${id}`;
-  await chrome.storage.local.remove(key);
+  const lastActiveSessionId = await loadLastActiveSessionId();
+  const keysToRemove = lastActiveSessionId === id ? [key, LAST_ACTIVE_SESSION_ID_KEY] : key;
+  await chrome.storage.local.remove(keysToRemove);
 
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   const updated = sessions_index.filter(s => s.id !== id);

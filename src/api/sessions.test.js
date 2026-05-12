@@ -5,10 +5,12 @@ import {
   extractTitle,
   generateSessionId,
   listSessions,
+  loadLastActiveSessionId,
   loadDefaultNewSessionSystemPrompt,
   loadSession,
   loadSessionMeta,
   resetSessionTitle,
+  saveLastActiveSessionId,
   saveDefaultNewSessionSystemPrompt,
   saveSession,
   saveSessionMeta,
@@ -110,6 +112,28 @@ describe("sessions storage", () => {
 
     expect(await loadSession("a")).toEqual([]);
     expect((await listSessions()).map(session => session.id)).toEqual(["b"]);
+  });
+
+  it("loads, saves, and clears the last active session id", async () => {
+    expect(await loadLastActiveSessionId()).toBe("");
+
+    expect(await saveLastActiveSessionId("a")).toBe("a");
+    expect(await loadLastActiveSessionId()).toBe("a");
+
+    expect(await saveLastActiveSessionId("")).toBe("");
+    expect(await loadLastActiveSessionId()).toBe("");
+  });
+
+  it("clears the last active session id when deleting that session", async () => {
+    resetChromeMock({
+      agent_last_active_session_id: "a",
+      session_a: { messages: [{ role: "user", content: "hello" }] },
+      sessions_index: [{ id: "a" }, { id: "b" }]
+    });
+
+    await deleteSession("a");
+
+    expect(await loadLastActiveSessionId()).toBe("");
   });
 
   it("loads, saves, and clears default new-session system prompt", async () => {

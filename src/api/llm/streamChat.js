@@ -6,10 +6,10 @@ import { streamOpenAIAttempt } from "./openai-chat-completions";
 import { streamOpenAIResponsesAttempt } from "./openai-responses";
 
 
-export function streamChat(config, messages, { onText, onDone, onError, onRetry }, mcpTools = [], options = {}) {
+export function streamChat(config, messages, callbacks = {}, mcpTools = [], options = {}) {
   const controller = new AbortController();
 
-  void streamWithRetry(config, messages, controller.signal, { onText, onDone, onError, onRetry }, mcpTools, options);
+  void streamWithRetry(config, messages, controller.signal, callbacks, mcpTools, options);
 
   return () => controller.abort();
 }

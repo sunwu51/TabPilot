@@ -3,10 +3,11 @@ import { DEFAULT_ANTHROPIC_CACHE_CONTROL } from "./constants";
 import { API_TYPES } from "./config";
 import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
 import { getTools } from "./tools";
+import { isLongToolArgumentName } from "./longToolArgs";
 
 // ==================== Anthropic Messages API ====================
 
-export async function streamAnthropicAttempt(config, messages, signal, { onText, onDone }, mcpTools = [], options = {}) {
+export async function streamAnthropicAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.ANTHROPIC, mcpTools, options);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 
@@ -104,7 +105,17 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
               if (block?.type === "text") block.text += text;
               onText?.(text);
             } else if (json.delta?.type === "input_json_delta" && block?.type === "tool_use") {
-              block.inputJson += json.delta.partial_json || "";
+              const delta = json.delta.partial_json || "";
+              block.inputJson += delta;
+              if (delta && isLongToolArgumentName(block.name)) {
+                onToolArgsDelta?.({
+                  id: block.id || `tooluse_${index}`,
+                  index,
+                  name: block.name,
+                  delta,
+                  arguments: block.inputJson
+                });
+              }
             } else if (json.delta?.type === "thinking_delta" && block?.type === "thinking") {
               block.thinking += json.delta.thinking || "";
             } else if (json.delta?.type === "signature_delta" && block?.type === "thinking") {
@@ -115,6 +126,14 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
             const block = activeContentBlocks.get(index);
             if (block) {
               if (block.type === "tool_use") collectedToolUses.push(block);
+              if (block.type === "tool_use" && isLongToolArgumentName(block.name)) {
+                onToolArgsDone?.({
+                  id: block.id || `tooluse_${index}`,
+                  index,
+                  name: block.name,
+                  arguments: block.inputJson
+                });
+              }
               rawContentBlocks.push(block);
               activeContentBlocks.delete(index);
             }
