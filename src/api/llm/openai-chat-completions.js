@@ -2,6 +2,7 @@ import { resolveLlmRequestUrl } from "../llmEndpoint";
 import { API_TYPES } from "./config";
 import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
 import { getTools } from "./tools";
+import { isLongToolArgumentName } from "./longToolArgs";
 
 export function buildOpenAICacheFields(options = {}) {
   const cacheKey = String(options?.sessionId || "").trim();
@@ -10,7 +11,7 @@ export function buildOpenAICacheFields(options = {}) {
 
 // ==================== OpenAI Compatible ====================
 
-export async function streamOpenAIAttempt(config, messages, signal, { onText, onDone }, mcpTools = [], options = {}) {
+export async function streamOpenAIAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_CHAT_COMPLETIONS, mcpTools, options);
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_CHAT_COMPLETIONS, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
@@ -103,7 +104,27 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
               if (!toolCallsMap[idx]) toolCallsMap[idx] = { id: "", name: "", arguments: "" };
               if (tc.id) toolCallsMap[idx].id = tc.id;
               if (tc.function?.name) toolCallsMap[idx].name = tc.function.name;
-              if (tc.function?.arguments) toolCallsMap[idx].arguments += tc.function.arguments;
+              if (tc.function?.name && isLongToolArgumentName(toolCallsMap[idx].name)) {
+                onToolArgsDelta?.({
+                  id: toolCallsMap[idx].id || `toolcall_index_${idx}`,
+                  index: idx,
+                  name: toolCallsMap[idx].name,
+                  delta: "",
+                  arguments: toolCallsMap[idx].arguments
+                });
+              }
+              if (typeof tc.function?.arguments === "string") {
+                toolCallsMap[idx].arguments += tc.function.arguments;
+                if (isLongToolArgumentName(toolCallsMap[idx].name)) {
+                  onToolArgsDelta?.({
+                    id: toolCallsMap[idx].id || `toolcall_index_${idx}`,
+                    index: idx,
+                    name: toolCallsMap[idx].name,
+                    delta: tc.function.arguments,
+                    arguments: toolCallsMap[idx].arguments
+                  });
+                }
+              }
             }
           }
         } catch (error) {
@@ -125,6 +146,17 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
         name: tc.name,
         arguments: tc.arguments
       }));
+
+    for (const tc of rawToolCalls) {
+      if (isLongToolArgumentName(tc.name)) {
+        onToolArgsDone?.({
+          id: tc.id,
+          index: tc.index,
+          name: tc.name,
+          arguments: tc.arguments
+        });
+      }
+    }
 
     const parseFailures = [];
     const toolCalls = rawToolCalls

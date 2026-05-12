@@ -1,63 +1,71 @@
 {
-    "name": "tab manager",
-    "description": "tab manager",
-    "version": "1.5.4.1",
-    "background": {
-        "service_worker": "service_worker.js",
-        "type": "module"
-    },
-    "icons": {
-        "128": "tab.png"
-    },
-    "action": {
-        "default_title": "Click to open panel"
-    },
-    "manifest_version": 3,
-    "permissions": [
-        "activeTab",
-        "windows",
-        "tabGroups",
-        "tabs",
-        "webNavigation",
-        "alarms",
-        "unlimitedStorage",
-        "sidePanel",
-        "history",
-        "storage",
-        "scripting"
-    ],
-    "optional_permissions": [
-        "downloads"
-    ],
-    "side_panel": {
-        "default_path": "sidepanel.html"
-    },
-    "web_accessible_resources": [
-        {
-            "resources": [
-                "playground.html",
-                "playground.js",
-                "playground.css"
-            ],
-            "matches": [
-                "<all_urls>"
-            ]
-        }
-    ],
-    "host_permissions": [
-        "<all_urls>"
-    ],
-    "content_scripts": [
-        {
-            "matches": [
-                "http://*/*",
-                "https://*/*"
-            ],
-            "js": [
-                "content.js"
-            ],
-            "run_at": "document_idle"
-        }
+  "name": "tab manager",
+  "description": "tab manager",
+  "version": "1.5.4.3",
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "icons": {
+    "128": "tab.png"
+  },
+  "action": {
+    "default_title": "Click to open panel"
+  },
+  "manifest_version": 3,
+  "permissions": [
+    "activeTab",
+    "windows",
+    "tabGroups",
+    "tabs",
+    "webNavigation",
+    "alarms",
+    "unlimitedStorage",
+    "sidePanel",
+    "history",
+    "storage",
+    "scripting"
+  ],
+  "optional_permissions": [
+    "downloads"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "sandbox": {
+    "pages": [
+      "playground.html"
     ]
+  },
+  "content_security_policy": {
+    "sandbox": "sandbox allow-scripts allow-forms allow-modals allow-popups allow-presentation; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src-elem * data: blob: 'unsafe-inline' 'unsafe-eval'; style-src * data: blob: 'unsafe-inline'; style-src-elem * data: blob: 'unsafe-inline'; img-src * data: blob:; font-src * data: blob:; connect-src * data: blob:; media-src * data: blob:; frame-src * data: blob:; worker-src * data: blob:; object-src * data: blob:"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "playground.js",
+        "playground.css",
+        "playgroundCodec.js",
+        "modulepreload-polyfill.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
 }
-

@@ -9,8 +9,10 @@ import {
   createSession,
   loadSession,
   loadSessionMeta,
+  loadLastActiveSessionId,
   saveSession,
   saveSessionMeta,
+  saveLastActiveSessionId,
   deleteSession,
   extractTitle,
   updateSessionTitle,
@@ -34,6 +36,7 @@ import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
 import toast from "react-hot-toast";
 import { formatProfileForSystemPrompt } from "../../api/userProfile";
+import { getLongToolArgumentFields } from "../../api/llm/longToolArgs";
 import "./chat.css";
 
 const SYSTEM_PROMPT_PLACEHOLDER =
@@ -69,6 +72,7 @@ export default function AgentPanel() {
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
+  const [streamingToolArgs, setStreamingToolArgs] = useState(null);
   const [searchMode, setSearchMode] = useState(false);
   const [searchScope, setSearchScope] = useState("current");
   const [searchQuery, setSearchQuery] = useState("");
@@ -87,6 +91,7 @@ export default function AgentPanel() {
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
+  const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
   const [pendingApproval, setPendingApproval] = useState(null);
@@ -127,11 +132,11 @@ export default function AgentPanel() {
    */
   useEffect(() => {
     if (!shouldAutoFollowBottomRef.current) {
-      setShowJumpToBottom(messages.length > 0 || streamingContent !== null);
+      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingToolArgs !== null);
       return;
     }
     scrollMessagesToBottom("auto");
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, streamingToolArgs]);
 
   useEffect(() => {
     if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
@@ -212,22 +217,24 @@ export default function AgentPanel() {
       setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
       setSessions(allSessions);
       if (allSessions.length > 0) {
-        // Restore the most recent session
-        const latest = allSessions[0];
+        // Restore the session that was being viewed last time the panel was closed.
+        const lastActiveSessionId = await loadLastActiveSessionId();
+        const restored = allSessions.find(session => session.id === lastActiveSessionId) || allSessions[0];
         const [msgs, meta] = await Promise.all([
-          loadSession(latest.id),
-          loadSessionMeta(latest.id)
+          loadSession(restored.id),
+          loadSessionMeta(restored.id)
         ]);
-        sessionMessagesRef.current.set(latest.id, msgs);
-        sessionPlansRef.current.set(latest.id, normalizeSessionPlans(meta.plans));
-        activeSessionIdRef.current = latest.id;
-        setSessionId(latest.id);
-        setSessionTitle(latest.title);
+        sessionMessagesRef.current.set(restored.id, msgs);
+        sessionPlansRef.current.set(restored.id, normalizeSessionPlans(meta.plans));
+        activeSessionIdRef.current = restored.id;
+        void saveLastActiveSessionId(restored.id);
+        setSessionId(restored.id);
+        setSessionTitle(restored.title);
         setSessionSystemPrompt(meta.systemPrompt || "");
         applyLatestPlanFromPlans(meta.plans);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
-        setContextUsage(getSessionRuntime(latest.id).contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+        setContextUsage(getSessionRuntime(restored.id).contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
         setMessages(msgs);
         setLoading(false);
       } else {
@@ -240,6 +247,7 @@ export default function AgentPanel() {
         sessionMessagesRef.current.set(id, []);
         sessionPlansRef.current.set(id, []);
         activeSessionIdRef.current = id;
+        void saveLastActiveSessionId(id);
         setSessionId(id);
         setSessionTitle("新会话");
         setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
@@ -468,6 +476,7 @@ export default function AgentPanel() {
       setGlobalSearchStatus("");
     }
     setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
+    setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
       const cached = sessionMessagesRef.current.get(id);
       const [msgs, meta] = await Promise.all([
         cached ?? loadSession(id),
@@ -476,6 +485,7 @@ export default function AgentPanel() {
     sessionMessagesRef.current.set(id, msgs);
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
     activeSessionIdRef.current = id;
+    void saveLastActiveSessionId(id);
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
     setSessionSystemPrompt(meta.systemPrompt || "");
@@ -496,6 +506,8 @@ export default function AgentPanel() {
       shouldFocusInputWhenReadyRef.current = true;
       setStreamingContent(null);
       sessionStreamingRef.current.delete(targetSessionId);
+      setStreamingToolArgs(null);
+      sessionStreamingToolArgsRef.current.delete(targetSessionId);
     }
     if (runtime.abort) {
       runtime.abort();
@@ -846,6 +858,7 @@ export default function AgentPanel() {
     sessionPlansRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
     activeSessionIdRef.current = id;
+    void saveLastActiveSessionId(id);
     setSessionId(id);
     setSessionTitle("新会话");
     setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
@@ -1054,6 +1067,7 @@ export default function AgentPanel() {
     const newMessages = [...getSessionMessages(currentSessionId), userMsg];
     enableAutoFollowBottom("auto");
     setSessionMessages(currentSessionId, newMessages);
+    void autoSave(currentSessionId, newMessages);
     setInput("");
     setPendingAttachments([]);
     shouldFocusInputWhenReadyRef.current = true;
@@ -1076,9 +1090,13 @@ export default function AgentPanel() {
     const fullMessages = [{ role: "system", content: systemPrompt }, ...apiConversationMessages];
 
     let streamedContent = "";
+    let streamedToolArgs = null;
 
     setSessionMessages(targetSessionId, conversationMessages);
+    void autoSave(targetSessionId, conversationMessages);
     setStreamingContent("");
+    setStreamingToolArgs(null);
+    sessionStreamingToolArgsRef.current.delete(targetSessionId);
 
     const abort = streamChat(config, fullMessages, {
       onText: (chunk) => {
@@ -1089,18 +1107,43 @@ export default function AgentPanel() {
         setStreamingContent(streamedContent);
       },
 
+      onToolArgsDelta: (event) => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        const next = buildStreamingToolArgsState(event);
+        if (!next) return;
+        streamedToolArgs = next;
+        sessionStreamingToolArgsRef.current.set(targetSessionId, streamedToolArgs);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingToolArgs(streamedToolArgs);
+        }
+      },
+
+      onToolArgsDone: () => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        streamedToolArgs = null;
+        sessionStreamingToolArgsRef.current.delete(targetSessionId);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingToolArgs(null);
+        }
+      },
+
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         streamedContent = "";
+        streamedToolArgs = null;
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingToolArgsRef.current.delete(targetSessionId);
         setStreamingContent("");
+        setStreamingToolArgs(null);
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
 
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        setStreamingToolArgs(null);
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingToolArgsRef.current.delete(targetSessionId);
         try {
           // Streaming phase is over; clear the old request abort handle before tool execution.
           setSessionRuntime(targetSessionId, { abort: null, loading: true });
@@ -1226,7 +1269,9 @@ export default function AgentPanel() {
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        setStreamingToolArgs(null);
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingToolArgsRef.current.delete(targetSessionId);
         toast.error(`LLM 错误: ${err.message}`);
         const stampedMessages = stampLastUserDuration(conversationMessages);
         const finalMessages = [...stampedMessages, buildLlmErrorDisplayMessage(err)];
@@ -1972,7 +2017,10 @@ export default function AgentPanel() {
               {streamingContent !== null && streamingContent.length > 0 && (
                 <AssistantTextBubble text={streamingContent} />
               )}
-              {loading && streamingContent === "" && (
+              {streamingToolArgs && (
+                <StreamingToolArgsBubble state={streamingToolArgs} />
+              )}
+              {loading && streamingContent === "" && !streamingToolArgs && (
                 <div className="chat-msg chat-msg-assistant">
                   <div className="chat-bubble chat-bubble-assistant loading-dots">思考中</div>
                 </div>
@@ -2221,6 +2269,102 @@ function buildGlobalSessionSearchResult(sessionEntry, messages, query) {
     hitCount,
     snippet: firstSnippet || "命中当前关键词"
   };
+}
+
+function buildStreamingToolArgsState(event) {
+  const name = event?.name || "";
+  const rawArgs = typeof event?.arguments === "string" ? event.arguments : "";
+  const fields = getLongToolArgumentFields(name);
+  if (!name || fields.length === 0) return null;
+  const preview = buildStreamingToolArgumentPreview(name, rawArgs, fields);
+  return {
+    id: event?.id || event?.responseItemId || `${name}-${event?.index ?? 0}`,
+    name,
+    preview
+  };
+}
+
+function buildStreamingToolArgumentPreview(toolName, rawArgs, fields) {
+  const parsed = tryParseJson(rawArgs);
+  if (parsed && typeof parsed === "object") {
+    const parts = [];
+    for (const field of fields) {
+      if (typeof parsed[field] === "string" && parsed[field]) {
+        parts.push(`${field}=${parsed[field]}`);
+      }
+    }
+    if (parts.length > 0) return parts.join("\n");
+  }
+
+  const extracted = [];
+  for (const field of fields) {
+    const value = extractPartialJsonStringValue(rawArgs, field);
+    if (value) extracted.push(`${field}=${value}`);
+  }
+  if (extracted.length > 0) return extracted.join("\n");
+  return rawArgs || `${toolName} 参数生成中`;
+}
+
+function tryParseJson(text) {
+  try {
+    return JSON.parse(text || "{}");
+  } catch {
+    return null;
+  }
+}
+
+function extractPartialJsonStringValue(jsonText, fieldName) {
+  const text = String(jsonText || "");
+  const fieldPattern = new RegExp(`"${escapeRegExp(fieldName)}"\\s*:\\s*"`, "g");
+  const match = fieldPattern.exec(text);
+  if (!match) return "";
+  let result = "";
+  let escaped = false;
+  for (let i = match.index + match[0].length; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      result += decodeJsonEscapeChar(ch);
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "\"") break;
+    result += ch;
+  }
+  return result;
+}
+
+function decodeJsonEscapeChar(ch) {
+  switch (ch) {
+    case "n": return "\n";
+    case "r": return "\r";
+    case "t": return "\t";
+    case "b": return "\b";
+    case "f": return "\f";
+    case "\"": return "\"";
+    case "\\": return "\\";
+    case "/": return "/";
+    default: return ch;
+  }
+}
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/* eslint-disable react/prop-types */
+function StreamingToolArgsBubble({ state }) {
+  return (
+    <div className="chat-msg chat-msg-assistant">
+      <div className="streaming-tool-args-bubble">
+        <div className="streaming-tool-args-title loading-dots">正在生成函数参数：{state.name}</div>
+        <pre className="streaming-tool-args-content">{state.preview}</pre>
+      </div>
+    </div>
+  );
 }
 
 function isGlobalSearchableMessage(message) {

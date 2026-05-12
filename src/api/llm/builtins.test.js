@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeTool } from "./builtins";
+import { captureFullPageScreenshotToTab, executeTool, openHelloWorldPlayground } from "./builtins";
 
 vi.mock("../mcp", () => ({
   callMcpTool: vi.fn(async (url, headers, name, args, timeoutMs) => ({
@@ -149,6 +149,17 @@ describe("built-in tool execution", () => {
     expect(createdUrl.searchParams.get("expanded")).toBe("1");
     expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
   });
+
+  it("opens hello world playground from settings helper", async () => {
+    const result = await openHelloWorldPlayground();
+
+    const createdUrl = new URL(chrome.tabs.create.mock.calls.at(-1)[0].url);
+    expect(createdUrl.pathname).toBe("/playground.html");
+    expect(createdUrl.searchParams.get("html")).toBeTruthy();
+    expect(createdUrl.searchParams.get("expanded")).toBe("1");
+    expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
+  });
+
 
   it("serializes recent downloads", async () => {
     chrome.downloads.search.mockResolvedValueOnce([

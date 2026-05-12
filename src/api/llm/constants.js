@@ -12,6 +12,6 @@ export const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
 export const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
 export const STASH_STORAGE_KEY = "user_stashes";
-export const DEFAULT_STASH_EXPIRE_MS = 30 * 24 * 60 * 60 * 1000; // 1 month
+export const DEFAULT_STASH_EXPIRE_AT = -1; // permanent by default
 
 export const DEFAULT_ANTHROPIC_CACHE_CONTROL = { type: "ephemeral" };

@@ -514,7 +514,7 @@ export const TOOLS = [
       properties: {
         title: { type: "string", description: "A unique title/key for this stash. Used to look up and manage the stash later." },
         info: { type: "string", description: "The information content to store in the stash." },
-        expireAt: { type: "number", description: "Expiration timestamp in Unix milliseconds. Use -1 for permanent storage. Defaults to 1 month from now if omitted." }
+        expireAt: { type: "number", description: "Expiration timestamp in Unix milliseconds. Use -1 for permanent storage. Defaults to permanent storage if omitted; only set a finite future timestamp when the information should intentionally expire, such as one month from now." }
       },
       required: ["title", "info"]
     }
@@ -640,7 +640,7 @@ export const TOOLS = [
   },
   {
     name: "html_playground",
-    description: "Generate and open a standalone HTML playground page for previewing HTML/CSS/JS. Use this only when the user explicitly asks to open, preview, display, share, or generate a playground for an HTML/CSS/JS artifact. The `html` field may already contain inline <style> or <script> tags; the separate `css` and `js` fields are additionally injected into the preview document.",
+    description: "Generate and open a standalone HTML playground page for previewing HTML/CSS/JS. Use this when the user asks to open, preview, display, share, or generate a playground/page/demo/report, including simple pages that do not explicitly mention HTML. This is also suitable for generating visual reports; when drawing charts, you can import Chart.js from a CDN in the HTML and render line charts, bar charts, pie charts, and other data visualizations. If the chart is simple enough, native inline SVG is also acceptable. Do not use this tool to render very large text-only content.",
     schema: {
       type: "object",
       properties: {

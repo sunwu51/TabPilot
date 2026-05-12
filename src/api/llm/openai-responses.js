@@ -3,8 +3,9 @@ import { API_TYPES } from "./config";
 import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
 import { getTools } from "./tools";
 import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completions";
+import { isLongToolArgumentName } from "./longToolArgs";
 
-export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onDone }, mcpTools = [], options = {}) {
+export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
@@ -78,7 +79,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
             responseId = event.response.id;
           }
           usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
-          applyResponsesStreamEvent(event, outputItems, toolCallsById, onText);
+          applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onToolArgsDelta, onToolArgsDone });
         } catch (error) {
           throw createLlmStreamError({
             code: "STREAM_PARSE_ERROR",
@@ -102,7 +103,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       }
     }
 
-    const toolCalls = [...toolCallsById.values()]
+    const toolCalls = dedupeResponsesFunctionCalls([...toolCallsById.values()])
       .filter(tc => tc.name)
       .map(tc => {
         const raw = tc.arguments || "{}";
@@ -228,7 +229,7 @@ function extractPlainMessageText(content) {
   return String(content).trim();
 }
 
-function applyResponsesStreamEvent(event, outputItems, toolCallsById, onText) {
+function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onToolArgsDelta, onToolArgsDone } = {}) {
   const eventType = String(event?.type || "");
 
   if (eventType === "response.output_item.added" || eventType === "response.output_item.done") {
@@ -236,12 +237,26 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, onText) {
     if (item) {
       outputItems.set(item.id || `${item.type}:${item.order}`, item);
       if (item.type === "function_call") {
-        toolCallsById.set(item.call_id || item.id, {
+        const call = mergeResponsesFunctionCall(toolCallsById, item.call_id || item.id, {
           id: item.id || "",
           call_id: item.call_id || item.id || "",
           name: item.name || "",
           arguments: item.arguments || ""
         });
+        if (item.id) {
+          toolCallsById.set(item.id, call);
+        }
+        toolCallsById.set(`function_call:${item.order ?? event?.output_index ?? 0}`, call);
+        if (eventType === "response.output_item.added" && isLongToolArgumentName(call.name)) {
+          onToolArgsDelta?.({
+            id: call.call_id || call.id || event?.item_id || `function_call_${event?.output_index || 0}`,
+            responseItemId: call.id || event?.item_id || "",
+            index: event?.output_index,
+            name: call.name,
+            delta: "",
+            arguments: call.arguments || ""
+          });
+        }
       }
     }
     return;
@@ -259,7 +274,18 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, onText) {
 
   if (eventType === "response.function_call_arguments.delta") {
     const call = ensureFunctionCall(toolCallsById, outputItems, event?.item_id, event?.output_index);
-    call.arguments += typeof event?.delta === "string" ? event.delta : "";
+    const delta = typeof event?.delta === "string" ? event.delta : "";
+    call.arguments += delta;
+    if (delta && isLongToolArgumentName(call.name)) {
+      onToolArgsDelta?.({
+        id: call.call_id || call.id || event?.item_id || `function_call_${event?.output_index || 0}`,
+        responseItemId: call.id || event?.item_id || "",
+        index: event?.output_index,
+        name: call.name,
+        delta,
+        arguments: call.arguments
+      });
+    }
     return;
   }
 
@@ -267,6 +293,15 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, onText) {
     const call = ensureFunctionCall(toolCallsById, outputItems, event?.item_id, event?.output_index);
     if (typeof event?.arguments === "string") {
       call.arguments = event.arguments;
+    }
+    if (isLongToolArgumentName(call.name)) {
+      onToolArgsDone?.({
+        id: call.call_id || call.id || event?.item_id || `function_call_${event?.output_index || 0}`,
+        responseItemId: call.id || event?.item_id || "",
+        index: event?.output_index,
+        name: call.name,
+        arguments: call.arguments
+      });
     }
     return;
   }
@@ -278,12 +313,16 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, onText) {
         if (normalized) {
           outputItems.set(normalized.id || `${normalized.type}:${normalized.order}`, normalized);
           if (normalized.type === "function_call") {
-            toolCallsById.set(normalized.call_id || normalized.id, {
+            const call = mergeResponsesFunctionCall(toolCallsById, normalized.call_id || normalized.id, {
               id: normalized.id || "",
               call_id: normalized.call_id || normalized.id || "",
               name: normalized.name || "",
               arguments: normalized.arguments || ""
             });
+            if (normalized.id) {
+              toolCallsById.set(normalized.id, call);
+            }
+            toolCallsById.set(`function_call:${normalized.order ?? index}`, call);
           }
         }
       });
@@ -352,22 +391,76 @@ function ensureMessageTextPart(item) {
 }
 
 function ensureFunctionCall(toolCallsById, outputItems, itemId, order = 0) {
-  const item = ensureResponsesOutputItem(outputItems, itemId, order, "function_call");
+  const item = ensureResponsesFunctionCallOutputItem(outputItems, itemId, order);
   item.type = "function_call";
   item.call_id = item.call_id || item.id || `function_call_${order}`;
   item.name = item.name || "";
   item.arguments = item.arguments || "";
 
   const key = item.call_id;
-  if (!toolCallsById.has(key)) {
-    toolCallsById.set(key, {
-      id: item.id || "",
-      call_id: item.call_id,
-      name: item.name || "",
-      arguments: item.arguments || ""
-    });
+  const call = mergeResponsesFunctionCall(toolCallsById, key, {
+    id: item.id || "",
+    call_id: item.call_id,
+    name: item.name || "",
+    arguments: item.arguments || ""
+  });
+  if (item.id) {
+    toolCallsById.set(item.id, call);
   }
-  return toolCallsById.get(key);
+  toolCallsById.set(`function_call:${order ?? 0}`, call);
+  return call;
+}
+
+function ensureResponsesFunctionCallOutputItem(outputItems, itemId, order = 0) {
+  const item = ensureResponsesOutputItem(outputItems, itemId, order, "function_call");
+  if (item?.type === "function_call") return item;
+  const fallbackKey = `function_call:${order ?? 0}`;
+  const fallback = outputItems.get(fallbackKey);
+  if (fallback?.type === "function_call") return fallback;
+  for (const candidate of outputItems.values()) {
+    if (candidate?.type === "function_call" && candidate.order === order) return candidate;
+  }
+  return item;
+}
+
+function mergeResponsesFunctionCall(toolCallsById, key, nextCall) {
+  const existing =
+    toolCallsById.get(key) ||
+    (nextCall?.id ? toolCallsById.get(nextCall.id) : null) ||
+    (nextCall?.call_id ? toolCallsById.get(nextCall.call_id) : null);
+  if (existing) {
+    existing.id = existing.id || nextCall.id || "";
+    existing.call_id = existing.call_id || nextCall.call_id || existing.id || "";
+    existing.name = existing.name || nextCall.name || "";
+    if (typeof nextCall.arguments === "string" && nextCall.arguments.length > existing.arguments.length) {
+      existing.arguments = nextCall.arguments;
+    } else {
+      existing.arguments = existing.arguments || nextCall.arguments || "";
+    }
+    toolCallsById.set(key, existing);
+    return existing;
+  }
+  const created = {
+    id: nextCall.id || "",
+    call_id: nextCall.call_id || nextCall.id || "",
+    name: nextCall.name || "",
+    arguments: nextCall.arguments || ""
+  };
+  toolCallsById.set(key, created);
+  return created;
+}
+
+function dedupeResponsesFunctionCalls(calls) {
+  const seen = new Set();
+  const result = [];
+  for (const call of calls || []) {
+    if (!call) continue;
+    const key = call.call_id || call.id || "";
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    result.push(call);
+  }
+  return result;
 }
 
 export function normalizeResponsesMessageContent(content, role = "user") {

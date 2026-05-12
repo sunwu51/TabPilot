@@ -1,0 +1,582 @@
+.stash-page {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  background: #f6f7fb;
+  color: #111827;
+  overflow: hidden;
+}
+
+.stash-sidebar {
+  min-width: 0;
+  border-right: 1px solid #e5e7eb;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.stash-sidebar-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.stash-sidebar-header h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.15;
+  font-weight: 750;
+}
+
+.stash-sidebar-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.stash-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stash-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.stash-icon-btn:first-child {
+  font-size: 18px;
+}
+
+.stash-icon-btn:hover {
+  background: #f3f4f6;
+}
+
+.stash-hidden-input {
+  display: none;
+}
+
+.stash-import-box {
+  flex-shrink: 0;
+  padding: 10px;
+  border-bottom: 1px solid #eef2f7;
+  background: #f8fafc;
+}
+
+.stash-import-box textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #fff;
+}
+
+.stash-import-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stash-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.stash-empty-list {
+  padding: 18px 10px;
+  color: #9ca3af;
+  font-size: 13px;
+  text-align: center;
+}
+
+.stash-card {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stash-card:hover {
+  border-color: #a5b4fc;
+  background: #f8fafc;
+}
+
+.stash-card-active {
+  border-color: #6366f1;
+  background: #eef2ff;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.12);
+}
+
+.stash-card-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.stash-card-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: #111827;
+}
+
+.stash-card-meta {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #6b7280;
+}
+
+.stash-delete-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #991b1b;
+  opacity: 0.72;
+  cursor: pointer;
+}
+
+.stash-delete-btn:hover,
+.stash-delete-btn:focus {
+  opacity: 1;
+  background: #fee2e2;
+  outline: none;
+}
+
+.stash-content {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.stash-content-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(10px);
+}
+
+.stash-content-title-wrap {
+  min-width: 0;
+}
+
+.stash-content-header h2 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 22px;
+  line-height: 1.25;
+  font-weight: 760;
+}
+
+.stash-content-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.stash-content-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.stash-markdown {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px;
+  font-size: 15px;
+  line-height: 1.7;
+  background: #ffffff;
+}
+
+.stash-markdown > :first-child {
+  margin-top: 0;
+}
+
+.stash-markdown h1,
+.stash-markdown h2,
+.stash-markdown h3,
+.stash-markdown h4,
+.stash-markdown h5,
+.stash-markdown h6 {
+  margin: 1.25em 0 0.55em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.stash-markdown h1 {
+  font-size: 2em;
+}
+
+.stash-markdown h2 {
+  font-size: 1.5em;
+}
+
+.stash-markdown h3 {
+  font-size: 1.25em;
+}
+
+.stash-markdown h4 {
+  font-size: 1.125em;
+}
+
+.stash-markdown h5 {
+  font-size: 1em;
+}
+
+.stash-markdown h6 {
+  font-size: 0.875em;
+  color: #6b7280;
+}
+
+.stash-markdown p,
+.stash-markdown ul,
+.stash-markdown ol,
+.stash-markdown blockquote,
+.stash-markdown pre,
+.stash-markdown table {
+  margin: 0.75em 0;
+}
+
+.stash-markdown ul,
+.stash-markdown ol {
+  padding-left: 1.5em;
+}
+
+.stash-markdown blockquote {
+  border-left: 4px solid #c7d2fe;
+  padding-left: 12px;
+  color: #4b5563;
+}
+
+.stash-markdown code {
+  border-radius: 5px;
+  background: #f3f4f6;
+  padding: 0.12em 0.32em;
+  font-size: 0.92em;
+}
+
+.stash-markdown pre {
+  overflow: auto;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 14px;
+}
+
+.stash-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.stash-markdown table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.stash-markdown th,
+.stash-markdown td {
+  border: 1px solid #e5e7eb;
+  padding: 6px 10px;
+}
+
+.stash-empty-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #9ca3af;
+  font-size: 14px;
+}
+
+.stash-empty-icon {
+  font-size: 42px;
+}
+
+.stash-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.stash-confirm-dialog {
+  width: min(420px, 100%);
+  border-radius: 14px;
+  background: #fff;
+  padding: 20px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+}
+
+.stash-confirm-dialog h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.stash-confirm-dialog p {
+  margin: 10px 0 0;
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.stash-confirm-dialog p span {
+  font-weight: 700;
+  color: #111827;
+  word-break: break-all;
+}
+
+.stash-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.stash-cancel-btn,
+.stash-danger-btn,
+.stash-primary-btn,
+.stash-secondary-btn {
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.stash-cancel-btn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+}
+
+.stash-danger-btn {
+  border: 1px solid #dc2626;
+  background: #dc2626;
+  color: #fff;
+}
+
+.stash-primary-btn {
+  border: 1px solid #4f46e5;
+  background: #4f46e5;
+  color: #fff;
+}
+
+.stash-secondary-btn {
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.stash-primary-btn:hover {
+  background: #4338ca;
+}
+
+.stash-secondary-btn:hover {
+  background: #e0e7ff;
+}
+
+.stash-cancel-btn:disabled,
+.stash-danger-btn:disabled,
+.stash-primary-btn:disabled,
+.stash-secondary-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.stash-editor-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.stash-editor-title {
+  min-width: 0;
+  flex: 1;
+}
+
+.stash-editor-title h2 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.stash-editor-fields {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stash-editor-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #6b7280;
+}
+
+.stash-editor-fields label:first-child {
+  flex: 1;
+  min-width: 220px;
+}
+
+.stash-editor-fields input,
+.stash-editor-fields select {
+  min-height: 34px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0 9px;
+  background: #fff;
+  color: #111827;
+  font-size: 14px;
+}
+
+.stash-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.stash-editor-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.stash-preview-pane {
+  border-right: 0;
+}
+
+.stash-pane-title {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eef2f7;
+  background: #f8fafc;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stash-editor-pane textarea {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  border: 0;
+  outline: none;
+  padding: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #111827;
+  background: #fff;
+}
+
+.stash-preview-pane .stash-markdown {
+  padding: 16px;
+}
+
+@media (max-width: 720px) {
+  .stash-page {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 36vh) minmax(0, 1fr);
+  }
+
+  .stash-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .stash-content-header,
+  .stash-editor-header {
+    flex-direction: column;
+  }
+
+  .stash-editor-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 1fr) minmax(220px, 1fr);
+  }
+
+  .stash-editor-pane {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+}
