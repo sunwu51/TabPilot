@@ -17,6 +17,7 @@ export default defineConfig({
         content: "src/content.js",
         sidepanel: "sidepanel.html",
         playground: "playground.html",
+        stash: "stash.html",
       },
       output: {
         entryFileNames: "[name].js",

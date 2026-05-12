@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llmEndpoint";
 import { API_TYPES, getDefaultApiType, normalizeApiType } from "../api/llm";
+import { captureFullPageScreenshotToTab, openHelloWorldPlayground } from "../api/llm/builtins";
 import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/tabReuse";
 import {
   DEFAULT_WS_BRIDGE_STATUS,
@@ -177,6 +178,44 @@ function SettingsDialogBody() {
     await clearReuseDomainPolicies();
     setReusePolicyCount(0);
     toast.success("已清空域名复用记忆");
+  }
+
+  async function handleScreenshotCurrentPage() {
+    const toastId = toast.loading("正在截取当前页面...");
+    try {
+      const result = await captureFullPageScreenshotToTab({ fullPage: true });
+      toast.dismiss(toastId);
+      if (result?.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("截图完成");
+    } catch (error) {
+      toast.dismiss(toastId);
+      toast.error(error?.message || "截图失败");
+    }
+  }
+
+  async function handleOpenPlayground() {
+    try {
+      const result = await openHelloWorldPlayground();
+      if (result?.error) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("已打开 Playground");
+    } catch (error) {
+      toast.error(error?.message || "打开 Playground 失败");
+    }
+  }
+
+  async function handleOpenStash() {
+    try {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("stash.html") });
+      toast.success("已打开 Stash");
+    } catch (error) {
+      toast.error(error?.message || "打开 Stash 失败");
+    }
   }
 
   const wsBridgeStateMeta = getWsBridgeStateMeta(wsBridgeStatus.state);
@@ -367,6 +406,30 @@ function SettingsDialogBody() {
             {wsBridgeStatus.tools > 0 ? ` · ${wsBridgeStatus.tools} 个工具` : ""}
             {wsBridgeStatus.error ? ` · ${wsBridgeStatus.error}` : ""}
             {wsBridgeLastHeartbeat ? ` · 最近心跳 ${wsBridgeLastHeartbeat}` : ""}
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">快捷入口</div>
+          <div className="settings-tab-action-row">
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleScreenshotCurrentPage}
+            >
+              screenshot
+            </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleOpenPlayground}
+            >
+              playground
+            </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleOpenStash}
+            >
+              stash
+            </Button>
           </div>
         </div>
       </div>

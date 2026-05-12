@@ -103,20 +103,18 @@ function downloadHtml() {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function updateUrlSilently() {
-  const next = new URL(window.location.href);
-  next.searchParams.set("html", deflateStringToQueryParam(htmlInput.value));
-  next.searchParams.set("css", deflateStringToQueryParam(cssInput.value));
-  next.searchParams.set("js", deflateStringToQueryParam(jsInput.value));
-  next.searchParams.set("expanded", expanded ? "1" : "0");
-  window.history.replaceState(null, "", next.toString());
+function serializeQueryString({ forceCollapsed = false } = {}) {
+  const next = new URLSearchParams();
+  next.set("html", deflateStringToQueryParam(htmlInput.value));
+  next.set("css", deflateStringToQueryParam(cssInput.value));
+  next.set("js", deflateStringToQueryParam(jsInput.value));
+  next.set("expanded", forceCollapsed ? "0" : (expanded ? "1" : "0"));
+  return `?${next.toString()}`;
 }
 
 function buildShareUrl() {
-  updateUrlSilently();
-  const current = new URL(window.location.href);
   const publicUrl = new URL(PUBLIC_PLAYGROUND_BASE_URL);
-  publicUrl.search = current.search;
+  publicUrl.search = serializeQueryString({ forceCollapsed: true });
   return publicUrl.toString();
 }
 
@@ -151,15 +149,8 @@ function flashShareButton(text) {
   }, 1200);
 }
 
-let urlUpdateTimer = null;
-function scheduleUrlUpdate() {
-  clearTimeout(urlUpdateTimer);
-  urlUpdateTimer = setTimeout(updateUrlSilently, 300);
-}
-
 function handleInput() {
   refreshPreview();
-  scheduleUrlUpdate();
 }
 
 htmlInput.addEventListener("input", handleInput);
@@ -169,7 +160,6 @@ jsInput.addEventListener("input", handleInput);
 toggleButton.addEventListener("click", () => {
   expanded = !expanded;
   applyExpandedState();
-  updateUrlSilently();
 });
 
 exportButton.addEventListener("click", downloadHtml);

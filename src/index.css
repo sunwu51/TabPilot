@@ -162,6 +162,13 @@ html, body, #root {
   gap: 0.5rem;
 }
 
+.dialog-dialog .settings-tab-action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
 .dialog-dialog .settings-dialog-actions {
   flex-shrink: 0;
   display: flex;

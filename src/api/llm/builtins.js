@@ -2,7 +2,7 @@
 import { callMcpTool } from "../mcp";
 import { buildMcpToolCallName } from "./tools";
 import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
-import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_MS, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
+import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_AT, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 import { deflateStringToQueryParam } from "../../utils/playgroundCodec";
 
 
@@ -2370,12 +2370,14 @@ async function _execStashInBrowser({ title, info, expireAt }) {
   } else if (typeof expireAt === "number" && expireAt > now) {
     computedExpireAt = expireAt;
   } else {
-    computedExpireAt = now + DEFAULT_STASH_EXPIRE_MS;
+    computedExpireAt = DEFAULT_STASH_EXPIRE_AT;
   }
 
+  const existing = stashes[title];
   stashes[title] = {
     info: String(info),
     expireAt: computedExpireAt,
+    createdAt: Number(existing?.createdAt) || Number(existing?.updatedAt) || now,
     updatedAt: now
   };
 
@@ -2411,6 +2413,7 @@ async function _execUnstashInBrowser({ title }) {
     title,
     info: stash.info,
     expireAt: stash.expireAt,
+    createdAt: stash.createdAt,
     updatedAt: stash.updatedAt
   };
 }
@@ -2484,6 +2487,37 @@ async function _execSleep({ seconds } = {}) {
  */
 async function _execDownload({ fileName, url, content, mimeType } = {}) {
   return await triggerBrowserDownload({ fileName, url, content, mimeType });
+}
+
+/**
+ * Capture the current/target tab as a full-page screenshot and open the resulting
+ * image data URL in a new tab.
+ */
+export async function captureFullPageScreenshotToTab(args = {}) {
+  const result = await _execTabScreenshot({ ...args, fullPage: true });
+  if (result?.error) return result;
+  if (!result?.dataUrl) {
+    return { error: "Screenshot completed but no image data was returned." };
+  }
+  const tab = await chrome.tabs.create({ url: result.dataUrl, active: true });
+  if (tab?.windowId != null) {
+    await chrome.windows.update(tab.windowId, { focused: true });
+  }
+  return {
+    ...result,
+    imageTabId: tab?.id,
+    imageUrl: tab?.pendingUrl || tab?.url || result.dataUrl
+  };
+}
+
+/**
+ * Open the playground page with a simple expanded Hello World document.
+ */
+export async function openHelloWorldPlayground() {
+  return _execHtmlPlayground({
+    html: "<h1>Hello World</h1>",
+    expanded: true
+  });
 }
 
 function _buildHtmlPlaygroundUrl({ html = "", css = "", js = "", expanded = false } = {}) {
