@@ -33,7 +33,7 @@ jsInput.spellcheck = false;
 jsInput.value = inflateStringFromQueryParam(params.get("js") || "");
 
 iframe.id = "preview";
-iframe.setAttribute("sandbox", "allow-forms allow-modals allow-popups allow-presentation allow-scripts allow-same-origin");
+iframe.setAttribute("sandbox", "allow-forms allow-modals allow-popups allow-presentation allow-scripts");
 
 editorPanel.className = "editor-panel";
 editorPanel.append(htmlInput, cssInput, jsInput);
@@ -122,9 +122,6 @@ function buildShareUrl() {
 
 async function copyShareUrl() {
   const shareUrl = buildShareUrl();
-  if (shareUrl.length > 10000) {
-    alert("URL 长度超过 10K，浏览器可能无法正常解析。");
-  }
   try {
     await navigator.clipboard.writeText(shareUrl);
     flashShareButton("已复制");
