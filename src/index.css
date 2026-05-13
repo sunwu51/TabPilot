@@ -328,3 +328,14 @@ html, body, #root {
   padding-bottom: 6px;
   border-bottom: 1px solid #e5e7eb;
 }
+
+.dialog-dialog .settings-quick-entry-divider {
+  width: 100%;
+  margin: 0.75rem 0 0.25rem;
+  border: 0;
+  border-top: 1px solid #e5e7eb;
+}
+
+.dialog-dialog .settings-tab-action-row-secondary {
+  margin-top: 0.35rem;
+}

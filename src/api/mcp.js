@@ -1,5 +1,41 @@
 let _rpcId = 0;
 const DEFAULT_MCP_TOOL_TIMEOUT_MS = 60000;
+const MCP_SESSION_ID_HEADER = "Mcp-Session-Id";
+const _sessionIds = new Map();
+
+function _sessionKey(url, headers = {}) {
+  return JSON.stringify({ url, headers: _normalizeHeadersForSessionKey(headers) });
+}
+
+function _normalizeHeadersForSessionKey(headers = {}) {
+  return Object.keys(headers || {})
+    .sort()
+    .reduce((result, key) => {
+      result[key] = headers[key];
+      return result;
+    }, {});
+}
+
+function _getSessionIdFromResponse(res) {
+  return res.headers.get(MCP_SESSION_ID_HEADER) || res.headers.get(MCP_SESSION_ID_HEADER.toLowerCase()) || "";
+}
+
+function _buildRequestHeaders(headers = {}, sessionId = "") {
+  const requestHeaders = { ...(headers || {}) };
+  if (sessionId) {
+    for (const key of Object.keys(requestHeaders)) {
+      if (key.toLowerCase() === MCP_SESSION_ID_HEADER.toLowerCase()) {
+        delete requestHeaders[key];
+      }
+    }
+  }
+  return {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+    ...requestHeaders,
+    ...(sessionId ? { [MCP_SESSION_ID_HEADER]: sessionId } : {})
+  };
+}
 
 /**
  * Send a JSON-RPC 2.0 request to an MCP server via Streamable HTTP.
@@ -10,7 +46,24 @@ const DEFAULT_MCP_TOOL_TIMEOUT_MS = 60000;
  * @param {Object} [params] - method parameters
  * @returns {Promise<Object>} JSON-RPC result
  */
-async function rpcCall(url, headers, method, params, timeoutMs) {
+async function rpcCall(url, headers, method, params, timeoutMs, options = {}) {
+  const sessionKey = _sessionKey(url, headers);
+  const initialSessionId = method === "initialize" ? "" : (_sessionIds.get(sessionKey) || "");
+  try {
+    return await _rpcCallOnce(url, headers, method, params, timeoutMs, initialSessionId, sessionKey);
+  } catch (error) {
+    if (!initialSessionId || error?.status !== 404 || options.skipSessionRefresh) {
+      throw error;
+    }
+
+    _sessionIds.delete(sessionKey);
+    await initializeMcp(url, headers, { skipSessionRefresh: true });
+    const refreshedSessionId = _sessionIds.get(sessionKey) || "";
+    return await _rpcCallOnce(url, headers, method, params, timeoutMs, refreshedSessionId, sessionKey);
+  }
+}
+
+async function _rpcCallOnce(url, headers, method, params, timeoutMs, sessionId = "", sessionKey = _sessionKey(url, headers)) {
   const id = ++_rpcId;
   const body = {
     jsonrpc: "2.0",
@@ -30,11 +83,7 @@ async function rpcCall(url, headers, method, params, timeoutMs) {
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        ...headers
-      },
+      headers: _buildRequestHeaders(headers, sessionId),
       body: JSON.stringify(body),
       signal: controller.signal
     });
@@ -50,7 +99,14 @@ async function rpcCall(url, headers, method, params, timeoutMs) {
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`MCP error ${res.status}: ${errText}`);
+    const error = new Error(`MCP error ${res.status}: ${errText}`);
+    error.status = res.status;
+    throw error;
+  }
+
+  const responseSessionId = _getSessionIdFromResponse(res);
+  if (method === "initialize" && responseSessionId) {
+    _sessionIds.set(sessionKey, responseSessionId);
   }
 
   const contentType = res.headers.get("content-type") || "";
@@ -111,7 +167,8 @@ async function _parseSSEResponse(res) {
  * @param {Object} headers - custom headers
  * @returns {Promise<{serverInfo: Object, capabilities: Object}>}
  */
-export async function initializeMcp(url, headers = {}) {
+export async function initializeMcp(url, headers = {}, options = {}) {
+  _sessionIds.delete(_sessionKey(url, headers));
   const result = await rpcCall(url, headers, "initialize", {
     protocolVersion: "2025-03-26",
     capabilities: {},
@@ -119,7 +176,7 @@ export async function initializeMcp(url, headers = {}) {
       name: "TabManager",
       version: "1.0"
     }
-  });
+  }, undefined, options);
   return result;
 }
 
