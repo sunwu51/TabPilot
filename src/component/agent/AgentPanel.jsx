@@ -1897,7 +1897,6 @@ export default function AgentPanel() {
                   onChange={(e) => setTitleDraft(e.target.value)}
                   onKeyDown={handleTitleEditKeyDown}
                   onBlur={saveEditingSessionTitle}
-                  autoFocus
                 />
               ) : (
                 <>
