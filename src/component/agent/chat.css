@@ -250,7 +250,7 @@
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  width: 240px;
+  width: 264px;
   max-height: 300px;
   overflow-y: auto;
   background: white;
@@ -318,6 +318,27 @@
 .chat-history-item-time {
   color: #9ca3af;
   font-size: 11px;
+}
+
+.chat-history-keywords {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chat-history-keyword-badge {
+  max-width: 8em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-history-item-delete {

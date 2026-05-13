@@ -44,6 +44,8 @@ export default function SettingsDialog() {
   );
 }
 
+const ADVANCED_USAGE_URL = "https://my.feishu.cn/wiki/EyDcwiBaliWlDNkRVv0cOAVHnUd?from=from_copylink";
+
 function SettingsDialogBody() {
   const [apiType, setApiType] = useState(DEFAULT_SETTINGS.llmConfig.apiType);
   const [baseUrl, setBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.baseUrl);
@@ -215,6 +217,15 @@ function SettingsDialogBody() {
       toast.success("已打开 Stash");
     } catch (error) {
       toast.error(error?.message || "打开 Stash 失败");
+    }
+  }
+
+  async function handleOpenAdvancedUsage() {
+    try {
+      await chrome.tabs.create({ url: ADVANCED_USAGE_URL });
+      toast.success("已打开高级用法");
+    } catch (error) {
+      toast.error(error?.message || "打开高级用法失败");
     }
   }
 
@@ -429,6 +440,15 @@ function SettingsDialogBody() {
               onPress={handleOpenStash}
             >
               stash
+            </Button>
+          </div>
+          <hr className="settings-quick-entry-divider" />
+          <div className="settings-tab-action-row settings-tab-action-row-secondary">
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleOpenAdvancedUsage}
+            >
+              高级用法
             </Button>
           </div>
         </div>
