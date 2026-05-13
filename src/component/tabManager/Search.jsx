@@ -132,15 +132,14 @@ function Search() {
                         }
                         await chrome.tabs.update(item.tab.id, { active: true });
                       }}
-                        className={`w-full static m-0 text-start active:transform-none
-                        hover:bg-[var(--w-yellow)] focus:bg-[var(--w-yellow)] hover:text-black active:text-black focus:text-black active:bg-[var(--w-yellow)] p-0 ${selectedIndex === index ? 'bg-[var(--w-yellow)]' : 'bg-white'}`}
+                        className={`search-result-button w-full static m-0 text-start active:transform-none p-0 ${selectedIndex === index ? 'search-result-button-selected' : ''}`}
                       >
                         <div className="flex flex-col px-1 min-h-8 rounded-md justify-center">
                           <div className="flex items-center">
                             {
                               curWindow.id === item.tab.windowId ?
-                                <Badge className={`bg-[var(--w-green-dark)] min-w-20`}>当前-{item.score}</Badge> :
-                                <Badge className={`bg-[var(--w-blue)] min-w-20`}>其他-{item.score}</Badge>
+                                <Badge className="search-result-badge search-result-badge-current min-w-20">当前-{item.score}</Badge> :
+                                <Badge className="search-result-badge search-result-badge-other min-w-20">其他-{item.score}</Badge>
                             }
                             &nbsp;
                             {item.tab.favIconUrl ? <img width="16px" src={item.tab.favIconUrl}></img> : null}
@@ -191,12 +190,11 @@ function Search() {
                       <Button onPress={async () => {
                         await chrome.tabs.create({ url: item.history.url })
                       }}
-                        className={`w-full static m-0 text-start active:transform-none
-                        hover:bg-[var(--w-yellow)] focus:bg-[var(--w-yellow)] hover:text-black active:text-black focus:text-black active:bg-[var(--w-yellow)] p-0 ${selectedIndex === globalIndex ? 'bg-[var(--w-yellow)]' : 'bg-white'}`}
+                        className={`search-result-button w-full static m-0 text-start active:transform-none p-0 ${selectedIndex === globalIndex ? 'search-result-button-selected' : ''}`}
                       >
                         <div className="flex flex-col px-1 min-h-8 rounded-md justify-center">
                           <div className="flex items-center">
-                            <Badge className={`min-w-20`}>{formatTime(Date.now() - item.history.lastVisitTime)}</Badge>
+                            <Badge className="search-result-badge search-result-badge-history min-w-20">{formatTime(Date.now() - item.history.lastVisitTime)}</Badge>
                             &nbsp;
                             <p style={{
                               whiteSpace: 'nowrap',

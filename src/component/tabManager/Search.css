@@ -1,11 +1,48 @@
-button:hover .details {
+.search-result-button:hover .details {
     display: block;
 }
 
-button .details {
+.search-result-button .details {
     display: none;
 }
 
-.button:focus:not(:hover) {
+.search-result-button.button {
+    width: 100%;
+    position: static;
+    margin: 0;
+    padding: 0;
+    text-align: start;
+    background: var(--w-white);
+}
+
+.search-result-button.button:hover,
+.search-result-button.button:focus,
+.search-result-button.button:active,
+.search-result-button.button.search-result-button-selected {
     background: var(--w-yellow);
+    color: var(--w-black);
+}
+
+.search-result-button.button:active {
+    transform: none;
+}
+
+.search-result-button.button:focus:not(:hover) {
+    background: var(--w-yellow);
+}
+
+.search-result-badge.badge-container {
+    min-width: 5rem;
+}
+
+.search-result-badge-current.badge-container {
+    background-color: var(--w-green-dark);
+}
+
+.search-result-badge-other.badge-container {
+    background-color: var(--w-blue);
+}
+
+.search-result-badge-history.badge-container {
+    background-color: var(--w-blue-dark);
 }
