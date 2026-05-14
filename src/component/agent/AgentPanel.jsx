@@ -43,7 +43,7 @@ import "./chat.css";
 const SYSTEM_PROMPT_PLACEHOLDER =
   "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
-const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 60 * 1000;
+const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 
 /**
  * Main Agent chat panel with session management.
