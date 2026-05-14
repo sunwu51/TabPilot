@@ -981,6 +981,16 @@
   margin: 2px 0;
 }
 
+.chat-bubble-assistant a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-bubble-assistant a:hover {
+  color: #1d4ed8;
+}
+
 .chat-bubble-assistant blockquote {
   border-left: 3px solid #d1d5db;
   margin: 8px 0;

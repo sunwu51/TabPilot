@@ -313,6 +313,16 @@
   margin: 0.25em 0;
 }
 
+.stash-markdown a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.stash-markdown a:hover {
+  color: #1d4ed8;
+}
+
 .stash-markdown blockquote {
   border-left: 4px solid #c7d2fe;
   padding-left: 12px;
