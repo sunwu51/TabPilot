@@ -172,6 +172,26 @@ export async function saveSessionMeta(id, meta = {}) {
 }
 
 /**
+ * Clear derived keyword fields for a session index entry.
+ * @param {string} id - session ID
+ */
+export async function clearSessionKeywords(id) {
+  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(s => s.id === id);
+  if (!entry) return false;
+
+  delete entry.keywords;
+  delete entry.sessionKeywords;
+  delete entry.keywordMessageIndex;
+  delete entry.keywordsMessageIndex;
+  delete entry.keywordUpdatedAt;
+  entry.updatedAt = Date.now();
+
+  await chrome.storage.local.set({ sessions_index });
+  return true;
+}
+
+/**
  * Delete a session: remove from index and delete stored messages.
  * @param {string} id - session ID
  */

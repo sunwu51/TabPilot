@@ -12,6 +12,7 @@ import {
   loadLastActiveSessionId,
   saveSession,
   saveSessionMeta,
+  clearSessionKeywords,
   saveLastActiveSessionId,
   deleteSession,
   extractTitle,
@@ -43,7 +44,7 @@ import "./chat.css";
 const SYSTEM_PROMPT_PLACEHOLDER =
   "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
-const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 60 * 1000;
+const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 
 /**
  * Main Agent chat panel with session management.
@@ -1034,6 +1035,7 @@ export default function AgentPanel() {
       `- If no web search/fetch tool is available, use browser tools instead: open a search engine or official documentation page with tab_open, inspect/extract the page with tab_extract and DOM tools, and then answer based on what you found.\n` +
       `- When answering time-sensitive or documentation/API questions after searching, include concise source context such as the site/document name and relevant dates or version notes when available. If verification fails, clearly say what could not be verified instead of guessing.\n` +
       `- Prefer primary sources for technical and product facts, especially official API documentation, release notes, model documentation, SDK docs, or standards documents. Use secondary sources only when primary sources are unavailable or to cross-check.\n` +
+      `- If your conclusion materially relies on information found through a web/search/fetch/browser lookup, append a final section titled "参考内容：" and list the referenced links as Markdown bullets, for example "- [OpenAI Api Doc](https://xxxx)". Put this citation section at the end of the answer.\n` +
       `- Dangerous tools such as eval_js or MCP tools marked as dangerous require explicit user confirmation before execution. The application will present that confirmation UI automatically, so do not ask the user to reply with confirmation in text.\n` +
       `- If the user asks you to set a reminder and there is no reminder/notification tool available in the tool list, create a new tab with tab_open using a data: URL that displays the reminder content clearly. For example: data:text/html;charset=utf-8,<h1>立即喝水</h1><p>15 分钟后提醒</p>.\n` +
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
@@ -1534,10 +1536,12 @@ export default function AgentPanel() {
       setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
       await saveSession(currentSessionId, [], preservedTitle);
       await saveSessionMeta(currentSessionId, { plans: [] });
+      await clearSessionKeywords(currentSessionId);
     } else {
       setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
       await saveSession(currentSessionId, [], "新会话");
       await saveSessionMeta(currentSessionId, { plans: [] });
+      await clearSessionKeywords(currentSessionId);
     }
     setSessions(await listSessions());
   }

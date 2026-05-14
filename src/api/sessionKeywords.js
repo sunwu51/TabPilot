@@ -4,7 +4,7 @@ import { loadSession } from "./sessions";
 
 const MIN_SESSION_KEYWORD_CHARS = 100;
 const MAX_SESSION_KEYWORD_SOURCE_CHARS = 12000;
-const MAX_KEYWORD_CHARS = 8;
+const MAX_KEYWORD_CHARS = 10;
 const KEYWORD_COUNT_MAX = 3;
 
 export function getSessionKeywordTextStats(messages, startIndex = 0) {
@@ -120,8 +120,8 @@ async function generateSessionKeywords(config, { previousKeywords, conversationT
     {
       role: "system",
       content:
-        "你是一个会话关键词提取器。请根据会话内容提炼 1 到 3 个关键词，用于在历史会话列表里做小号 badge 展示。" +
-        "关键词要短，优先 2 到 6 个字符，最多不超过 8 个字符。不要包含工具调用、函数名、JSON 或无关实现细节。" +
+        "你是一个会话关键词提取器。请根据会话内容提炼 3 到 5 个关键词，用于在历史会话列表里做小号 badge 展示。" +
+        "关键词要短，优先 2 到 6 个字符，最多不超过 10 个字符。不要包含工具调用、函数名、JSON 或无关实现细节。" +
         "如果提供了已有关键词，请结合新增内容更新为一组更贴切的关键词。" +
         "只输出 JSON 字符串数组，例如：[\"前端调试\",\"旅行计划\",\"报错排查\"]，不要输出解释。"
     },
@@ -188,8 +188,26 @@ function extractJsonArrayText(text) {
 }
 
 function normalizeGeneratedKeywords(keywords) {
-  const items = normalizeKeywords(keywords, { rejectOverlong: true });
-  return Array.isArray(items) ? { items } : items;
+  const result = [];
+  const seen = new Set();
+  let firstKeyword = "";
+
+  for (const raw of Array.isArray(keywords) ? keywords : []) {
+    const keyword = cleanKeyword(raw);
+    if (!keyword) continue;
+    if (!firstKeyword) firstKeyword = keyword;
+    if (countChars(keyword) > MAX_KEYWORD_CHARS) continue;
+
+    const key = keyword.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(keyword);
+    if (result.length >= KEYWORD_COUNT_MAX) break;
+  }
+
+  if (result.length > 0) return { items: result };
+  if (!firstKeyword) return { items: [] };
+  return { items: [Array.from(firstKeyword).slice(0, MAX_KEYWORD_CHARS).join("")] };
 }
 
 function normalizeKeywords(keywords, options = {}) {
@@ -197,9 +215,7 @@ function normalizeKeywords(keywords, options = {}) {
   const seen = new Set();
   const rejectOverlong = options.rejectOverlong === true;
   for (const raw of Array.isArray(keywords) ? keywords : []) {
-    let keyword = String(raw || "").trim();
-    keyword = keyword.replace(/^['"“”‘’]+|['"“”‘’]+$/g, "").trim();
-    keyword = keyword.replace(/\s+/g, " ");
+    let keyword = cleanKeyword(raw);
     if (!keyword) continue;
     if (countChars(keyword) > MAX_KEYWORD_CHARS) {
       if (rejectOverlong) return { error: "overlong_keyword" };
@@ -212,6 +228,13 @@ function normalizeKeywords(keywords, options = {}) {
     if (result.length >= KEYWORD_COUNT_MAX) break;
   }
   return result;
+}
+
+function cleanKeyword(raw) {
+  let keyword = String(raw || "").trim();
+  keyword = keyword.replace(/^['"“”‘’]+|['"“”‘’]+$/g, "").trim();
+  keyword = keyword.replace(/\s+/g, " ");
+  return keyword;
 }
 
 function hasOverlongKeyword(keywords) {

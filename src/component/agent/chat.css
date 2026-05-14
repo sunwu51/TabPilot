@@ -969,8 +969,26 @@
   padding-left: 20px;
 }
 
+.chat-bubble-assistant ul {
+  list-style: disc;
+}
+
+.chat-bubble-assistant ol {
+  list-style: decimal;
+}
+
 .chat-bubble-assistant li {
   margin: 2px 0;
+}
+
+.chat-bubble-assistant a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-bubble-assistant a:hover {
+  color: #1d4ed8;
 }
 
 .chat-bubble-assistant blockquote {
