@@ -301,6 +301,18 @@
   padding-left: 1.5em;
 }
 
+.stash-markdown ul {
+  list-style: disc;
+}
+
+.stash-markdown ol {
+  list-style: decimal;
+}
+
+.stash-markdown li {
+  margin: 0.25em 0;
+}
+
 .stash-markdown blockquote {
   border-left: 4px solid #c7d2fe;
   padding-left: 12px;
