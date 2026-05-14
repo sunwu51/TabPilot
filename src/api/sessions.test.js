@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  clearSessionKeywords,
   createSession,
   deleteSession,
   extractTitle,
@@ -100,6 +101,29 @@ describe("sessions storage", () => {
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
     expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }] });
+  });
+
+  it("clears stored session keywords from the index entry", async () => {
+    resetChromeMock({
+      sessions_index: [{
+        id: "a",
+        title: "A",
+        updatedAt: 1,
+        keywords: ["alpha", "beta"],
+        sessionKeywords: ["legacy"],
+        keywordMessageIndex: 8,
+        keywordsMessageIndex: 7,
+        keywordUpdatedAt: 123
+      }]
+    });
+    vi.spyOn(Date, "now").mockReturnValue(200);
+
+    expect(await clearSessionKeywords("a")).toBe(true);
+    expect((await listSessions())[0]).toEqual({
+      id: "a",
+      title: "A",
+      updatedAt: 200
+    });
   });
 
   it("deletes session payload and index entry", async () => {
