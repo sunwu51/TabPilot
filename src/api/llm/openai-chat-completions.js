@@ -3,6 +3,7 @@ import { API_TYPES } from "./config";
 import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
 import { getTools } from "./tools";
 import { isLongToolArgumentName } from "./longToolArgs";
+import { buildOpenAIChatReasoningFields } from "./reasoning";
 
 export function buildOpenAICacheFields(options = {}) {
   const cacheKey = String(options?.sessionId || "").trim();
@@ -29,6 +30,7 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
         tools,
         stream: true,
         stream_options: { include_usage: true },
+        ...buildOpenAIChatReasoningFields(config),
         ...buildOpenAICacheFields(options)
       }),
       signal: timeoutState.signal

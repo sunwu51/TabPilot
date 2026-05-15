@@ -4,6 +4,7 @@ import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmS
 import { getTools } from "./tools";
 import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completions";
 import { isLongToolArgumentName } from "./longToolArgs";
+import { buildOpenAIResponsesReasoningFields } from "./reasoning";
 
 export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
@@ -18,6 +19,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       tools,
       stream: true,
       ...(instructions ? { instructions } : {}),
+      ...buildOpenAIResponsesReasoningFields(config),
       ...buildOpenAICacheFields(options)
     };
 

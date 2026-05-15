@@ -70,7 +70,7 @@ export default function AgentPanel() {
   const [skillStationTools, setSkillStationTools] = useState([]);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false });
+  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false, reasoningEffort: "default" });
   const [contextUsage, setContextUsage] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
@@ -334,7 +334,8 @@ export default function AgentPanel() {
         setLlmConfigInfo({
           apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
           model: nextConfig.model || "",
-          supportsImageInput: nextConfig.supportsImageInput === true
+          supportsImageInput: nextConfig.supportsImageInput === true,
+          reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort)
         });
       }
     }
@@ -428,7 +429,8 @@ export default function AgentPanel() {
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
-      supportsImageInput: llmConfig?.supportsImageInput === true
+      supportsImageInput: llmConfig?.supportsImageInput === true,
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort)
     });
   }
 
@@ -1055,19 +1057,22 @@ export default function AgentPanel() {
         apiKey: "",
         model: "",
         firstPacketTimeoutSeconds: 20,
-        supportsImageInput: false
+        supportsImageInput: false,
+        reasoningEffort: "default"
       },
       betaFeaturesEnabled: true
     });
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
-      supportsImageInput: llmConfig?.supportsImageInput === true
+      supportsImageInput: llmConfig?.supportsImageInput === true,
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort)
     });
     return {
       ...llmConfig,
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       supportsImageInput: llmConfig?.supportsImageInput === true,
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
   }
@@ -2704,6 +2709,10 @@ function getFirstUsageNumber(source, fields) {
 
 function formatModelName(model) {
   return String(model || "").trim() || "未配置";
+}
+
+function normalizeReasoningEffort(value) {
+  return ["default", "low", "medium", "high", "max"].includes(value) ? value : "default";
 }
 
 function formatContextUsageK(contextUsage) {

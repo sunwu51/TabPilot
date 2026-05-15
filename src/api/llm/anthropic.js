@@ -4,6 +4,7 @@ import { API_TYPES } from "./config";
 import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
 import { getTools } from "./tools";
 import { isLongToolArgumentName } from "./longToolArgs";
+import { buildAnthropicReasoningFields } from "./reasoning";
 
 // ==================== Anthropic Messages API ====================
 
@@ -33,7 +34,8 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
         cache_control: DEFAULT_ANTHROPIC_CACHE_CONTROL,
         system: systemPrompt,
         messages: apiMessages,
-        tools, max_tokens: 4096, stream: true
+        tools, max_tokens: 4096, stream: true,
+        ...buildAnthropicReasoningFields(config)
       }),
       signal: timeoutState.signal
     });

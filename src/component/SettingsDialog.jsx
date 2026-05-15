@@ -20,7 +20,8 @@ const DEFAULT_SETTINGS = {
     apiKey: "",
     model: "",
     firstPacketTimeoutSeconds: 20,
-    supportsImageInput: false
+    supportsImageInput: false,
+    reasoningEffort: "default"
   },
   mcpToolTimeoutSeconds: 60,
   reuse: false,
@@ -54,6 +55,7 @@ function SettingsDialogBody() {
   const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
+  const [reasoningEffort, setReasoningEffort] = useState(DEFAULT_SETTINGS.llmConfig.reasoningEffort);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
@@ -73,6 +75,13 @@ function SettingsDialogBody() {
     { label: "16k", value: 16000 },
     { label: "32k", value: 32000 },
     { label: "128k", value: 128000 }
+  ];
+  const reasoningEffortOptions = [
+    { label: "供应商默认", value: "default" },
+    { label: "低", value: "low" },
+    { label: "中", value: "medium" },
+    { label: "高", value: "high" },
+    { label: "最高", value: "max" }
   ];
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
 
@@ -109,6 +118,7 @@ function SettingsDialogBody() {
       setModel(nextLlmConfig.model || "");
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
+      setReasoningEffort(normalizeReasoningEffort(nextLlmConfig.reasoningEffort));
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
@@ -151,7 +161,8 @@ function SettingsDialogBody() {
           apiKey,
           model,
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
-          supportsImageInput
+          supportsImageInput,
+          reasoningEffort: normalizeReasoningEffort(reasoningEffort)
         },
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
@@ -335,6 +346,18 @@ function SettingsDialogBody() {
             }}
             placeholder="20"
           />
+          <Select
+            label="思考强度"
+            items={reasoningEffortOptions.map((item) => item.label)}
+            defaultIndex={Math.max(0, reasoningEffortOptions.findIndex((item) => item.value === reasoningEffort))}
+            onSelectedItemChange={(changes) => {
+              const selected = reasoningEffortOptions.find((item) => item.label === changes.selectedItem);
+              setReasoningEffort(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.reasoningEffort);
+            }}
+          />
+          <div className="settings-api-url-hint">
+            默认不设置，由供应商决定；Anthropic 使用 adaptive thinking + output_config.effort，OpenAI 使用对应 reasoning effort 字段。
+          </div>
           <Input
             label="MCP 工具超时（秒）"
             labelClassName="!text-sm !font-medium !text-gray-500"
@@ -489,4 +512,8 @@ function normalizeWsServerUrlInput(value) {
   } catch {
     return null;
   }
+}
+
+function normalizeReasoningEffort(value) {
+  return ["default", "low", "medium", "high", "max"].includes(value) ? value : "default";
 }

@@ -146,6 +146,8 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
         if (!block) continue;
         if (block.type === "text" && block.text) {
           rendered.push(<AssistantTextBubble key={`t${i}`} text={block.text} searchState={messageSearchState} />);
+        } else if (block.type === "thinking" || block.type === "redacted_thinking") {
+          rendered.push(<ThinkingBlock key={`th${i}`} block={block} />);
         } else if (block.type === "tool_use") {
           rendered.push(<ToolCallBlock key={`tc${i}`} name={block.name} input={block.input} />);
         }
@@ -169,6 +171,17 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
         }
         rendered.push(<ToolCallBlock key={`otc${i}`} name={toolName} input={input} />);
       }
+    }
+
+    if (rendered.length === 0) {
+      const fallbackThinkingBlocks = extractThinkingBlocksFromMessage(msg);
+      for (let i = 0; i < fallbackThinkingBlocks.length; i++) {
+        rendered.push(<ThinkingBlock key={`fth${i}`} block={fallbackThinkingBlocks[i]} />);
+      }
+    }
+
+    if ((!msg.tool_calls || msg.tool_calls.length === 0) && content && typeof content === "string") {
+      rendered.push(<AssistantTextBubble key="plain" text={content} searchState={messageSearchState} />);
     }
 
     // If we rendered something from array/tool_calls, return it
@@ -365,6 +378,48 @@ function ToolCallBlock({ name, input }) {
   );
 }
 
+/* eslint-disable react/prop-types */
+function ThinkingBlock({ block }) {
+  const [expanded, setExpanded] = useState(false);
+  const isRedacted = block?.type === "redacted_thinking";
+  const thinkingText = typeof block?.thinking === "string" ? block.thinking : "";
+  const signature = typeof block?.signature === "string" ? block.signature : "";
+  const redactedData = typeof block?.data === "string" ? block.data : "";
+  const summary = isRedacted ? "内容已脱敏" : buildThinkingSummary(thinkingText);
+
+  return (
+    <div className="tool-result-msg thinking-result-msg" onClick={() => setExpanded(!expanded)}>
+      <div className="tool-result-header">
+        <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
+        <span className="tool-result-label">Thinking · {summary}</span>
+      </div>
+      {expanded && (
+        <div className="thinking-result-content" onClick={(event) => event.stopPropagation()}>
+          {isRedacted ? (
+            <pre className="tool-result-content">{redactedData || "redacted_thinking"}</pre>
+          ) : (
+            <div className="thinking-markdown-content">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={buildAssistantRehypePlugins()}
+                components={{ pre: CodeBlock }}
+              >
+                {thinkingText || "_空内容_"}
+              </ReactMarkdown>
+            </div>
+          )}
+          {signature && (
+            <details className="thinking-signature-block">
+              <summary>signature</summary>
+              <pre className="tool-result-content">{signature}</pre>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Collapsed block showing tool execution result (success or failure) */
 /* eslint-disable react/prop-types */
 function ToolResultBlock({ msg }) {
@@ -476,6 +531,85 @@ function safeJsonParse(value) {
   } catch (error) {
     return { raw: value };
   }
+}
+
+function extractThinkingBlocksFromMessage(msg) {
+  const blocks = [];
+
+  if (Array.isArray(msg?.thinking_blocks)) {
+    blocks.push(...msg.thinking_blocks);
+  }
+
+  const providerReasoningBlocks = msg?.provider_specific_fields?.reasoningContentBlocks;
+  if (Array.isArray(providerReasoningBlocks)) {
+    for (const block of providerReasoningBlocks) {
+      const reasoningText = block?.reasoningText;
+      if (reasoningText) {
+        blocks.push({
+          type: "thinking",
+          thinking: reasoningText.text || reasoningText.thinking || "",
+          ...(reasoningText.signature ? { signature: reasoningText.signature } : {})
+        });
+        continue;
+      }
+
+      const redacted = block?.redactedContent || block?.redactedThinking || block?.redacted_thinking;
+      if (redacted?.data) {
+        blocks.push({ type: "redacted_thinking", data: redacted.data });
+      }
+    }
+  }
+
+  if (blocks.length === 0 && typeof msg?.reasoning_content === "string" && msg.reasoning_content.length > 0) {
+    blocks.push({ type: "thinking", thinking: msg.reasoning_content });
+  }
+
+  if (blocks.length === 0 && typeof msg?.thinking === "string" && msg.thinking.length > 0) {
+    blocks.push({ type: "thinking", thinking: msg.thinking });
+  }
+
+  if (blocks.length === 0) {
+    const reasoningDetailsText = flattenReasoningDetails(msg?.reasoning_details);
+    if (reasoningDetailsText) {
+      blocks.push({ type: "thinking", thinking: reasoningDetailsText });
+    }
+  }
+
+  return blocks.filter(isRenderableThinkingBlock);
+}
+
+function isRenderableThinkingBlock(block) {
+  if (!block || typeof block !== "object") return false;
+  if (block.type === "thinking") {
+    return typeof block.thinking === "string" || typeof block.signature === "string";
+  }
+  if (block.type === "redacted_thinking") {
+    return typeof block.data === "string" && block.data.length > 0;
+  }
+  return false;
+}
+
+function flattenReasoningDetails(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map(flattenReasoningDetails).filter(Boolean).join("\n\n").trim();
+  }
+  if (value && typeof value === "object") {
+    return [
+      value.text,
+      value.reasoning,
+      value.summary,
+      value.content,
+      value.output_text
+    ].map(flattenReasoningDetails).filter(Boolean).join("\n\n").trim();
+  }
+  return "";
+}
+
+function buildThinkingSummary(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "空";
+  return normalized.length > 60 ? `${normalized.slice(0, 60)}...` : normalized;
 }
 
 function buildMessageSearchState(searchState, messageIndex) {

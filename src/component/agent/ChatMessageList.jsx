@@ -284,6 +284,8 @@ function extractAssistantRenderItems(message) {
       if (!block) continue;
       if (block.type === "text" && block.text) {
         items.push({ type: "message", message: { role: "assistant", content: block.text } });
+      } else if (block.type === "thinking" || block.type === "redacted_thinking") {
+        items.push({ type: "message", message: { role: "assistant", content: [block] } });
       } else if (block.type === "tool_use") {
         if (isHiddenToolCardName(block.name)) continue;
         items.push({
@@ -295,6 +297,10 @@ function extractAssistantRenderItems(message) {
       }
     }
     return items;
+  }
+
+  for (const block of extractThinkingBlocksForRender(message)) {
+    items.push({ type: "message", message: { role: "assistant", content: [block] } });
   }
 
   if (message.content && typeof message.content === "string") {
@@ -310,6 +316,72 @@ function extractAssistantRenderItems(message) {
   }
 
   return items;
+}
+
+function extractThinkingBlocksForRender(message) {
+  const blocks = [];
+
+  if (Array.isArray(message?.thinking_blocks)) {
+    blocks.push(...message.thinking_blocks);
+  }
+
+  const providerReasoningBlocks = message?.provider_specific_fields?.reasoningContentBlocks;
+  if (Array.isArray(providerReasoningBlocks)) {
+    for (const block of providerReasoningBlocks) {
+      const reasoningText = block?.reasoningText;
+      if (reasoningText) {
+        blocks.push({
+          type: "thinking",
+          thinking: reasoningText.text || reasoningText.thinking || "",
+          ...(reasoningText.signature ? { signature: reasoningText.signature } : {})
+        });
+        continue;
+      }
+
+      const redacted = block?.redactedContent || block?.redactedThinking || block?.redacted_thinking;
+      if (redacted?.data) {
+        blocks.push({ type: "redacted_thinking", data: redacted.data });
+      }
+    }
+  }
+
+  if (blocks.length === 0 && typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0) {
+    blocks.push({ type: "thinking", thinking: message.reasoning_content });
+  }
+
+  if (blocks.length === 0 && typeof message?.thinking === "string" && message.thinking.length > 0) {
+    blocks.push({ type: "thinking", thinking: message.thinking });
+  }
+
+  if (blocks.length === 0) {
+    const reasoningDetailsText = flattenReasoningDetailsForRender(message?.reasoning_details);
+    if (reasoningDetailsText) {
+      blocks.push({ type: "thinking", thinking: reasoningDetailsText });
+    }
+  }
+
+  return blocks.filter(block => {
+    if (block?.type === "thinking") return typeof block.thinking === "string" || typeof block.signature === "string";
+    if (block?.type === "redacted_thinking") return typeof block.data === "string" && block.data.length > 0;
+    return false;
+  });
+}
+
+function flattenReasoningDetailsForRender(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map(flattenReasoningDetailsForRender).filter(Boolean).join("\n\n").trim();
+  }
+  if (value && typeof value === "object") {
+    return [
+      value.text,
+      value.reasoning,
+      value.summary,
+      value.content,
+      value.output_text
+    ].map(flattenReasoningDetailsForRender).filter(Boolean).join("\n\n").trim();
+  }
+  return "";
 }
 
 function normalizeOpenAIToolCall(toolCall) {

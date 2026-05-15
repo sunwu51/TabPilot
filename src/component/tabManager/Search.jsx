@@ -14,7 +14,7 @@ function Search() {
   const [fromTabs, setFromTabs] = useState([])
   const [fromHistory, setFromHistory] = useState([])
   const [timestamp, setTimestamp] = useState(0)
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
   const preserveIndexRef = useRef(null)
 
   useEffect(() => {
@@ -46,10 +46,10 @@ function Search() {
 
       const total = fromTabs.length + fromHistory.length;
       if (preserveIndexRef.current !== null) {
-        setSelectedIndex(Math.min(preserveIndexRef.current, Math.max(total - 1, 0)));
+        setSelectedIndex(total > 0 ? Math.min(preserveIndexRef.current, total - 1) : -1);
         preserveIndexRef.current = null;
       } else {
-        setSelectedIndex(0);
+        setSelectedIndex(-1);
       }
     })()
   }, [filter, timestamp])
@@ -71,6 +71,9 @@ function Search() {
     preserveIndexRef.current = selectedIndex;
     await chrome.tabs.remove(tabId);
     setTimestamp(Date.now());
+    requestAnimationFrame(() => {
+      searchRef.current?.focus();
+    });
   }
 
   /** Switch to the tab or open history item at the given index */
@@ -93,16 +96,16 @@ function Search() {
     if (totalResults === 0) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelectedIndex(prev => Math.min(prev + 1, totalResults - 1));
+      setSelectedIndex(prev => Math.min(Math.max(prev, -1) + 1, totalResults - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelectedIndex(prev => Math.max(prev - 1, 0));
-    } else if (e.key === 'Enter') {
+      setSelectedIndex(prev => Math.max(prev <= 0 ? 0 : prev - 1, 0));
+    } else if (e.key === 'Enter' && selectedIndex >= 0) {
       e.preventDefault();
       switchToItem(selectedIndex);
     } else if (e.key === 'Escape') {
       setFilter("");
-    } else if ((e.key === 'Delete' || e.key === 'Backspace') && e.metaKey && selectedIndex < fromTabs.length) {
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && e.metaKey && selectedIndex >= 0 && selectedIndex < fromTabs.length) {
       e.preventDefault();
       closeTab(fromTabs[selectedIndex].tab.id);
     }
@@ -125,7 +128,7 @@ function Search() {
               <ul>
                 {
                   fromTabs.map((item, index) => (
-                    <li key={index} className="font-bold" onMouseMove={() => { searchRef.current.focus(); setSelectedIndex(index); }} onMouseLeave={() => searchRef.current.focus()}>
+                    <li key={index} className="font-bold" onMouseMove={() => { searchRef.current?.focus(); setSelectedIndex(index); }} onMouseLeave={() => searchRef.current?.focus()}>
                       <Button onPress={async () => {
                         if (item.tab.windowId != curWindow.id) {
                           await chrome.tabs.move(item.tab.id, { windowId: curWindow.id, index: -1 })

@@ -1197,6 +1197,57 @@
   color: #991b1b;
 }
 
+.thinking-result-msg {
+  border-color: #d1d5db;
+  background: #f8fafc;
+}
+
+.thinking-result-msg .tool-result-header {
+  color: #4b5563;
+}
+
+.thinking-result-content {
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.thinking-markdown-content {
+  padding: 8px 10px;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.thinking-markdown-content p {
+  margin: 0 0 6px;
+}
+
+.thinking-markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.thinking-markdown-content pre {
+  margin: 6px 0;
+}
+
+.thinking-signature-block {
+  border-top: 1px solid #e5e7eb;
+  background: #f3f4f6;
+}
+
+.thinking-signature-block summary {
+  padding: 5px 8px;
+  color: #6b7280;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-signature-block .tool-result-content {
+  max-height: 120px;
+}
+
 .streaming-tool-args-bubble {
   max-width: 100%;
   background: #f3f4f6;
