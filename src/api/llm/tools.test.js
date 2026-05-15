@@ -14,7 +14,7 @@ describe("llm tool definitions", () => {
     expect(buildMcpToolCallName("local", "search")).toBe("mcp_local_search");
   });
 
-  it("matches MCP tools across legacy and namespaced call-name formats", () => {
+  it("matches MCP tools by the canonical call-name format and sanitized variants", () => {
     const tool = {
       name: "tavily_tavily-search",
       _serverName: "mcpcenter",
@@ -23,16 +23,14 @@ describe("llm tool definitions", () => {
 
     expect(getMcpToolCallAliases(tool)).toEqual([
       "mcp_mcpcenter_tavily_tavily-search",
-      "mcp_mcpcenter_tavily_tavily_search",
-      "mcp__mcpcenter__tavily_tavily-search",
-      "mcp__mcpcenter__tavily_tavily_search"
+      "mcp_mcpcenter_tavily_tavily_search"
     ]);
     expect(findMcpToolByCallName([tool], "mcp_mcpcenter_tavily_tavily-search")).toBe(tool);
     expect(findMcpToolByCallName([tool], "mcp_mcpcenter_tavily_tavily_search")).toBe(tool);
-    expect(findMcpToolByCallName([tool], "mcp__mcpcenter__tavily_tavily-search")).toBe(tool);
-    expect(findMcpToolByCallName([tool], "mcp__mcpcenter__tavily_tavily_search")).toBe(tool);
+    expect(findMcpToolByCallName([tool], "mcp__mcpcenter__tavily_tavily-search")).toBe(null);
+    expect(findMcpToolByCallName([tool], "mcp__mcpcenter__tavily_tavily_search")).toBe(null);
     expect(isMcpToolCallName("mcp_mcpcenter_tavily_tavily_search")).toBe(true);
-    expect(isMcpToolCallName("mcp__mcpcenter__tavily_tavily_search")).toBe(true);
+    expect(isMcpToolCallName("mcp__mcpcenter__tavily_tavily_search")).toBe(false);
   });
 
   it("keeps beta macro tools enabled by default", () => {

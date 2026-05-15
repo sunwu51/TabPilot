@@ -675,12 +675,8 @@ export function buildMcpToolCallName(serverName, toolName) {
   return `mcp_${serverName}_${toolName}`;
 }
 
-export function buildNamespacedMcpToolCallName(serverName, toolName) {
-  return `mcp__${serverName}__${toolName}`;
-}
-
 export function isMcpToolCallName(toolName) {
-  return typeof toolName === "string" && (toolName.startsWith("mcp_") || toolName.startsWith("mcp__"));
+  return typeof toolName === "string" && toolName.startsWith("mcp_") && !toolName.startsWith("mcp__");
 }
 
 function buildMcpToolNameVariants(toolName) {
@@ -708,7 +704,6 @@ export function getMcpToolCallAliases(tool = {}) {
   if (serverName && toolName) {
     for (const toolNameVariant of buildMcpToolNameVariants(toolName)) {
       aliases.add(buildMcpToolCallName(serverName, toolNameVariant));
-      aliases.add(buildNamespacedMcpToolCallName(serverName, toolNameVariant));
     }
   }
 

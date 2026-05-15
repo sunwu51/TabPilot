@@ -1,6 +1,6 @@
 /* global chrome */
 import { callMcpTool } from "../mcp";
-import { findMcpToolByCallName, isMcpToolCallName } from "./tools";
+import { buildMcpToolCallName, findMcpToolByCallName, isMcpToolCallName } from "./tools";
 import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
 import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_AT, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 import { deflateStringToQueryParam } from "../../utils/playgroundCodec";

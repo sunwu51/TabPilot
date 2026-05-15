@@ -1,5 +1,6 @@
+/* global chrome */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { captureFullPageScreenshotToTab, executeTool, openHelloWorldPlayground } from "./builtins";
+import { executeTool, openHelloWorldPlayground } from "./builtins";
 
 vi.mock("../mcp", () => ({
   callMcpTool: vi.fn(async (url, headers, name, args, timeoutMs) => ({
@@ -53,7 +54,7 @@ describe("built-in tool execution", () => {
     expect(result).toMatchObject({ name: "lookup", args: { query: "tabs" } });
   });
 
-  it("routes namespaced MCP aliases to the same registry tool", async () => {
+  it("rejects namespaced MCP aliases outside the canonical call-name format", async () => {
     const { callMcpTool } = await import("../mcp");
     chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
 
@@ -67,14 +68,8 @@ describe("built-in tool execution", () => {
       }
     ]);
 
-    expect(callMcpTool).toHaveBeenCalledWith(
-      "https://mcp.example/rpc",
-      { Authorization: "Bearer token" },
-      "tavily_tavily-search",
-      { query: "tabs" },
-      2000
-    );
-    expect(result).toMatchObject({ name: "tavily_tavily-search", args: { query: "tabs" } });
+    expect(result).toMatchObject({ error: "Unknown tool: mcp__mcpcenter__tavily_tavily_search" });
+    expect(callMcpTool).not.toHaveBeenCalled();
   });
 
   it("routes run_macro with flat arguments to the macro manager", async () => {
