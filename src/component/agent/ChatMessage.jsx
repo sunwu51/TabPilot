@@ -307,6 +307,10 @@ export function AssistantTextBubble({ text, searchState }) {
   );
 }
 
+export function AssistantThinkingBubble({ text }) {
+  return <ThinkingBlock block={{ type: "thinking", thinking: text }} />;
+}
+
 function CodeBlock({ children, className = "", ...props }) {
   const [copied, setCopied] = useState(false);
   const codeText = extractReactText(children);
@@ -391,7 +395,7 @@ function ThinkingBlock({ block }) {
     <div className="tool-result-msg thinking-result-msg" onClick={() => setExpanded(!expanded)}>
       <div className="tool-result-header">
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">Thinking · {summary}</span>
+        <span className="tool-result-label">💭 {summary}</span>
       </div>
       {expanded && (
         <div className="thinking-result-content" onClick={(event) => event.stopPropagation()}>
@@ -562,6 +566,10 @@ function extractThinkingBlocksFromMessage(msg) {
 
   if (blocks.length === 0 && typeof msg?.reasoning_content === "string" && msg.reasoning_content.length > 0) {
     blocks.push({ type: "thinking", thinking: msg.reasoning_content });
+  }
+
+  if (blocks.length === 0 && typeof msg?.reasoning === "string" && msg.reasoning.length > 0) {
+    blocks.push({ type: "thinking", thinking: msg.reasoning });
   }
 
   if (blocks.length === 0 && typeof msg?.thinking === "string" && msg.thinking.length > 0) {

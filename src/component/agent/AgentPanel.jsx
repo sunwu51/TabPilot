@@ -31,7 +31,7 @@ import {
   mergeLoadedSkills
 } from "../../api/skills";
 import ChatMessageList from "./ChatMessageList";
-import { AssistantTextBubble } from "./ChatMessage";
+import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
@@ -70,11 +70,12 @@ export default function AgentPanel() {
   const [skillStationTools, setSkillStationTools] = useState([]);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false, reasoningEffort: "default" });
+  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false, reasoningEffort: "default", omitThinkingFromRequests: false });
   const [contextUsage, setContextUsage] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
+  const [streamingThinking, setStreamingThinking] = useState(null);
   const [streamingToolArgs, setStreamingToolArgs] = useState(null);
   const [searchMode, setSearchMode] = useState(false);
   const [searchScope, setSearchScope] = useState("current");
@@ -112,6 +113,7 @@ export default function AgentPanel() {
   const imageInputRef = useRef(null);
   const textInputRef = useRef(null);
   const sessionStreamingRef = useRef(new Map());
+  const sessionStreamingThinkingRef = useRef(new Map());
   const clearConfirmResolverRef = useRef(null);
   const clearConfirmButtonRef = useRef(null);
   const isMacPlatform = platformInfo?.os === "mac";
@@ -136,11 +138,11 @@ export default function AgentPanel() {
    */
   useEffect(() => {
     if (!shouldAutoFollowBottomRef.current) {
-      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingToolArgs !== null);
+      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingThinking !== null || streamingToolArgs !== null);
       return;
     }
     scrollMessagesToBottom("auto");
-  }, [messages, streamingContent, streamingToolArgs]);
+  }, [messages, streamingContent, streamingThinking, streamingToolArgs]);
 
   useEffect(() => {
     if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
@@ -335,7 +337,8 @@ export default function AgentPanel() {
           apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
           model: nextConfig.model || "",
           supportsImageInput: nextConfig.supportsImageInput === true,
-          reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort)
+          reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
+          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true
         });
       }
     }
@@ -430,7 +433,8 @@ export default function AgentPanel() {
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
       supportsImageInput: llmConfig?.supportsImageInput === true,
-      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort)
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
     });
   }
 
@@ -515,6 +519,7 @@ export default function AgentPanel() {
       setGlobalSearchStatus("");
     }
     setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
+    setStreamingThinking(sessionStreamingThinkingRef.current.get(id) ?? null);
     setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
       const cached = sessionMessagesRef.current.get(id);
       const [msgs, meta] = await Promise.all([
@@ -545,6 +550,8 @@ export default function AgentPanel() {
       shouldFocusInputWhenReadyRef.current = true;
       setStreamingContent(null);
       sessionStreamingRef.current.delete(targetSessionId);
+      setStreamingThinking(null);
+      sessionStreamingThinkingRef.current.delete(targetSessionId);
       setStreamingToolArgs(null);
       sessionStreamingToolArgsRef.current.delete(targetSessionId);
     }
@@ -906,6 +913,9 @@ export default function AgentPanel() {
     setShowJumpToBottom(false);
     setContextUsage(null);
     setMessages([]);
+    setStreamingContent(null);
+    setStreamingThinking(null);
+    setStreamingToolArgs(null);
     setLoading(false);
     setSessions(await listSessions());
     setShowHistory(false);
@@ -1058,7 +1068,8 @@ export default function AgentPanel() {
         model: "",
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false,
-        reasoningEffort: "default"
+        reasoningEffort: "default",
+        omitThinkingFromRequests: false
       },
       betaFeaturesEnabled: true
     });
@@ -1066,13 +1077,15 @@ export default function AgentPanel() {
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
       supportsImageInput: llmConfig?.supportsImageInput === true,
-      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort)
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
     });
     return {
       ...llmConfig,
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
   }
@@ -1170,17 +1183,21 @@ export default function AgentPanel() {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt();
     const apiConversationMessages = buildApiMessages(config.apiType, conversationMessages, {
-      supportsImageInput: config.supportsImageInput === true
+      supportsImageInput: config.supportsImageInput === true,
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true
     });
     const fullMessages = [{ role: "system", content: systemPrompt }, ...apiConversationMessages];
 
     let streamedContent = "";
+    let streamedThinking = "";
     let streamedToolArgs = null;
 
     setSessionMessages(targetSessionId, conversationMessages);
     void autoSave(targetSessionId, conversationMessages);
     setStreamingContent("");
+    setStreamingThinking(null);
     setStreamingToolArgs(null);
+    sessionStreamingThinkingRef.current.delete(targetSessionId);
     sessionStreamingToolArgsRef.current.delete(targetSessionId);
 
     const abort = streamChat(config, fullMessages, {
@@ -1190,6 +1207,14 @@ export default function AgentPanel() {
         streamedContent += chunk;
         sessionStreamingRef.current.set(targetSessionId, streamedContent);
         setStreamingContent(streamedContent);
+      },
+
+      onThinking: (chunk) => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        if (activeSessionIdRef.current !== targetSessionId) return;
+        streamedThinking += chunk;
+        sessionStreamingThinkingRef.current.set(targetSessionId, streamedThinking);
+        setStreamingThinking(streamedThinking);
       },
 
       onToolArgsDelta: (event) => {
@@ -1215,10 +1240,13 @@ export default function AgentPanel() {
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         streamedContent = "";
+        streamedThinking = "";
         streamedToolArgs = null;
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         setStreamingContent("");
+        setStreamingThinking(null);
         setStreamingToolArgs(null);
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
@@ -1226,8 +1254,10 @@ export default function AgentPanel() {
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        setStreamingThinking(null);
         setStreamingToolArgs(null);
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         try {
           // Streaming phase is over; clear the old request abort handle before tool execution.
@@ -1354,8 +1384,10 @@ export default function AgentPanel() {
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        setStreamingThinking(null);
         setStreamingToolArgs(null);
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         toast.error(`LLM 错误: ${err.message}`);
         const stampedMessages = stampLastUserDuration(conversationMessages);
@@ -1367,6 +1399,7 @@ export default function AgentPanel() {
     }, combinedMcpTools, {
       sessionId: targetSessionId,
       supportsImageInput: config.supportsImageInput === true,
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false
     });
 
@@ -2106,13 +2139,16 @@ export default function AgentPanel() {
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
               />
+              {streamingThinking !== null && streamingThinking.length > 0 && (
+                <AssistantThinkingBubble text={streamingThinking} />
+              )}
               {streamingContent !== null && streamingContent.length > 0 && (
                 <AssistantTextBubble text={streamingContent} />
               )}
               {streamingToolArgs && (
                 <StreamingToolArgsBubble state={streamingToolArgs} />
               )}
-              {loading && streamingContent === "" && !streamingToolArgs && (
+              {loading && streamingContent === "" && !streamingThinking && !streamingToolArgs && (
                 <div className="chat-msg chat-msg-assistant">
                   <div className="chat-bubble chat-bubble-assistant loading-dots">思考中</div>
                 </div>
@@ -3159,6 +3195,9 @@ function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
   if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
     message._responsesContent = doneMsg.response_content;
   }
+  if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
+    message._responsesReasoningItems = doneMsg.response_reasoning_items;
+  }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
 
@@ -3196,6 +3235,9 @@ function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
   }
   if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
     message._responsesContent = doneMsg.response_content;
+  }
+  if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
+    message._responsesReasoningItems = doneMsg.response_reasoning_items;
   }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
@@ -3429,14 +3471,17 @@ async function blobToDataUrl(blob) {
   });
 }
 
-function buildAnthropicAssistantContentFromMessage(msg) {
+function buildAnthropicAssistantContentFromMessage(msg, options = {}) {
+  const omitThinking = shouldOmitThinkingFromRequests(options);
+
   if (Array.isArray(msg.content)) {
-    const hasThinkingBlocks = msg.content.some(isAnthropicThinkingBlock);
-    const prependedThinkingBlocks = hasThinkingBlocks ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
-    return normalizeAnthropicAssistantContentBlocks([...prependedThinkingBlocks, ...msg.content]);
+    const contentBlocks = omitThinking ? msg.content.filter(block => !isAnthropicThinkingBlock(block)) : msg.content;
+    const hasThinkingBlocks = contentBlocks.some(isAnthropicThinkingBlock);
+    const prependedThinkingBlocks = omitThinking || hasThinkingBlocks ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
+    return normalizeAnthropicAssistantContentBlocks([...prependedThinkingBlocks, ...contentBlocks]);
   }
 
-  const blocks = extractAnthropicThinkingBlocksFromMessage(msg);
+  const blocks = omitThinking ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
   if (msg.content && typeof msg.content === "string" && msg.content.length > 0) {
     blocks.push({ type: "text", text: msg.content });
   }
@@ -3482,7 +3527,8 @@ function normalizeAnthropicAssistantContentBlock(block) {
   }
 
   if (block.type === "thinking") {
-    if (typeof block.thinking !== "string" && !block.signature) return null;
+    const signature = typeof block.signature === "string" ? block.signature : "";
+    if (!signature) return null;
     return {
       ...block,
       thinking: typeof block.thinking === "string" ? block.thinking : ""
@@ -3515,11 +3561,11 @@ function extractAnthropicThinkingBlocksFromMessage(msg) {
   if (Array.isArray(providerReasoningBlocks)) {
     for (const block of providerReasoningBlocks) {
       const reasoningText = block?.reasoningText;
-      if (reasoningText) {
+      if (reasoningText?.signature) {
         blocks.push({
           type: "thinking",
           thinking: reasoningText.text || reasoningText.thinking || "",
-          ...(reasoningText.signature ? { signature: reasoningText.signature } : {})
+          signature: reasoningText.signature
         });
         continue;
       }
@@ -3531,14 +3577,6 @@ function extractAnthropicThinkingBlocksFromMessage(msg) {
     }
   }
 
-  if (blocks.length === 0 && typeof msg?.reasoning_content === "string" && msg.reasoning_content.length > 0) {
-    blocks.push({ type: "thinking", thinking: msg.reasoning_content });
-  }
-
-  if (blocks.length === 0 && typeof msg?.thinking === "string" && msg.thinking.length > 0) {
-    blocks.push({ type: "thinking", thinking: msg.thinking });
-  }
-
   return normalizeAnthropicAssistantContentBlocks(blocks).filter(isAnthropicThinkingBlock);
 }
 
@@ -3546,9 +3584,10 @@ function isAnthropicThinkingBlock(block) {
   return block?.type === "thinking" || block?.type === "redacted_thinking";
 }
 
-function buildOpenAIAssistantMessageFromAnthropic(msg) {
-  if (!Array.isArray(msg.content)) return buildOpenAIAssistantMessageForApi(msg);
+function buildOpenAIAssistantMessageFromAnthropic(msg, options = {}) {
+  if (!Array.isArray(msg.content)) return buildOpenAIAssistantMessageForApi(msg, options);
 
+  const omitThinking = shouldOmitThinkingFromRequests(options);
   const textParts = [];
   const reasoningParts = [];
   const toolCalls = [];
@@ -3557,7 +3596,7 @@ function buildOpenAIAssistantMessageFromAnthropic(msg) {
     if (!block) continue;
     if (block.type === "text" && block.text) {
       textParts.push(block.text);
-    } else if (block.type === "thinking" && block.thinking) {
+    } else if (!omitThinking && block.type === "thinking" && block.thinking) {
       reasoningParts.push(block.thinking);
     } else if (block.type === "tool_use" && block.name) {
       toolCalls.push({
@@ -3579,12 +3618,12 @@ function buildOpenAIAssistantMessageFromAnthropic(msg) {
   if (reasoningParts.length > 0) {
     apiMessage.reasoning_content = reasoningParts.join("");
   }
-  return copyOpenAIReasoningFieldsForApi(msg, apiMessage);
+  return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
 }
 
-function buildOpenAIAssistantMessageForApi(msg) {
+function buildOpenAIAssistantMessageForApi(msg, options = {}) {
   if (Array.isArray(msg.content)) {
-    return buildOpenAIAssistantMessageFromAnthropic(msg);
+    return buildOpenAIAssistantMessageFromAnthropic(msg, options);
   }
 
   const apiMessage = {
@@ -3594,10 +3633,12 @@ function buildOpenAIAssistantMessageForApi(msg) {
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
     apiMessage.tool_calls = msg.tool_calls;
   }
-  return copyOpenAIReasoningFieldsForApi(msg, apiMessage);
+  return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
 }
 
-function copyOpenAIReasoningFieldsForApi(source, target) {
+function copyOpenAIReasoningFieldsForApi(source, target, options = {}) {
+  if (shouldOmitThinkingFromRequests(options)) return target;
+
   const reasoningContent = getOpenAIReasoningContentForApi(source);
   if (reasoningContent != null) {
     target.reasoning_content = reasoningContent;
@@ -3621,6 +3662,15 @@ function getOpenAIReasoningContentForApi(msg) {
   return null;
 }
 
+function copyOpenAIProviderMetadataForApi(source, target, options = {}) {
+  if (shouldOmitThinkingFromRequests(options)) return target;
+  if (normalizeApiType(options.apiType) !== API_TYPES.OPENAI_RESPONSES) return target;
+  if (Array.isArray(source?._responsesReasoningItems) && source._responsesReasoningItems.length > 0) {
+    target._responsesReasoningItems = source._responsesReasoningItems;
+  }
+  return target;
+}
+
 function buildOpenAIApiMessages(messages, options = {}) {
   const apiMessages = [];
 
@@ -3637,7 +3687,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
         j += 1;
       }
 
-      apiMessages.push(buildOpenAIAssistantMessageForApi(msg));
+      apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
       apiMessages.push(...followingToolMessages.map(toolMsg => ({
         role: "tool",
         tool_call_id: toolMsg.tool_call_id,
@@ -3649,7 +3699,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
     }
 
     if (msg.role === "assistant") {
-      apiMessages.push(buildOpenAIAssistantMessageForApi(msg));
+      apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
       continue;
     }
 
@@ -3680,7 +3730,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(buildPlainApiMessage(msg));
+    apiMessages.push(buildPlainApiMessage(msg, options));
   }
 
   return apiMessages;
@@ -3713,7 +3763,7 @@ function buildAnthropicApiMessages(messages, options = {}) {
     }
 
     if (msg.role === "assistant") {
-      const content = buildAnthropicAssistantContentFromMessage(msg);
+      const content = buildAnthropicAssistantContentFromMessage(msg, options);
       if (content.length === 0) continue;
       apiMessages.push({ role: "assistant", content });
       continue;
@@ -3734,13 +3784,13 @@ function buildAnthropicApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(buildPlainApiMessage(msg));
+    apiMessages.push(buildPlainApiMessage(msg, options));
   }
 
   return apiMessages;
 }
 
-function buildPlainApiMessage(msg) {
+function buildPlainApiMessage(msg, options = {}) {
   if (!msg || typeof msg !== "object") return msg;
 
   const apiMessage = { ...msg };
@@ -3754,14 +3804,32 @@ function buildPlainApiMessage(msg) {
   ]) {
     delete apiMessage[field];
   }
+  if (shouldOmitThinkingFromRequests(options)) {
+    for (const field of [
+      "thinking_blocks",
+      "provider_specific_fields",
+      "reasoning_content",
+      "reasoning",
+      "reasoning_details",
+      "thinking",
+      "_responsesReasoningItems"
+    ]) {
+      delete apiMessage[field];
+    }
+  }
   return apiMessage;
 }
 
+function shouldOmitThinkingFromRequests(options = {}) {
+  return options.omitThinkingFromRequests === true;
+}
+
 function buildApiMessages(apiType, messages, options = {}) {
-  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
+  const normalizedApiType = normalizeApiType(apiType);
+  if (normalizedApiType === API_TYPES.ANTHROPIC) {
     return buildAnthropicApiMessages(messages, options);
   }
-  return buildOpenAIApiMessages(messages, options);
+  return buildOpenAIApiMessages(messages, { ...options, apiType: normalizedApiType });
 }
 
 function buildPlatformSystemPrompt(platformInfo) {

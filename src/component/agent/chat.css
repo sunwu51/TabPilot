@@ -1198,12 +1198,12 @@
 }
 
 .thinking-result-msg {
-  border-color: #d1d5db;
-  background: #f8fafc;
+  border-color: #e5e7eb;
+  background: #f3f4f6;
 }
 
 .thinking-result-msg .tool-result-header {
-  color: #4b5563;
+  color: #6b7280;
 }
 
 .thinking-result-content {

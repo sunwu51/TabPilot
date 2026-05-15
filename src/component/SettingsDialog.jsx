@@ -21,7 +21,8 @@ const DEFAULT_SETTINGS = {
     model: "",
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
-    reasoningEffort: "default"
+    reasoningEffort: "default",
+    omitThinkingFromRequests: false
   },
   mcpToolTimeoutSeconds: 60,
   reuse: false,
@@ -56,6 +57,7 @@ function SettingsDialogBody() {
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
   const [reasoningEffort, setReasoningEffort] = useState(DEFAULT_SETTINGS.llmConfig.reasoningEffort);
+  const [omitThinkingFromRequests, setOmitThinkingFromRequests] = useState(DEFAULT_SETTINGS.llmConfig.omitThinkingFromRequests);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
@@ -119,6 +121,7 @@ function SettingsDialogBody() {
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
       setReasoningEffort(normalizeReasoningEffort(nextLlmConfig.reasoningEffort));
+      setOmitThinkingFromRequests(nextLlmConfig.omitThinkingFromRequests === true);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
@@ -162,7 +165,8 @@ function SettingsDialogBody() {
           model,
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
-          reasoningEffort: normalizeReasoningEffort(reasoningEffort)
+          reasoningEffort: normalizeReasoningEffort(reasoningEffort),
+          omitThinkingFromRequests
         },
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
@@ -357,6 +361,11 @@ function SettingsDialogBody() {
           />
           <div className="settings-api-url-hint">
             默认不设置，由供应商决定；Anthropic 使用 adaptive thinking + output_config.effort，OpenAI 使用对应 reasoning effort 字段。
+          </div>
+          <div className="mt-2">
+            <Checkbox isSelected={omitThinkingFromRequests} onChange={setOmitThinkingFromRequests}>
+              <span className="text-sm">思考内容不再回传（节省 token）</span>
+            </Checkbox>
           </div>
           <Input
             label="MCP 工具超时（秒）"

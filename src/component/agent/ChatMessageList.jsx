@@ -186,12 +186,26 @@ function groupMessages(messages) {
 
     const toolCallCount = items.filter(item => item.type === "tool").length;
     if (toolCallCount > 5) {
+      const trailingThinking = splitTrailingThinkingMessage(messages[index], index);
+      if (trailingThinking) {
+        items.push(...trailingThinking.items);
+        index += 1;
+      }
+
       result.push({
         type: "tools",
         items,
         toolCallCount,
-        key: `tools-${start}-${group.length}-${toolCallCount}`
+        key: `tools-${start}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
       });
+      if (trailingThinking?.remainingMessage) {
+        result.push({
+          type: "message",
+          message: trailingThinking.remainingMessage,
+          index: trailingThinking.messageIndex,
+          key: `msg-${trailingThinking.messageIndex}-without-thinking`
+        });
+      }
     } else {
       result.push({
         type: "tool-sequence",
@@ -202,6 +216,61 @@ function groupMessages(messages) {
   }
 
   return result;
+}
+
+function splitTrailingThinkingMessage(message, messageIndex) {
+  if (!message || message.role !== "assistant" || isToolLikeMessage(message)) return null;
+
+  const thinkingBlocks = extractThinkingBlocksFromAssistantMessage(message);
+  if (thinkingBlocks.length === 0) return null;
+
+  const remainingMessage = stripThinkingFromAssistantMessage(message);
+  return {
+    messageIndex,
+    items: thinkingBlocks.map((block, index) => ({
+      type: "message",
+      message: { role: "assistant", content: [block] },
+      messageIndex,
+      key: `msg-${messageIndex}-trailing-thinking-${index}`
+    })),
+    remainingMessage: hasRenderableAssistantMessage(remainingMessage) ? remainingMessage : null
+  };
+}
+
+function extractThinkingBlocksFromAssistantMessage(message) {
+  if (Array.isArray(message?.content)) {
+    const contentBlocks = message.content.filter(block => block?.type === "thinking" || block?.type === "redacted_thinking");
+    if (contentBlocks.length > 0) return contentBlocks;
+  }
+  return extractThinkingBlocksForRender(message);
+}
+
+function stripThinkingFromAssistantMessage(message) {
+  const next = { ...message };
+  delete next.thinking_blocks;
+  delete next.provider_specific_fields;
+  delete next.reasoning_content;
+  delete next.reasoning;
+  delete next.reasoning_details;
+  delete next.thinking;
+
+  if (Array.isArray(message.content)) {
+    next.content = message.content.filter(block => block?.type !== "thinking" && block?.type !== "redacted_thinking");
+  }
+  return next;
+}
+
+function hasRenderableAssistantMessage(message) {
+  if (!message || message.role !== "assistant") return false;
+  if (typeof message.content === "string") return message.content.length > 0;
+  if (Array.isArray(message.content)) {
+    return message.content.some(block => {
+      if (!block) return false;
+      if (block.type === "text") return typeof block.text === "string" && block.text.length > 0;
+      return block.type !== "thinking" && block.type !== "redacted_thinking";
+    });
+  }
+  return Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
 }
 
 function buildToolSequenceItems(messages, startIndex) {
@@ -347,6 +416,10 @@ function extractThinkingBlocksForRender(message) {
 
   if (blocks.length === 0 && typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0) {
     blocks.push({ type: "thinking", thinking: message.reasoning_content });
+  }
+
+  if (blocks.length === 0 && typeof message?.reasoning === "string" && message.reasoning.length > 0) {
+    blocks.push({ type: "thinking", thinking: message.reasoning });
   }
 
   if (blocks.length === 0 && typeof message?.thinking === "string" && message.thinking.length > 0) {

@@ -8,7 +8,7 @@ import { buildAnthropicReasoningFields } from "./reasoning";
 
 // ==================== Anthropic Messages API ====================
 
-export async function streamAnthropicAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
+export async function streamAnthropicAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.ANTHROPIC, mcpTools, options);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 
@@ -96,6 +96,8 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
               if (block.type === "text" && block.text) {
                 fullContent += block.text;
                 onText?.(block.text);
+              } else if (block.type === "thinking" && block.thinking) {
+                onThinking?.(block.thinking, { field: "thinking", provider: API_TYPES.ANTHROPIC });
               }
             }
           } else if (json.type === "content_block_delta") {
@@ -119,7 +121,11 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
                 });
               }
             } else if (json.delta?.type === "thinking_delta" && block?.type === "thinking") {
-              block.thinking += json.delta.thinking || "";
+              const thinking = json.delta.thinking || "";
+              block.thinking += thinking;
+              if (thinking) {
+                onThinking?.(thinking, { field: "thinking", provider: API_TYPES.ANTHROPIC });
+              }
             } else if (json.delta?.type === "signature_delta" && block?.type === "thinking") {
               block.signature = (block.signature || "") + (json.delta.signature || "");
             }
@@ -302,5 +308,4 @@ function extractAnthropicStreamUsage(event) {
 function mergeAnthropicUsage(current = {}, next) {
   return mergeUsage(current, next);
 }
-
 
