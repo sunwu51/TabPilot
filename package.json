@@ -1,7 +1,7 @@
 {
   "name": "tab-manager",
   "private": true,
-  "version": "1.5.4.6",
+  "version": "1.5.4.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@sunwu51/camel-ui": "^0.0.3",
+    "@sunwu51/camel-ui": "^0.0.6",
     "highlight.js": "^11.11.1",
     "pako": "^2.1.0",
     "react": "^18.2.0",

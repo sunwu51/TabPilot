@@ -28,6 +28,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
   // User message
   if (role === "user") {
     const { sentAt, durationMs } = msg;
+    const injectedContext = normalizeInjectedUserContext(msg.injectedUserContext);
     // Skip Anthropic tool_result format
     if (Array.isArray(content) && content.some(block => block.type === "tool_result")) {
       return null;
@@ -69,7 +70,12 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
               </Dialog>
             )}
             <div className="chat-bubble chat-bubble-user">
-              <UserMultimodalContent content={content} searchState={messageSearchState} />
+              <UserMultimodalContent
+                content={content}
+                searchState={messageSearchState}
+                displayContent={msg.displayContent}
+              />
+              <InjectedUserContextBlock context={injectedContext} />
             </div>
             {sentAt && (
               <div className="chat-msg-time-row">
@@ -114,7 +120,10 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
               </div>
             </Dialog>
           )}
-          <div className="chat-bubble chat-bubble-user">{renderHighlightedText(content, messageSearchState)}</div>
+          <div className="chat-bubble chat-bubble-user">
+            {renderHighlightedText(msg.displayContent || content, messageSearchState)}
+            <InjectedUserContextBlock context={injectedContext} />
+          </div>
           {sentAt && (
             <div className="chat-msg-time-row">
               <div>{formatTime(sentAt)}</div>
@@ -204,14 +213,17 @@ export default ChatMessage;
 
 /** Render user multimodal content (text + images) */
 /* eslint-disable react/prop-types */
-function UserMultimodalContent({ content, searchState }) {
+function UserMultimodalContent({ content, searchState, displayContent }) {
   if (!Array.isArray(content)) return null;
+  let displayedText = false;
 
   return (
     <>
       {content.map((block, index) => {
         if (block.type === "text") {
-          return <div key={index}>{renderHighlightedText(block.text, searchState)}</div>;
+          const text = displayContent && !displayedText ? displayContent : block.text;
+          displayedText = true;
+          return <div key={index}>{renderHighlightedText(text, searchState)}</div>;
         }
         if (block.type === "file") {
           return (
@@ -286,7 +298,7 @@ export function AssistantTextBubble({ text, searchState }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={buildAssistantRehypePlugins()}
-            components={{ pre: CodeBlock }}
+            components={ASSISTANT_MARKDOWN_COMPONENTS}
           >
             {text}
           </ReactMarkdown>
@@ -406,7 +418,7 @@ function ThinkingBlock({ block }) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={buildAssistantRehypePlugins()}
-                components={{ pre: CodeBlock }}
+                components={ASSISTANT_MARKDOWN_COMPONENTS}
               >
                 {thinkingText || "_空内容_"}
               </ReactMarkdown>
@@ -642,6 +654,102 @@ function isSearchableChatMessage(message) {
 
 function buildAssistantRehypePlugins() {
   return [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+}
+
+function normalizeInjectedUserContext(context) {
+  const tabs = Array.isArray(context?.tabs) ? context.tabs.filter(tab => tab?.id) : [];
+  const skills = Array.isArray(context?.skills) ? context.skills.filter(skill => skill?.path) : [];
+  if (tabs.length === 0 && skills.length === 0) return null;
+  return { tabs, skills };
+}
+
+function InjectedUserContextBlock({ context }) {
+  if (!context) return null;
+  return (
+    <div className="chat-user-injected-context">
+      <div className="chat-user-injected-title">注入的用户消息</div>
+      {context.tabs.length > 0 && (
+        <div className="chat-user-injected-list">
+          {context.tabs.map(tab => (
+            <div key={`tab-${tab.id}`} className="chat-user-injected-item">
+              <span className="chat-user-injected-kind">@tab</span>
+              <span className="chat-user-injected-text">{tab.title || "未命名标签页"}</span>
+              <span className="chat-user-injected-meta">#{tab.id}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {context.skills.length > 0 && (
+        <div className="chat-user-injected-list">
+          {context.skills.map(skill => (
+            <div key={`skill-${skill.path}`} className="chat-user-injected-item">
+              <span className="chat-user-injected-kind">/skill</span>
+              <span className="chat-user-injected-text">{skill.name || skill.path}</span>
+              <span className="chat-user-injected-meta">{skill.path}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ASSISTANT_MARKDOWN_COMPONENTS = {
+  pre: CodeBlock,
+  a: MarkdownLink
+};
+
+function MarkdownLink({ href, children, ...props }) {
+  const safeHref = normalizeMarkdownHref(href);
+
+  async function handleClick(event) {
+    if (!safeHref || safeHref.startsWith("#")) return;
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      if (/^https?:/i.test(safeHref) && typeof chrome !== "undefined" && chrome.tabs?.create) {
+        await chrome.tabs.create({ url: safeHref, active: true });
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to open markdown link in tab:", error);
+    }
+
+    window.open(safeHref, "_blank", "noopener,noreferrer");
+  }
+
+  return (
+    <a
+      {...props}
+      href={safeHref || undefined}
+      target={safeHref && !safeHref.startsWith("#") ? "_blank" : undefined}
+      rel={safeHref && !safeHref.startsWith("#") ? "noopener noreferrer" : undefined}
+      onClick={handleClick}
+    >
+      {children}
+    </a>
+  );
+}
+
+function normalizeMarkdownHref(href) {
+  const raw = String(href || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("#")) return raw;
+
+  try {
+    const resolved = new URL(raw, window.location.href);
+    if (["http:", "https:", "mailto:", "tel:"].includes(resolved.protocol)) {
+      return resolved.href;
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }
 
 function renderHighlightedText(value, searchState) {

@@ -53,6 +53,30 @@ describe("built-in tool execution", () => {
     expect(result).toMatchObject({ name: "lookup", args: { query: "tabs" } });
   });
 
+  it("routes namespaced MCP aliases to the same registry tool", async () => {
+    const { callMcpTool } = await import("../mcp");
+    chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
+
+    const result = await executeTool("mcp__mcpcenter__tavily_tavily_search", { query: "tabs" }, [
+      {
+        name: "tavily_tavily-search",
+        _serverName: "mcpcenter",
+        _toolCallName: "mcp_mcpcenter_tavily_tavily-search",
+        _serverUrl: "https://mcp.example/rpc",
+        _serverHeaders: { Authorization: "Bearer token" }
+      }
+    ]);
+
+    expect(callMcpTool).toHaveBeenCalledWith(
+      "https://mcp.example/rpc",
+      { Authorization: "Bearer token" },
+      "tavily_tavily-search",
+      { query: "tabs" },
+      2000
+    );
+    expect(result).toMatchObject({ name: "tavily_tavily-search", args: { query: "tabs" } });
+  });
+
   it("routes run_macro with flat arguments to the macro manager", async () => {
     chrome.runtime.sendMessage.mockImplementationOnce((message, callback) => {
       callback({ success: true, tabId: 9, report: { ok: true } });

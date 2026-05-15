@@ -360,11 +360,11 @@ function SettingsDialogBody() {
             }}
           />
           <div className="settings-api-url-hint">
-            默认不设置，由供应商决定；Anthropic 使用 adaptive thinking + output_config.effort，OpenAI 使用对应 reasoning effort 字段。
+            默认不设置，由供应商决定
           </div>
           <div className="mt-2">
             <Checkbox isSelected={omitThinkingFromRequests} onChange={setOmitThinkingFromRequests}>
-              <span className="text-sm">思考内容不再回传（节省 token）</span>
+              <span className="text-sm">思考内容不回传（需供应商支持）</span>
             </Checkbox>
           </div>
           <Input

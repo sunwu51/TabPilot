@@ -1,6 +1,6 @@
 /* global chrome */
 import { callMcpTool } from "../mcp";
-import { buildMcpToolCallName } from "./tools";
+import { findMcpToolByCallName, isMcpToolCallName } from "./tools";
 import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
 import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_AT, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 import { deflateStringToQueryParam } from "../../utils/playgroundCodec";
@@ -19,10 +19,8 @@ import { deflateStringToQueryParam } from "../../utils/playgroundCodec";
 export async function executeTool(name, args, mcpRegistry = []) {
   try {
     // Route MCP tools to external server
-    if (name.startsWith("mcp_")) {
-      const mcpTool = mcpRegistry.find(t =>
-        (t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name)) === name
-      );
+    if (isMcpToolCallName(name)) {
+      const mcpTool = findMcpToolByCallName(mcpRegistry, name);
       if (!mcpTool) return { error: `MCP tool not found: ${name}` };
       const { mcpToolTimeoutSeconds } = await chrome.storage.local.get({
         mcpToolTimeoutSeconds: DEFAULT_MCP_TOOL_TIMEOUT_SECONDS
