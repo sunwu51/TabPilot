@@ -186,12 +186,26 @@ function groupMessages(messages) {
 
     const toolCallCount = items.filter(item => item.type === "tool").length;
     if (toolCallCount > 5) {
+      const trailingThinking = splitTrailingThinkingMessage(messages[index], index);
+      if (trailingThinking) {
+        items.push(...trailingThinking.items);
+        index += 1;
+      }
+
       result.push({
         type: "tools",
         items,
         toolCallCount,
-        key: `tools-${start}-${group.length}-${toolCallCount}`
+        key: `tools-${start}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
       });
+      if (trailingThinking?.remainingMessage) {
+        result.push({
+          type: "message",
+          message: trailingThinking.remainingMessage,
+          index: trailingThinking.messageIndex,
+          key: `msg-${trailingThinking.messageIndex}-without-thinking`
+        });
+      }
     } else {
       result.push({
         type: "tool-sequence",
@@ -202,6 +216,61 @@ function groupMessages(messages) {
   }
 
   return result;
+}
+
+function splitTrailingThinkingMessage(message, messageIndex) {
+  if (!message || message.role !== "assistant" || isToolLikeMessage(message)) return null;
+
+  const thinkingBlocks = extractThinkingBlocksFromAssistantMessage(message);
+  if (thinkingBlocks.length === 0) return null;
+
+  const remainingMessage = stripThinkingFromAssistantMessage(message);
+  return {
+    messageIndex,
+    items: thinkingBlocks.map((block, index) => ({
+      type: "message",
+      message: { role: "assistant", content: [block] },
+      messageIndex,
+      key: `msg-${messageIndex}-trailing-thinking-${index}`
+    })),
+    remainingMessage: hasRenderableAssistantMessage(remainingMessage) ? remainingMessage : null
+  };
+}
+
+function extractThinkingBlocksFromAssistantMessage(message) {
+  if (Array.isArray(message?.content)) {
+    const contentBlocks = message.content.filter(block => block?.type === "thinking" || block?.type === "redacted_thinking");
+    if (contentBlocks.length > 0) return contentBlocks;
+  }
+  return extractThinkingBlocksForRender(message);
+}
+
+function stripThinkingFromAssistantMessage(message) {
+  const next = { ...message };
+  delete next.thinking_blocks;
+  delete next.provider_specific_fields;
+  delete next.reasoning_content;
+  delete next.reasoning;
+  delete next.reasoning_details;
+  delete next.thinking;
+
+  if (Array.isArray(message.content)) {
+    next.content = message.content.filter(block => block?.type !== "thinking" && block?.type !== "redacted_thinking");
+  }
+  return next;
+}
+
+function hasRenderableAssistantMessage(message) {
+  if (!message || message.role !== "assistant") return false;
+  if (typeof message.content === "string") return message.content.length > 0;
+  if (Array.isArray(message.content)) {
+    return message.content.some(block => {
+      if (!block) return false;
+      if (block.type === "text") return typeof block.text === "string" && block.text.length > 0;
+      return block.type !== "thinking" && block.type !== "redacted_thinking";
+    });
+  }
+  return Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
 }
 
 function buildToolSequenceItems(messages, startIndex) {
@@ -284,6 +353,8 @@ function extractAssistantRenderItems(message) {
       if (!block) continue;
       if (block.type === "text" && block.text) {
         items.push({ type: "message", message: { role: "assistant", content: block.text } });
+      } else if (block.type === "thinking" || block.type === "redacted_thinking") {
+        items.push({ type: "message", message: { role: "assistant", content: [block] } });
       } else if (block.type === "tool_use") {
         if (isHiddenToolCardName(block.name)) continue;
         items.push({
@@ -295,6 +366,10 @@ function extractAssistantRenderItems(message) {
       }
     }
     return items;
+  }
+
+  for (const block of extractThinkingBlocksForRender(message)) {
+    items.push({ type: "message", message: { role: "assistant", content: [block] } });
   }
 
   if (message.content && typeof message.content === "string") {
@@ -310,6 +385,76 @@ function extractAssistantRenderItems(message) {
   }
 
   return items;
+}
+
+function extractThinkingBlocksForRender(message) {
+  const blocks = [];
+
+  if (Array.isArray(message?.thinking_blocks)) {
+    blocks.push(...message.thinking_blocks);
+  }
+
+  const providerReasoningBlocks = message?.provider_specific_fields?.reasoningContentBlocks;
+  if (Array.isArray(providerReasoningBlocks)) {
+    for (const block of providerReasoningBlocks) {
+      const reasoningText = block?.reasoningText;
+      if (reasoningText) {
+        blocks.push({
+          type: "thinking",
+          thinking: reasoningText.text || reasoningText.thinking || "",
+          ...(reasoningText.signature ? { signature: reasoningText.signature } : {})
+        });
+        continue;
+      }
+
+      const redacted = block?.redactedContent || block?.redactedThinking || block?.redacted_thinking;
+      if (redacted?.data) {
+        blocks.push({ type: "redacted_thinking", data: redacted.data });
+      }
+    }
+  }
+
+  if (blocks.length === 0 && typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0) {
+    blocks.push({ type: "thinking", thinking: message.reasoning_content });
+  }
+
+  if (blocks.length === 0 && typeof message?.reasoning === "string" && message.reasoning.length > 0) {
+    blocks.push({ type: "thinking", thinking: message.reasoning });
+  }
+
+  if (blocks.length === 0 && typeof message?.thinking === "string" && message.thinking.length > 0) {
+    blocks.push({ type: "thinking", thinking: message.thinking });
+  }
+
+  if (blocks.length === 0) {
+    const reasoningDetailsText = flattenReasoningDetailsForRender(message?.reasoning_details);
+    if (reasoningDetailsText) {
+      blocks.push({ type: "thinking", thinking: reasoningDetailsText });
+    }
+  }
+
+  return blocks.filter(block => {
+    if (block?.type === "thinking") return typeof block.thinking === "string" || typeof block.signature === "string";
+    if (block?.type === "redacted_thinking") return typeof block.data === "string" && block.data.length > 0;
+    return false;
+  });
+}
+
+function flattenReasoningDetailsForRender(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map(flattenReasoningDetailsForRender).filter(Boolean).join("\n\n").trim();
+  }
+  if (value && typeof value === "object") {
+    return [
+      value.text,
+      value.reasoning,
+      value.summary,
+      value.content,
+      value.output_text
+    ].map(flattenReasoningDetailsForRender).filter(Boolean).join("\n\n").trim();
+  }
+  return "";
 }
 
 function normalizeOpenAIToolCall(toolCall) {

@@ -8,7 +8,7 @@ import {
     getReuseDomainPolicy,
     setReuseDomainPolicy
 } from "./api/tabReuse";
-import { BUILTIN_TOOL_NAMES, executeTool } from "./api/llm";
+import { BUILTIN_TOOL_NAMES, executeTool, findMcpToolByCallName } from "./api/llm";
 import { connectWsBridge, disconnectWsBridge, ensureWsBridgeHealthy, getWsBridgeStatus, startWsBridge } from "./api/wsBridge";
 import {
     listMacros,
@@ -119,7 +119,7 @@ function buildScheduleMcpSnapshot(mcpRegistry = []) {
 
 function isKnownScheduledToolName(toolName, mcpRegistry = []) {
     if (BUILTIN_TOOL_NAMES.includes(toolName)) return true;
-    return (mcpRegistry || []).some(tool => tool?._toolCallName === toolName);
+    return !!findMcpToolByCallName(mcpRegistry, toolName);
 }
 
 async function executeToolWithTimeout(name, args, mcpRegistry, timeoutMs) {

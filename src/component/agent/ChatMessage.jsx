@@ -28,6 +28,7 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
   // User message
   if (role === "user") {
     const { sentAt, durationMs } = msg;
+    const injectedContext = normalizeInjectedUserContext(msg.injectedUserContext);
     // Skip Anthropic tool_result format
     if (Array.isArray(content) && content.some(block => block.type === "tool_result")) {
       return null;
@@ -69,7 +70,12 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
               </Dialog>
             )}
             <div className="chat-bubble chat-bubble-user">
-              <UserMultimodalContent content={content} searchState={messageSearchState} />
+              <UserMultimodalContent
+                content={content}
+                searchState={messageSearchState}
+                displayContent={msg.displayContent}
+              />
+              <InjectedUserContextBlock context={injectedContext} />
             </div>
             {sentAt && (
               <div className="chat-msg-time-row">
@@ -114,7 +120,10 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
               </div>
             </Dialog>
           )}
-          <div className="chat-bubble chat-bubble-user">{renderHighlightedText(content, messageSearchState)}</div>
+          <div className="chat-bubble chat-bubble-user">
+            {renderHighlightedText(msg.displayContent || content, messageSearchState)}
+            <InjectedUserContextBlock context={injectedContext} />
+          </div>
           {sentAt && (
             <div className="chat-msg-time-row">
               <div>{formatTime(sentAt)}</div>
@@ -146,6 +155,8 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
         if (!block) continue;
         if (block.type === "text" && block.text) {
           rendered.push(<AssistantTextBubble key={`t${i}`} text={block.text} searchState={messageSearchState} />);
+        } else if (block.type === "thinking" || block.type === "redacted_thinking") {
+          rendered.push(<ThinkingBlock key={`th${i}`} block={block} />);
         } else if (block.type === "tool_use") {
           rendered.push(<ToolCallBlock key={`tc${i}`} name={block.name} input={block.input} />);
         }
@@ -171,6 +182,17 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
       }
     }
 
+    if (rendered.length === 0) {
+      const fallbackThinkingBlocks = extractThinkingBlocksFromMessage(msg);
+      for (let i = 0; i < fallbackThinkingBlocks.length; i++) {
+        rendered.push(<ThinkingBlock key={`fth${i}`} block={fallbackThinkingBlocks[i]} />);
+      }
+    }
+
+    if ((!msg.tool_calls || msg.tool_calls.length === 0) && content && typeof content === "string") {
+      rendered.push(<AssistantTextBubble key="plain" text={content} searchState={messageSearchState} />);
+    }
+
     // If we rendered something from array/tool_calls, return it
     if (rendered.length > 0) return <>{rendered}</>;
 
@@ -191,14 +213,17 @@ export default ChatMessage;
 
 /** Render user multimodal content (text + images) */
 /* eslint-disable react/prop-types */
-function UserMultimodalContent({ content, searchState }) {
+function UserMultimodalContent({ content, searchState, displayContent }) {
   if (!Array.isArray(content)) return null;
+  let displayedText = false;
 
   return (
     <>
       {content.map((block, index) => {
         if (block.type === "text") {
-          return <div key={index}>{renderHighlightedText(block.text, searchState)}</div>;
+          const text = displayContent && !displayedText ? displayContent : block.text;
+          displayedText = true;
+          return <div key={index}>{renderHighlightedText(text, searchState)}</div>;
         }
         if (block.type === "file") {
           return (
@@ -273,7 +298,7 @@ export function AssistantTextBubble({ text, searchState }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={buildAssistantRehypePlugins()}
-            components={{ pre: CodeBlock }}
+            components={ASSISTANT_MARKDOWN_COMPONENTS}
           >
             {text}
           </ReactMarkdown>
@@ -292,6 +317,10 @@ export function AssistantTextBubble({ text, searchState }) {
       </div>
     </div>
   );
+}
+
+export function AssistantThinkingBubble({ text }) {
+  return <ThinkingBlock block={{ type: "thinking", thinking: text }} />;
 }
 
 function CodeBlock({ children, className = "", ...props }) {
@@ -360,6 +389,48 @@ function ToolCallBlock({ name, input }) {
         <pre className="tool-result-content">
           {typeof input === "object" ? JSON.stringify(input, null, 2) : String(input)}
         </pre>
+      )}
+    </div>
+  );
+}
+
+/* eslint-disable react/prop-types */
+function ThinkingBlock({ block }) {
+  const [expanded, setExpanded] = useState(false);
+  const isRedacted = block?.type === "redacted_thinking";
+  const thinkingText = typeof block?.thinking === "string" ? block.thinking : "";
+  const signature = typeof block?.signature === "string" ? block.signature : "";
+  const redactedData = typeof block?.data === "string" ? block.data : "";
+  const summary = isRedacted ? "内容已脱敏" : buildThinkingSummary(thinkingText);
+
+  return (
+    <div className="tool-result-msg thinking-result-msg" onClick={() => setExpanded(!expanded)}>
+      <div className="tool-result-header">
+        <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
+        <span className="tool-result-label">💭 {summary}</span>
+      </div>
+      {expanded && (
+        <div className="thinking-result-content" onClick={(event) => event.stopPropagation()}>
+          {isRedacted ? (
+            <pre className="tool-result-content">{redactedData || "redacted_thinking"}</pre>
+          ) : (
+            <div className="thinking-markdown-content">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={buildAssistantRehypePlugins()}
+                components={ASSISTANT_MARKDOWN_COMPONENTS}
+              >
+                {thinkingText || "_空内容_"}
+              </ReactMarkdown>
+            </div>
+          )}
+          {signature && (
+            <details className="thinking-signature-block">
+              <summary>signature</summary>
+              <pre className="tool-result-content">{signature}</pre>
+            </details>
+          )}
+        </div>
       )}
     </div>
   );
@@ -478,6 +549,89 @@ function safeJsonParse(value) {
   }
 }
 
+function extractThinkingBlocksFromMessage(msg) {
+  const blocks = [];
+
+  if (Array.isArray(msg?.thinking_blocks)) {
+    blocks.push(...msg.thinking_blocks);
+  }
+
+  const providerReasoningBlocks = msg?.provider_specific_fields?.reasoningContentBlocks;
+  if (Array.isArray(providerReasoningBlocks)) {
+    for (const block of providerReasoningBlocks) {
+      const reasoningText = block?.reasoningText;
+      if (reasoningText) {
+        blocks.push({
+          type: "thinking",
+          thinking: reasoningText.text || reasoningText.thinking || "",
+          ...(reasoningText.signature ? { signature: reasoningText.signature } : {})
+        });
+        continue;
+      }
+
+      const redacted = block?.redactedContent || block?.redactedThinking || block?.redacted_thinking;
+      if (redacted?.data) {
+        blocks.push({ type: "redacted_thinking", data: redacted.data });
+      }
+    }
+  }
+
+  if (blocks.length === 0 && typeof msg?.reasoning_content === "string" && msg.reasoning_content.length > 0) {
+    blocks.push({ type: "thinking", thinking: msg.reasoning_content });
+  }
+
+  if (blocks.length === 0 && typeof msg?.reasoning === "string" && msg.reasoning.length > 0) {
+    blocks.push({ type: "thinking", thinking: msg.reasoning });
+  }
+
+  if (blocks.length === 0 && typeof msg?.thinking === "string" && msg.thinking.length > 0) {
+    blocks.push({ type: "thinking", thinking: msg.thinking });
+  }
+
+  if (blocks.length === 0) {
+    const reasoningDetailsText = flattenReasoningDetails(msg?.reasoning_details);
+    if (reasoningDetailsText) {
+      blocks.push({ type: "thinking", thinking: reasoningDetailsText });
+    }
+  }
+
+  return blocks.filter(isRenderableThinkingBlock);
+}
+
+function isRenderableThinkingBlock(block) {
+  if (!block || typeof block !== "object") return false;
+  if (block.type === "thinking") {
+    return typeof block.thinking === "string" || typeof block.signature === "string";
+  }
+  if (block.type === "redacted_thinking") {
+    return typeof block.data === "string" && block.data.length > 0;
+  }
+  return false;
+}
+
+function flattenReasoningDetails(value) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map(flattenReasoningDetails).filter(Boolean).join("\n\n").trim();
+  }
+  if (value && typeof value === "object") {
+    return [
+      value.text,
+      value.reasoning,
+      value.summary,
+      value.content,
+      value.output_text
+    ].map(flattenReasoningDetails).filter(Boolean).join("\n\n").trim();
+  }
+  return "";
+}
+
+function buildThinkingSummary(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "空";
+  return normalized.length > 60 ? `${normalized.slice(0, 60)}...` : normalized;
+}
+
 function buildMessageSearchState(searchState, messageIndex) {
   if (!searchState || typeof messageIndex !== "number") return null;
   const query = String(searchState.query || "").trim();
@@ -500,6 +654,102 @@ function isSearchableChatMessage(message) {
 
 function buildAssistantRehypePlugins() {
   return [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+}
+
+function normalizeInjectedUserContext(context) {
+  const tabs = Array.isArray(context?.tabs) ? context.tabs.filter(tab => tab?.id) : [];
+  const skills = Array.isArray(context?.skills) ? context.skills.filter(skill => skill?.path) : [];
+  if (tabs.length === 0 && skills.length === 0) return null;
+  return { tabs, skills };
+}
+
+function InjectedUserContextBlock({ context }) {
+  if (!context) return null;
+  return (
+    <div className="chat-user-injected-context">
+      <div className="chat-user-injected-title">注入的用户消息</div>
+      {context.tabs.length > 0 && (
+        <div className="chat-user-injected-list">
+          {context.tabs.map(tab => (
+            <div key={`tab-${tab.id}`} className="chat-user-injected-item">
+              <span className="chat-user-injected-kind">@tab</span>
+              <span className="chat-user-injected-text">{tab.title || "未命名标签页"}</span>
+              <span className="chat-user-injected-meta">#{tab.id}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {context.skills.length > 0 && (
+        <div className="chat-user-injected-list">
+          {context.skills.map(skill => (
+            <div key={`skill-${skill.path}`} className="chat-user-injected-item">
+              <span className="chat-user-injected-kind">/skill</span>
+              <span className="chat-user-injected-text">{skill.name || skill.path}</span>
+              <span className="chat-user-injected-meta">{skill.path}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ASSISTANT_MARKDOWN_COMPONENTS = {
+  pre: CodeBlock,
+  a: MarkdownLink
+};
+
+function MarkdownLink({ href, children, ...props }) {
+  const safeHref = normalizeMarkdownHref(href);
+
+  async function handleClick(event) {
+    if (!safeHref || safeHref.startsWith("#")) return;
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      if (/^https?:/i.test(safeHref) && typeof chrome !== "undefined" && chrome.tabs?.create) {
+        await chrome.tabs.create({ url: safeHref, active: true });
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to open markdown link in tab:", error);
+    }
+
+    window.open(safeHref, "_blank", "noopener,noreferrer");
+  }
+
+  return (
+    <a
+      {...props}
+      href={safeHref || undefined}
+      target={safeHref && !safeHref.startsWith("#") ? "_blank" : undefined}
+      rel={safeHref && !safeHref.startsWith("#") ? "noopener noreferrer" : undefined}
+      onClick={handleClick}
+    >
+      {children}
+    </a>
+  );
+}
+
+function normalizeMarkdownHref(href) {
+  const raw = String(href || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("#")) return raw;
+
+  try {
+    const resolved = new URL(raw, window.location.href);
+    if (["http:", "https:", "mailto:", "tel:"].includes(resolved.protocol)) {
+      return resolved.href;
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }
 
 function renderHighlightedText(value, searchState) {

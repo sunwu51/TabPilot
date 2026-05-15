@@ -3,6 +3,7 @@ import { API_TYPES } from "./config";
 import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
 import { getTools } from "./tools";
 import { isLongToolArgumentName } from "./longToolArgs";
+import { buildOpenAIChatReasoningFields } from "./reasoning";
 
 export function buildOpenAICacheFields(options = {}) {
   const cacheKey = String(options?.sessionId || "").trim();
@@ -11,7 +12,7 @@ export function buildOpenAICacheFields(options = {}) {
 
 // ==================== OpenAI Compatible ====================
 
-export async function streamOpenAIAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
+export async function streamOpenAIAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_CHAT_COMPLETIONS, mcpTools, options);
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_CHAT_COMPLETIONS, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
@@ -29,6 +30,7 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
         tools,
         stream: true,
         stream_options: { include_usage: true },
+        ...buildOpenAIChatReasoningFields(config),
         ...buildOpenAICacheFields(options)
       }),
       signal: timeoutState.signal
@@ -92,9 +94,16 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
           const reasoningDeltas = extractOpenAIReasoningDeltas(delta);
           for (const [field, chunk] of Object.entries(reasoningDeltas)) {
             reasoningFields[field] = (reasoningFields[field] || "") + chunk;
+            onThinking?.(chunk, { field, provider: API_TYPES.OPENAI_CHAT_COMPLETIONS });
           }
           if (Array.isArray(delta.reasoning_details)) {
             reasoningDetails.push(...delta.reasoning_details);
+            if (Object.keys(reasoningDeltas).length === 0) {
+              const reasoningDetailsText = extractReasoningText(delta.reasoning_details);
+              if (reasoningDetailsText) {
+                onThinking?.(reasoningDetailsText, { field: "reasoning_details", provider: API_TYPES.OPENAI_CHAT_COMPLETIONS });
+              }
+            }
           }
 
           if (delta.tool_calls) {
@@ -237,7 +246,10 @@ function extractReasoningText(value) {
       value.reasoning_content,
       value.thinking,
       value.text,
-      value.content
+      value.summary,
+      value.summary_text,
+      value.content,
+      value.output_text
     ].map(extractReasoningText).join("");
   }
   return "";

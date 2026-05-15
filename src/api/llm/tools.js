@@ -469,7 +469,7 @@ export const TOOLS = [
       properties: {
         delaySeconds: { type: "number", description: "Seconds from now (e.g. 300 for 5 minutes). Preferred." },
         timestamp: { type: "number", description: "Absolute Unix timestamp in ms. Only if user gives exact datetime." },
-        toolName: { type: "string", description: "Name of the tool to call (e.g. tab_open, tab_close, mcp__xxx)" },
+        toolName: { type: "string", description: "Name of the tool to call (e.g. tab_open, tab_close, mcp_server_tool)" },
         toolArgs: { type: "object", description: "Required JSON object of arguments for the selected toolName. The shape and field names must strictly match that tool's input schema." },
         label: { type: "string", description: "Short human-readable description of this scheduled task" },
         timeoutSeconds: { type: "number", description: `Maximum execution time after the schedule fires. Defaults to ${DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS} seconds.` }
@@ -673,6 +673,70 @@ export const BUILTIN_TOOL_NAMES = TOOLS.map(t => t.name);
 
 export function buildMcpToolCallName(serverName, toolName) {
   return `mcp_${serverName}_${toolName}`;
+}
+
+export function isMcpToolCallName(toolName) {
+  return typeof toolName === "string" && toolName.startsWith("mcp_") && !toolName.startsWith("mcp__");
+}
+
+function buildMcpToolNameVariants(toolName) {
+  const normalizedName = String(toolName || "").trim();
+  const variants = new Set();
+  if (!normalizedName) return [];
+  variants.add(normalizedName);
+  const underscoreVariant = normalizedName.replace(/-/g, "_");
+  if (underscoreVariant) {
+    variants.add(underscoreVariant);
+  }
+  return [...variants];
+}
+
+export function getMcpToolCallAliases(tool = {}) {
+  const aliases = new Set();
+  const explicitToolCallName = String(tool?._toolCallName || "").trim();
+  const serverName = String(tool?._serverName || "server").trim();
+  const toolName = String(tool?.name || "").trim();
+
+  if (explicitToolCallName) {
+    aliases.add(explicitToolCallName);
+    aliases.add(explicitToolCallName.replace(/-/g, "_"));
+  }
+  if (serverName && toolName) {
+    for (const toolNameVariant of buildMcpToolNameVariants(toolName)) {
+      aliases.add(buildMcpToolCallName(serverName, toolNameVariant));
+    }
+  }
+
+  return [...aliases];
+}
+
+export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
+  const normalizedRequestedName = String(requestedName || "").trim();
+  if (!normalizedRequestedName) return null;
+
+  let rawNameMatch = null;
+  let rawNameAmbiguous = false;
+
+  for (const tool of mcpRegistry || []) {
+    if (!tool) continue;
+
+    if (String(tool.name || "").trim() === normalizedRequestedName) {
+      if (rawNameMatch) {
+        rawNameAmbiguous = true;
+      } else {
+        rawNameMatch = tool;
+      }
+    }
+
+    if (getMcpToolCallAliases(tool).includes(normalizedRequestedName)) {
+      return tool;
+    }
+  }
+
+  if (!rawNameAmbiguous) {
+    return rawNameMatch;
+  }
+  return null;
 }
 
 /**

@@ -4,20 +4,25 @@ import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmS
 import { getTools } from "./tools";
 import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completions";
 import { isLongToolArgumentName } from "./longToolArgs";
+import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "./reasoning";
 
-export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
+export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 
   try {
-    const { instructions, input } = buildResponsesRequestInput(messages);
+    const { instructions, input } = buildResponsesRequestInput(messages, {
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true || options.omitThinkingFromRequests === true
+    });
     const requestBody = {
       model: config.model,
       input,
       tools,
       stream: true,
       ...(instructions ? { instructions } : {}),
+      ...buildOpenAIResponsesReasoningFields(config),
+      ...buildOpenAIResponsesIncludeFields(config, options),
       ...buildOpenAICacheFields(options)
     };
 
@@ -79,7 +84,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
             responseId = event.response.id;
           }
           usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
-          applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onToolArgsDelta, onToolArgsDone });
+          applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone });
         } catch (error) {
           throw createLlmStreamError({
             code: "STREAM_PARSE_ERROR",
@@ -128,10 +133,19 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       .filter(item => item.type === "message")
       .flatMap(item => item.content || [])
       .filter(Boolean);
+    const reasoning = orderedItems
+      .map(extractResponsesReasoningText)
+      .filter(Boolean)
+      .join("\n\n");
+    const reasoningItems = orderedItems
+      .map(normalizeResponsesReasoningInputItem)
+      .filter(Boolean);
 
     onDone?.({
       role: "assistant",
       content: textParts.join("") || null,
+      ...(reasoning ? { reasoning } : {}),
+      ...(reasoningItems.length > 0 ? { response_reasoning_items: reasoningItems } : {}),
       ...(messageContent.length > 0 ? { response_content: messageContent } : {}),
       ...(usage ? { usage } : {}),
       ...(responseId ? { response_id: responseId } : {}),
@@ -156,9 +170,16 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
   }
 }
 
-function buildResponsesRequestInput(messages) {
+function buildOpenAIResponsesIncludeFields(config = {}, options = {}) {
+  const effort = normalizeReasoningEffort(config.reasoningEffort);
+  if (!effort || options.enableBetaFeatures === false) return {};
+  return { include: ["reasoning.encrypted_content"] };
+}
+
+export function buildResponsesRequestInput(messages, options = {}) {
   const instructionsParts = [];
   const input = [];
+  const omitThinking = shouldOmitThinkingFromRequests(options);
 
   for (const msg of messages || []) {
     if (!msg) continue;
@@ -178,7 +199,20 @@ function buildResponsesRequestInput(messages) {
       continue;
     }
 
-    if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+    if (msg.role === "assistant") {
+      if (!omitThinking) {
+        input.push(...normalizeResponsesReasoningInputItems(msg._responsesReasoningItems));
+      }
+
+      if (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0) {
+        input.push({
+          type: "message",
+          role: "assistant",
+          content: normalizeResponsesMessageContent(msg.content, "assistant")
+        });
+        continue;
+      }
+
       const text = extractPlainMessageText(msg.content);
       if (text) {
         input.push({
@@ -188,13 +222,7 @@ function buildResponsesRequestInput(messages) {
         });
       }
       for (const tc of msg.tool_calls) {
-        input.push({
-          type: "function_call",
-          id: tc.response_item_id || tc.id,
-          call_id: tc.id,
-          name: tc.function?.name || "",
-          arguments: tc.function?.arguments || "{}"
-        });
+        input.push(buildResponsesFunctionCallInputItem(tc));
       }
       continue;
     }
@@ -208,8 +236,96 @@ function buildResponsesRequestInput(messages) {
 
   return {
     instructions: instructionsParts.join("\n\n").trim() || undefined,
-    input
+    input: input.map(sanitizeResponsesRequestInputItem).filter(Boolean)
   };
+}
+
+function shouldOmitThinkingFromRequests(options = {}) {
+  return options.omitThinkingFromRequests === true;
+}
+
+function sanitizeResponsesRequestInputItem(item) {
+  if (!item || typeof item !== "object") return null;
+
+  if (item.type === "reasoning" || item.type === "thinking") {
+    return normalizeResponsesReasoningInputItem(item);
+  }
+
+  if (item.type === "function_call") {
+    return {
+      type: "function_call",
+      id: item.id || buildSyntheticResponsesFunctionCallItemId(item.call_id, item.name, item.arguments),
+      call_id: item.call_id || buildSyntheticResponsesToolCallId(item.name, item.arguments),
+      name: item.name || "",
+      arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {})
+    };
+  }
+
+  if (item.type === "function_call_output") {
+    return {
+      type: "function_call_output",
+      call_id: item.call_id || "",
+      output: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "")
+    };
+  }
+
+  if (item.type === "message") {
+    return {
+      type: "message",
+      role: item.role || "user",
+      content: normalizeResponsesMessageContent(item.content, item.role || "user")
+    };
+  }
+
+  const sanitized = { ...item };
+  delete sanitized.status;
+  delete sanitized.order;
+  return sanitized;
+}
+
+function buildResponsesFunctionCallInputItem(toolCall = {}) {
+  const name = toolCall.function?.name || toolCall.name || "";
+  const args = toolCall.function?.arguments || toolCall.arguments || "{}";
+  const callId = toolCall.call_id || toolCall.id || buildSyntheticResponsesToolCallId(name, args);
+  const responseItemId = toolCall.response_item_id ||
+    (toolCall.call_id && toolCall.id && toolCall.id !== toolCall.call_id ? toolCall.id : "") ||
+    buildSyntheticResponsesFunctionCallItemId(callId, name, args);
+  const item = {
+    type: "function_call",
+    call_id: callId,
+    id: responseItemId,
+    name,
+    arguments: args
+  };
+  return item;
+}
+
+function buildSyntheticResponsesFunctionCallItemId(callId, name = "", args = "") {
+  const suffix = sanitizeResponsesItemIdSuffix(callId) || hashResponsesIdSource(`${name}:${args}`);
+  return `fc_${suffix}`;
+}
+
+function buildSyntheticResponsesToolCallId(name = "", args = "") {
+  return `call_${hashResponsesIdSource(`${name}:${args}`)}`;
+}
+
+function sanitizeResponsesItemIdSuffix(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^fc_/, "")
+    .replace(/[^A-Za-z0-9_-]/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 96);
+}
+
+function hashResponsesIdSource(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function extractPlainMessageText(content) {
@@ -229,8 +345,22 @@ function extractPlainMessageText(content) {
   return String(content).trim();
 }
 
-function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onToolArgsDelta, onToolArgsDone } = {}) {
+function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone } = {}) {
   const eventType = String(event?.type || "");
+  const encryptedReasoningDelta = extractResponsesEncryptedReasoningDelta(event);
+  if (encryptedReasoningDelta) {
+    const item = ensureResponsesReasoningItem(outputItems, event?.item_id, event?.output_index);
+    item.encrypted_content = (item.encrypted_content || "") + encryptedReasoningDelta;
+    return;
+  }
+
+  const reasoningDelta = extractResponsesReasoningDelta(event);
+  if (reasoningDelta) {
+    const item = ensureResponsesReasoningItem(outputItems, event?.item_id, event?.output_index);
+    ensureResponsesReasoningTextPart(item).text += reasoningDelta;
+    onThinking?.(reasoningDelta, { eventType, provider: API_TYPES.OPENAI_RESPONSES });
+    return;
+  }
 
   if (eventType === "response.output_item.added" || eventType === "response.output_item.done") {
     const item = normalizeResponsesOutputItem(event?.item, event?.output_index);
@@ -330,6 +460,61 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, 
   }
 }
 
+export function extractResponsesReasoningDelta(event) {
+  const eventType = String(event?.type || "").toLowerCase();
+  if (!eventType.includes("reasoning") && !eventType.includes("thinking")) return "";
+  if (eventType.includes("encrypted")) return "";
+  if (!eventType.includes(".delta")) return "";
+  return extractResponsesReasoningValue(event?.delta) ||
+    extractResponsesReasoningValue(event?.text) ||
+    extractResponsesReasoningValue(event?.summary) ||
+    extractResponsesReasoningValue(event?.content);
+}
+
+export function extractResponsesEncryptedReasoningDelta(event) {
+  const eventType = String(event?.type || "").toLowerCase();
+  if (!eventType.includes("encrypted")) return "";
+  if (!eventType.includes("reasoning") && !eventType.includes("thinking")) return "";
+  if (!eventType.includes(".delta")) return "";
+  return extractResponsesEncryptedReasoningValue(event?.delta) ||
+    extractResponsesEncryptedReasoningValue(event?.encrypted_content) ||
+    extractResponsesEncryptedReasoningValue(event?.content);
+}
+
+export function extractResponsesReasoningText(item) {
+  if (!item || typeof item !== "object") return "";
+  if (item.type !== "reasoning" && item.type !== "thinking") return "";
+  return extractResponsesReasoningValue(item);
+}
+
+function extractResponsesReasoningValue(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractResponsesReasoningValue).filter(Boolean).join("");
+  if (value && typeof value === "object") {
+    return [
+      value.text,
+      value.summary_text,
+      value.reasoning,
+      value.reasoning_content,
+      value.thinking,
+      value.summary,
+      value.content,
+      value.output_text
+    ].map(extractResponsesReasoningValue).filter(Boolean).join("");
+  }
+  return "";
+}
+
+function extractResponsesEncryptedReasoningValue(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(extractResponsesEncryptedReasoningValue).filter(Boolean).join("");
+  if (value && typeof value === "object") {
+    return extractResponsesEncryptedReasoningValue(value.encrypted_content) ||
+      extractResponsesEncryptedReasoningValue(value.content);
+  }
+  return "";
+}
+
 function normalizeResponsesOutputItem(item, order = 0) {
   if (!item || typeof item !== "object") return null;
   if (item.type === "message") {
@@ -351,11 +536,58 @@ function normalizeResponsesOutputItem(item, order = 0) {
       arguments: typeof item.arguments === "string" ? item.arguments : ""
     };
   }
+  if (item.type === "reasoning" || item.type === "thinking") {
+    return normalizeResponsesReasoningOutputItem(item, order);
+  }
   return {
     id: item.id || `${item.type || "item"}_${order}`,
     order,
     ...item
   };
+}
+
+function normalizeResponsesReasoningOutputItem(item, order = 0) {
+  const normalized = {
+    id: item.id || `reasoning_${order}`,
+    order,
+    type: item.type
+  };
+  if (item.status) normalized.status = item.status;
+  if (Array.isArray(item.summary)) normalized.summary = item.summary.map(normalizeResponsesReasoningSummaryPart).filter(Boolean);
+  if (typeof item.encrypted_content === "string" && item.encrypted_content.length > 0) {
+    normalized.encrypted_content = item.encrypted_content;
+  }
+  return normalized;
+}
+
+function normalizeResponsesReasoningSummaryPart(part) {
+  if (!part || typeof part !== "object") return null;
+  if ((part.type === "summary_text" || part.type === "text") && typeof part.text === "string") {
+    return { type: "summary_text", text: part.text };
+  }
+  return { ...part };
+}
+
+function normalizeResponsesReasoningInputItems(items) {
+  return Array.isArray(items) ? items.map(normalizeResponsesReasoningInputItem).filter(Boolean) : [];
+}
+
+export function normalizeResponsesReasoningInputItem(item) {
+  if (!item || typeof item !== "object") return null;
+  if (item.type !== "reasoning" && item.type !== "thinking") return null;
+
+  const normalized = { type: item.type };
+  if (typeof item.id === "string" && item.id.length > 0) normalized.id = item.id;
+  if (Array.isArray(item.summary)) {
+    const summary = item.summary.map(normalizeResponsesReasoningSummaryPart).filter(Boolean);
+    normalized.summary = summary;
+  }
+  if (!Array.isArray(normalized.summary)) normalized.summary = [];
+  if (typeof item.encrypted_content === "string" && item.encrypted_content.length > 0) {
+    normalized.encrypted_content = item.encrypted_content;
+  }
+
+  return normalized.id || normalized.summary || normalized.encrypted_content ? normalized : null;
 }
 
 function normalizeResponsesOutputContentPart(part) {
@@ -386,6 +618,23 @@ function ensureMessageTextPart(item) {
   if (!textPart) {
     textPart = { type: "output_text", text: "" };
     item.content.push(textPart);
+  }
+  return textPart;
+}
+
+function ensureResponsesReasoningItem(outputItems, itemId, order = 0) {
+  const item = ensureResponsesOutputItem(outputItems, itemId, order, "reasoning");
+  item.type = "reasoning";
+  if (!Array.isArray(item.summary)) item.summary = [];
+  return item;
+}
+
+function ensureResponsesReasoningTextPart(item) {
+  if (!Array.isArray(item.summary)) item.summary = [];
+  let textPart = item.summary.find(part => (part?.type === "summary_text" || part?.type === "text") && typeof part.text === "string");
+  if (!textPart) {
+    textPart = { type: "summary_text", text: "" };
+    item.summary.push(textPart);
   }
   return textPart;
 }

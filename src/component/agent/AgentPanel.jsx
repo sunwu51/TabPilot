@@ -1,7 +1,7 @@
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
-import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, hasDownloadsPermission } from "../../api/llm";
+import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, findMcpToolByCallName, hasDownloadsPermission, isMcpToolCallName } from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
@@ -31,7 +31,7 @@ import {
   mergeLoadedSkills
 } from "../../api/skills";
 import ChatMessageList from "./ChatMessageList";
-import { AssistantTextBubble } from "./ChatMessage";
+import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
@@ -45,6 +45,26 @@ const SYSTEM_PROMPT_PLACEHOLDER =
   "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const SLASH_COMMANDS = [
+  {
+    id: "mem",
+    name: "/mem",
+    title: "总结到记忆",
+    description: "提炼本次对话中对未来有用的信息，并在有记忆工具时保存。"
+  },
+  {
+    id: "recall_mem",
+    name: "/recall_mem",
+    title: "召回相关记忆",
+    description: "根据当前对话检索长期记忆，并把相关信息拉取到当前上下文。"
+  },
+  {
+    id: "clear",
+    name: "/clear",
+    title: "清空当前会话",
+    description: "与工具栏清空按钮相同，会清空消息、计划和关键词。"
+  }
+];
 
 /**
  * Main Agent chat panel with session management.
@@ -70,11 +90,12 @@ export default function AgentPanel() {
   const [skillStationTools, setSkillStationTools] = useState([]);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false });
+  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false, reasoningEffort: "default", omitThinkingFromRequests: false });
   const [contextUsage, setContextUsage] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
+  const [streamingThinking, setStreamingThinking] = useState(null);
   const [streamingToolArgs, setStreamingToolArgs] = useState(null);
   const [searchMode, setSearchMode] = useState(false);
   const [searchScope, setSearchScope] = useState("current");
@@ -85,12 +106,22 @@ export default function AgentPanel() {
   const [globalSearchResults, setGlobalSearchResults] = useState([]);
   const [globalSearchStatus, setGlobalSearchStatus] = useState("");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [slashCommandOpen, setSlashCommandOpen] = useState(false);
+  const [slashCommandIndex, setSlashCommandIndex] = useState(0);
+  const [tabMentionOpen, setTabMentionOpen] = useState(false);
+  const [tabMentionQuery, setTabMentionQuery] = useState("");
+  const [tabMentionIndex, setTabMentionIndex] = useState(0);
+  const [tabMentionCandidates, setTabMentionCandidates] = useState([]);
+  const [selectedMentionTabs, setSelectedMentionTabs] = useState([]);
+  const [selectedMentionSkills, setSelectedMentionSkills] = useState([]);
   const messagesScrollerRef = useRef(null);
   const messagesContentRef = useRef(null);
   const messagesEndRef = useRef(null);
   const shouldAutoFollowBottomRef = useRef(true);
   const resizeObserverRef = useRef(null);
   const inputRef = useRef(null);
+  const manualInputHeightRef = useRef(null);
+  const inputResizeDragRef = useRef(null);
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
@@ -111,7 +142,9 @@ export default function AgentPanel() {
   const attachWrapperRef = useRef(null);
   const imageInputRef = useRef(null);
   const textInputRef = useRef(null);
+  const tabMentionRequestRef = useRef(0);
   const sessionStreamingRef = useRef(new Map());
+  const sessionStreamingThinkingRef = useRef(new Map());
   const clearConfirmResolverRef = useRef(null);
   const clearConfirmButtonRef = useRef(null);
   const isMacPlatform = platformInfo?.os === "mac";
@@ -136,11 +169,11 @@ export default function AgentPanel() {
    */
   useEffect(() => {
     if (!shouldAutoFollowBottomRef.current) {
-      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingToolArgs !== null);
+      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingThinking !== null || streamingToolArgs !== null);
       return;
     }
     scrollMessagesToBottom("auto");
-  }, [messages, streamingContent, streamingToolArgs]);
+  }, [messages, streamingContent, streamingThinking, streamingToolArgs]);
 
   useEffect(() => {
     if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
@@ -163,6 +196,44 @@ export default function AgentPanel() {
   }, [input]);
 
   useEffect(() => {
+    function handleWindowResize() {
+      const maxHeight = getChatInputMaxHeight();
+      if (manualInputHeightRef.current != null) {
+        manualInputHeightRef.current = Math.min(manualInputHeightRef.current, maxHeight);
+      }
+      resizeChatInput();
+    }
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const slashOpen = shouldOpenSlashCommand(input);
+    setSlashCommandOpen(slashOpen);
+    if (slashOpen) setSlashCommandIndex(0);
+
+    const mentionState = getActiveTabMentionState(input);
+    setTabMentionOpen(!!mentionState);
+    setTabMentionQuery(mentionState?.query || "");
+    if (mentionState) setTabMentionIndex(0);
+  }, [input]);
+
+  useEffect(() => {
+    if (!tabMentionOpen) return;
+    const requestId = tabMentionRequestRef.current + 1;
+    tabMentionRequestRef.current = requestId;
+    queryHttpTabsForMention().then(list => {
+      if (tabMentionRequestRef.current !== requestId) return;
+      setTabMentionCandidates(list);
+    }).catch(error => {
+      if (tabMentionRequestRef.current !== requestId) return;
+      console.error("Failed to load tab mention candidates:", error);
+      setTabMentionCandidates([]);
+    });
+  }, [tabMentionOpen]);
+
+  useEffect(() => {
     function handleGlobalShortcuts(event) {
       if (event.defaultPrevented || event.nativeEvent?.isComposing || event.isComposing) return;
       if (showClearConfirm && event.key === "Escape") {
@@ -183,6 +254,7 @@ export default function AgentPanel() {
     }
     window.addEventListener("keydown", handleGlobalShortcuts, true);
     return () => window.removeEventListener("keydown", handleGlobalShortcuts, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMacPlatform, pendingApproval, searchMode, showClearConfirm]);
 
   function isSearchShortcutEvent(event, isMac) {
@@ -334,7 +406,9 @@ export default function AgentPanel() {
         setLlmConfigInfo({
           apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
           model: nextConfig.model || "",
-          supportsImageInput: nextConfig.supportsImageInput === true
+          supportsImageInput: nextConfig.supportsImageInput === true,
+          reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
+          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true
         });
       }
     }
@@ -428,7 +502,9 @@ export default function AgentPanel() {
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
-      supportsImageInput: llmConfig?.supportsImageInput === true
+      supportsImageInput: llmConfig?.supportsImageInput === true,
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
     });
   }
 
@@ -502,6 +578,9 @@ export default function AgentPanel() {
   }
 
   async function openSession(id, options = {}) {
+    closeInputCompletions();
+    setSelectedMentionTabs([]);
+    setSelectedMentionSkills([]);
     if (!options.preserveSearch) {
       setSearchMode(false);
       setSearchScope("current");
@@ -513,12 +592,13 @@ export default function AgentPanel() {
       setGlobalSearchStatus("");
     }
     setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
+    setStreamingThinking(sessionStreamingThinkingRef.current.get(id) ?? null);
     setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
-      const cached = sessionMessagesRef.current.get(id);
-      const [msgs, meta] = await Promise.all([
-        cached ?? loadSession(id),
-        loadSessionMeta(id)
-      ]);
+    const cached = sessionMessagesRef.current.get(id);
+    const [msgs, meta] = await Promise.all([
+      cached ?? loadSession(id),
+      loadSessionMeta(id)
+    ]);
     sessionMessagesRef.current.set(id, msgs);
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
     activeSessionIdRef.current = id;
@@ -543,6 +623,8 @@ export default function AgentPanel() {
       shouldFocusInputWhenReadyRef.current = true;
       setStreamingContent(null);
       sessionStreamingRef.current.delete(targetSessionId);
+      setStreamingThinking(null);
+      sessionStreamingThinkingRef.current.delete(targetSessionId);
       setStreamingToolArgs(null);
       sessionStreamingToolArgsRef.current.delete(targetSessionId);
     }
@@ -827,8 +909,8 @@ export default function AgentPanel() {
         toolLabel: "危险工具 `eval_js`"
       };
     }
-    if (toolName?.startsWith("mcp_")) {
-      const mcpTool = combinedMcpTools.find(tool => tool._toolCallName === toolName);
+    if (isMcpToolCallName(toolName)) {
+      const mcpTool = findMcpToolByCallName(combinedMcpTools, toolName);
       if (mcpTool?._dangerous) {
         return {
           title: "危险 MCP 工具待确认",
@@ -904,6 +986,14 @@ export default function AgentPanel() {
     setShowJumpToBottom(false);
     setContextUsage(null);
     setMessages([]);
+    setStreamingContent(null);
+    setStreamingThinking(null);
+    setStreamingToolArgs(null);
+    setInput("");
+    setPendingAttachments([]);
+    setSelectedMentionTabs([]);
+    setSelectedMentionSkills([]);
+    closeInputCompletions();
     setLoading(false);
     setSessions(await listSessions());
     setShowHistory(false);
@@ -1055,19 +1145,25 @@ export default function AgentPanel() {
         apiKey: "",
         model: "",
         firstPacketTimeoutSeconds: 20,
-        supportsImageInput: false
+        supportsImageInput: false,
+        reasoningEffort: "default",
+        omitThinkingFromRequests: false
       },
       betaFeaturesEnabled: true
     });
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
-      supportsImageInput: llmConfig?.supportsImageInput === true
+      supportsImageInput: llmConfig?.supportsImageInput === true,
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
     });
     return {
       ...llmConfig,
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       supportsImageInput: llmConfig?.supportsImageInput === true,
+      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
   }
@@ -1120,9 +1216,12 @@ export default function AgentPanel() {
     }
   }
 
-  async function sendMessage() {
-    const text = input.trim();
-    if (!text && pendingAttachments.length === 0) return;
+  async function sendMessage(options = {}) {
+    const text = String(options.text ?? input).trim();
+    const selectedTabs = Array.isArray(options.selectedTabs) ? options.selectedTabs : selectedMentionTabs;
+    const selectedSkills = Array.isArray(options.selectedSkills) ? options.selectedSkills : selectedMentionSkills;
+    const attachments = Array.isArray(options.attachments) ? options.attachments : pendingAttachments;
+    if (!text && attachments.length === 0 && selectedTabs.length === 0 && selectedSkills.length === 0) return;
     if (loading) return;
 
     const config = await getLLMConfig();
@@ -1131,17 +1230,23 @@ export default function AgentPanel() {
       return;
     }
 
-    const imageAtts = pendingAttachments.filter(a => a.type === "image");
-    const textAtts = pendingAttachments.filter(a => a.type === "text");
+    const imageAtts = attachments.filter(a => a.type === "image");
+    const textAtts = attachments.filter(a => a.type === "text");
+    const injectionMeta = buildUserInjectionMeta(selectedTabs, selectedSkills);
+    const finalText = injectionMeta ? buildInjectedUserText(text, injectionMeta) : text;
 
     const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
     const userMsg = {
       role: "user",
       sentAt: Date.now(),
       content: hasAnyAttachment
-        ? buildUserMessageContent(text, imageAtts, textAtts)
-        : text
+        ? buildUserMessageContent(finalText, imageAtts, textAtts)
+        : finalText
     };
+    if (injectionMeta) {
+      userMsg.displayContent = text || "请根据我指定的上下文回答。";
+      userMsg.injectedUserContext = injectionMeta;
+    }
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
     const newMessages = [...getSessionMessages(currentSessionId), userMsg];
@@ -1150,6 +1255,9 @@ export default function AgentPanel() {
     void autoSave(currentSessionId, newMessages);
     setInput("");
     setPendingAttachments([]);
+    setSelectedMentionTabs([]);
+    setSelectedMentionSkills([]);
+    closeInputCompletions();
     shouldFocusInputWhenReadyRef.current = true;
     const nextRunId = getSessionRuntime(currentSessionId).runId + 1;
     setSessionRuntime(currentSessionId, { loading: true, abort: null, runId: nextRunId });
@@ -1161,21 +1269,41 @@ export default function AgentPanel() {
     });
   }
 
+  async function runSlashCommand(command) {
+    if (!command || loading || pendingApproval) return;
+    closeInputCompletions();
+    if (command.id === "clear") {
+      await handleClearCurrentSession({ confirm: false });
+      return;
+    }
+    if (command.id === "mem") {
+      await sendMessage({ text: buildMemoryCommandPrompt(), attachments: [], selectedTabs: [], selectedSkills: [] });
+      return;
+    }
+    if (command.id === "recall_mem") {
+      await sendMessage({ text: buildRecallMemoryCommandPrompt(), attachments: [], selectedTabs: [], selectedSkills: [] });
+    }
+  }
+
   async function runConversation(config, targetSessionId, conversationMessages, runId) {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt();
     const apiConversationMessages = buildApiMessages(config.apiType, conversationMessages, {
-      supportsImageInput: config.supportsImageInput === true
+      supportsImageInput: config.supportsImageInput === true,
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true
     });
     const fullMessages = [{ role: "system", content: systemPrompt }, ...apiConversationMessages];
 
     let streamedContent = "";
+    let streamedThinking = "";
     let streamedToolArgs = null;
 
     setSessionMessages(targetSessionId, conversationMessages);
     void autoSave(targetSessionId, conversationMessages);
     setStreamingContent("");
+    setStreamingThinking(null);
     setStreamingToolArgs(null);
+    sessionStreamingThinkingRef.current.delete(targetSessionId);
     sessionStreamingToolArgsRef.current.delete(targetSessionId);
 
     const abort = streamChat(config, fullMessages, {
@@ -1185,6 +1313,14 @@ export default function AgentPanel() {
         streamedContent += chunk;
         sessionStreamingRef.current.set(targetSessionId, streamedContent);
         setStreamingContent(streamedContent);
+      },
+
+      onThinking: (chunk) => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        if (activeSessionIdRef.current !== targetSessionId) return;
+        streamedThinking += chunk;
+        sessionStreamingThinkingRef.current.set(targetSessionId, streamedThinking);
+        setStreamingThinking(streamedThinking);
       },
 
       onToolArgsDelta: (event) => {
@@ -1210,10 +1346,13 @@ export default function AgentPanel() {
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         streamedContent = "";
+        streamedThinking = "";
         streamedToolArgs = null;
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         setStreamingContent("");
+        setStreamingThinking(null);
         setStreamingToolArgs(null);
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
@@ -1221,8 +1360,10 @@ export default function AgentPanel() {
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        setStreamingThinking(null);
         setStreamingToolArgs(null);
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         try {
           // Streaming phase is over; clear the old request abort handle before tool execution.
@@ -1349,8 +1490,10 @@ export default function AgentPanel() {
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         setStreamingContent(null);
+        setStreamingThinking(null);
         setStreamingToolArgs(null);
         sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         toast.error(`LLM 错误: ${err.message}`);
         const stampedMessages = stampLastUserDuration(conversationMessages);
@@ -1362,6 +1505,7 @@ export default function AgentPanel() {
     }, combinedMcpTools, {
       sessionId: targetSessionId,
       supportsImageInput: config.supportsImageInput === true,
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false
     });
 
@@ -1510,7 +1654,8 @@ export default function AgentPanel() {
     if (resolver) resolver(!!approved);
   }
 
-  async function handleClearCurrentSession() {
+  async function handleClearCurrentSession(options = {}) {
+    const shouldConfirm = options.confirm !== false;
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
     const currentMessages = getSessionMessages(currentSessionId);
@@ -1519,7 +1664,7 @@ export default function AgentPanel() {
       String(input || "").trim() ||
       pendingAttachments.length > 0 ||
       getSessionPlans(currentSessionId).length > 0;
-    if (hasContent) {
+    if (hasContent && shouldConfirm) {
       const ok = await requestClearCurrentSessionConfirm();
       if (!ok) return;
     }
@@ -1530,6 +1675,10 @@ export default function AgentPanel() {
     sessionPlansRef.current.set(currentSessionId, []);
     applyLatestPlanFromPlans([]);
     setInput("");
+    setPendingAttachments([]);
+    setSelectedMentionTabs([]);
+    setSelectedMentionSkills([]);
+    closeInputCompletions();
     const currentSessionEntry = sessions.find(s => s.id === currentSessionId);
     if (currentSessionEntry?.manualTitle) {
       const preservedTitle = String(sessionTitle || "").trim() || "新会话";
@@ -1642,10 +1791,117 @@ export default function AgentPanel() {
   }
 
   function handleKeyDown(e) {
+    if (handleInputCompletionKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       sendMessage();
     }
+  }
+
+  function handleInputCompletionKeyDown(e) {
+    if (e.nativeEvent?.isComposing || e.isComposing) return false;
+    if (slashCommandOpen) {
+      const filteredCommands = getFilteredSlashCommands(input);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashCommandIndex(index => filteredCommands.length === 0 ? 0 : (index + 1) % filteredCommands.length);
+        return true;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashCommandIndex(index => filteredCommands.length === 0 ? 0 : (index - 1 + filteredCommands.length) % filteredCommands.length);
+        return true;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const command = filteredCommands[Math.min(slashCommandIndex, filteredCommands.length - 1)];
+        if (command?.type === "skill") selectMentionSkill(command.skill);
+        else if (command) void runSlashCommand(command);
+        return true;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeInputCompletions();
+        return true;
+      }
+      return false;
+    }
+
+    if (tabMentionOpen) {
+      const filteredTabs = getFilteredMentionTabs();
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setTabMentionIndex(index => filteredTabs.length === 0 ? 0 : (index + 1) % filteredTabs.length);
+        return true;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setTabMentionIndex(index => filteredTabs.length === 0 ? 0 : (index - 1 + filteredTabs.length) % filteredTabs.length);
+        return true;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const tab = filteredTabs[Math.min(tabMentionIndex, filteredTabs.length - 1)];
+        if (tab) selectMentionTab(tab);
+        return true;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeInputCompletions();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function closeInputCompletions() {
+    setSlashCommandOpen(false);
+    setTabMentionOpen(false);
+  }
+
+  function getFilteredMentionTabs() {
+    return filterMentionTabs(tabMentionCandidates, tabMentionQuery, selectedMentionTabs);
+  }
+
+  function getFilteredSlashCommands(inputText = input) {
+    return filterSlashCommands(SLASH_COMMANDS, agentSkills.skills, selectedMentionSkills, inputText);
+  }
+
+  function selectMentionTab(tab) {
+    if (!tab?.id) return;
+    setSelectedMentionTabs(prev => prev.some(item => item.id === tab.id) ? prev : [...prev, tab]);
+    replaceActiveTabMentionToken("");
+    closeInputCompletions();
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function removeMentionTab(tabId) {
+    setSelectedMentionTabs(prev => prev.filter(tab => tab.id !== tabId));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function selectMentionSkill(skill) {
+    if (!skill?.path) return;
+    setSelectedMentionSkills(prev => prev.some(item => item.path === skill.path) ? prev : [...prev, serializeMentionSkill(skill)]);
+    setInput("");
+    closeInputCompletions();
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function removeMentionSkill(skillPath) {
+    setSelectedMentionSkills(prev => prev.filter(skill => skill.path !== skillPath));
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function replaceActiveTabMentionToken(replacement) {
+    const state = getActiveTabMentionState(input);
+    if (!state) return;
+    const next =
+      input.slice(0, state.start) +
+      replacement +
+      input.slice(state.end);
+    setInput(next.replace(/[ \t]{2,}/g, " "));
   }
 
   function handleSearchKeyDown(e) {
@@ -1798,11 +2054,59 @@ export default function AgentPanel() {
     const textarea = inputRef.current;
     if (!textarea) return;
     textarea.style.height = "auto";
-    const maxHeight = Math.max(120, Math.floor(window.innerHeight * 0.5));
-    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    const maxHeight = getChatInputMaxHeight();
+    const autoHeight = Math.min(textarea.scrollHeight, maxHeight);
+    const manualHeight = Math.min(Number(manualInputHeightRef.current) || 0, maxHeight);
+    const nextHeight = Math.max(autoHeight, manualHeight);
     textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+    textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
     keepChatInputVisible(textarea);
+  }
+
+  function getChatInputMaxHeight() {
+    return Math.max(120, Math.floor(window.innerHeight * 0.5));
+  }
+
+  function getChatInputMinHeight() {
+    return 64;
+  }
+
+  function handleInputResizePointerDown(event) {
+    if (loading || pendingApproval) return;
+    const textarea = inputRef.current;
+    if (!textarea) return;
+    event.preventDefault();
+    const rect = textarea.getBoundingClientRect();
+    inputResizeDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: rect.height
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("chat-input-resizing");
+  }
+
+  function handleInputResizePointerMove(event) {
+    const drag = inputResizeDragRef.current;
+    const textarea = inputRef.current;
+    if (!drag || !textarea || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const maxHeight = getChatInputMaxHeight();
+    const minHeight = getChatInputMinHeight();
+    const nextHeight = Math.min(maxHeight, Math.max(minHeight, drag.startHeight + (drag.startY - event.clientY)));
+    manualInputHeightRef.current = nextHeight;
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
+    keepChatInputVisible(textarea);
+  }
+
+  function handleInputResizePointerEnd(event) {
+    const drag = inputResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    inputResizeDragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    document.body.classList.remove("chat-input-resizing");
+    resizeChatInput();
   }
 
   function keepChatInputVisible(textarea) {
@@ -1891,6 +2195,8 @@ export default function AgentPanel() {
   // ==================== Render ====================
 
   const pendingApprovalMeta = pendingApproval?.approvalMeta || getDangerousToolMeta(pendingApproval?.toolCall);
+  const filteredSlashCommands = getFilteredSlashCommands();
+  const filteredMentionTabs = getFilteredMentionTabs();
 
   return (
     <div className="agent-panel">
@@ -2101,13 +2407,16 @@ export default function AgentPanel() {
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
               />
+              {streamingThinking !== null && streamingThinking.length > 0 && (
+                <AssistantThinkingBubble text={streamingThinking} />
+              )}
               {streamingContent !== null && streamingContent.length > 0 && (
                 <AssistantTextBubble text={streamingContent} />
               )}
               {streamingToolArgs && (
                 <StreamingToolArgsBubble state={streamingToolArgs} />
               )}
-              {loading && streamingContent === "" && !streamingToolArgs && (
+              {loading && streamingContent === "" && !streamingThinking && !streamingToolArgs && (
                 <div className="chat-msg chat-msg-assistant">
                   <div className="chat-bubble chat-bubble-assistant loading-dots">思考中</div>
                 </div>
@@ -2237,6 +2546,55 @@ export default function AgentPanel() {
           </div>
         ) : (
           <>
+            {(slashCommandOpen || tabMentionOpen) && (
+              <InputCommandMenu
+                slashOpen={slashCommandOpen}
+                slashCommands={filteredSlashCommands}
+                slashIndex={slashCommandIndex}
+                onSlashHover={setSlashCommandIndex}
+                onSlashSelect={(command) => {
+                  if (command?.type === "skill") selectMentionSkill(command.skill);
+                  else void runSlashCommand(command);
+                }}
+                tabOpen={tabMentionOpen}
+                tabs={filteredMentionTabs}
+                tabIndex={tabMentionIndex}
+                onTabHover={setTabMentionIndex}
+                onTabSelect={selectMentionTab}
+              />
+            )}
+            {selectedMentionTabs.length > 0 && (
+              <div className="chat-mention-selected-tabs">
+                {selectedMentionTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className="chat-mention-chip"
+                    onClick={() => removeMentionTab(tab.id)}
+                    title={`${tab.title || "未命名标签页"}\n${tab.url}`}
+                  >
+                    <span className="chat-mention-chip-title">@{tab.title || new URL(tab.url).hostname}</span>
+                    <span className="chat-mention-chip-remove">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedMentionSkills.length > 0 && (
+              <div className="chat-mention-selected-tabs">
+                {selectedMentionSkills.map(skill => (
+                  <button
+                    key={skill.path}
+                    type="button"
+                    className="chat-mention-chip chat-mention-skill-chip"
+                    onClick={() => removeMentionSkill(skill.path)}
+                    title={`${skill.name || skill.path}\n${skill.description || ""}`}
+                  >
+                    <span className="chat-mention-chip-title">/{skill.name || skill.path}</span>
+                    <span className="chat-mention-chip-remove">×</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {pendingAttachments.length > 0 && (
               <div className="chat-input-images">
                 {pendingAttachments.map(att => att.type === "image" ? (
@@ -2253,6 +2611,16 @@ export default function AgentPanel() {
                 ))}
               </div>
             )}
+            <div
+              className="chat-input-resize-handle"
+              role="separator"
+              aria-label="调整输入框高度"
+              aria-orientation="horizontal"
+              onPointerDown={handleInputResizePointerDown}
+              onPointerMove={handleInputResizePointerMove}
+              onPointerUp={handleInputResizePointerEnd}
+              onPointerCancel={handleInputResizePointerEnd}
+            />
             <textarea
               ref={inputRef}
               value={input}
@@ -2322,6 +2690,291 @@ export default function AgentPanel() {
 
 function normalizeSessionPlans(plans) {
   return Array.isArray(plans) ? plans.filter(Boolean) : [];
+}
+
+function useAutoScrollMenuOnPointerEdge(active) {
+  const ref = useRef(null);
+  const frameRef = useRef(null);
+  const directionRef = useRef(0);
+
+  useEffect(() => {
+    if (!active) {
+      directionRef.current = 0;
+      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      return;
+    }
+
+    function step() {
+      const el = ref.current;
+      if (el && directionRef.current !== 0) {
+        el.scrollTop += directionRef.current * 8;
+        frameRef.current = requestAnimationFrame(step);
+      } else {
+        frameRef.current = null;
+      }
+    }
+
+    function onMouseMove(event) {
+      const el = ref.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const edge = 28;
+      const previous = directionRef.current;
+      if (event.clientY > rect.bottom - edge) {
+        directionRef.current = 1;
+      } else if (event.clientY < rect.top + edge) {
+        directionRef.current = -1;
+      } else {
+        directionRef.current = 0;
+      }
+      if (directionRef.current !== 0 && previous === 0 && frameRef.current == null) {
+        frameRef.current = requestAnimationFrame(step);
+      }
+      if (directionRef.current === 0 && frameRef.current != null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    }
+
+    function onMouseLeave() {
+      directionRef.current = 0;
+      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    const el = ref.current;
+    el?.addEventListener("mousemove", onMouseMove);
+    el?.addEventListener("mouseleave", onMouseLeave);
+    return () => {
+      el?.removeEventListener("mousemove", onMouseMove);
+      el?.removeEventListener("mouseleave", onMouseLeave);
+      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+      directionRef.current = 0;
+    };
+  }, [active]);
+
+  return ref;
+}
+
+/* eslint-disable react/prop-types */
+function InputCommandMenu({
+  slashOpen,
+  slashCommands,
+  slashIndex,
+  onSlashHover,
+  onSlashSelect,
+  tabOpen,
+  tabs,
+  tabIndex,
+  onTabHover,
+  onTabSelect
+}) {
+  const menuRef = useAutoScrollMenuOnPointerEdge(slashOpen || tabOpen);
+  useEffect(() => {
+    const activeItem = menuRef.current?.querySelector(".chat-input-command-item-active");
+    activeItem?.scrollIntoView({ block: "nearest" });
+  }, [menuRef, slashIndex, tabIndex, slashOpen, tabOpen]);
+
+  if (slashOpen) {
+    return (
+      <div ref={menuRef} className="chat-input-command-menu" role="listbox" aria-label="内置指令">
+        {slashCommands.length === 0 ? (
+          <div className="chat-input-command-empty">没有匹配的内置指令</div>
+        ) : slashCommands.map((command, index) => (
+          <button
+            key={command.id}
+            type="button"
+            className={`chat-input-command-item ${index === slashIndex ? "chat-input-command-item-active" : ""}`}
+            onMouseMove={() => onSlashHover(index)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onSlashSelect(command)}
+          >
+            <span className="chat-input-command-name">{command.name}</span>
+            <span className="chat-input-command-copy">
+              <span className="chat-input-command-title-row">
+                <span className="chat-input-command-title">{command.title}</span>
+                {command.type !== "skill" && (
+                  <span className="chat-input-command-badge">内置指令</span>
+                )}
+              </span>
+              <span className="chat-input-command-desc">{command.description}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (tabOpen) {
+    return (
+      <div ref={menuRef} className="chat-input-command-menu chat-input-tab-menu" role="listbox" aria-label="选择标签页">
+        {tabs.length === 0 ? (
+          <div className="chat-input-command-empty">没有匹配的 http/https 标签页</div>
+        ) : tabs.map((tab, index) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`chat-input-command-item ${index === tabIndex ? "chat-input-command-item-active" : ""}`}
+            onMouseMove={() => onTabHover(index)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onTabSelect(tab)}
+          >
+            <span className="chat-input-tab-favicon">
+              {tab.favIconUrl ? <img src={tab.favIconUrl} alt="" /> : "@"}
+            </span>
+            <span className="chat-input-command-copy">
+              <span className="chat-input-command-title">{tab.title || "未命名标签页"}</span>
+              <span className="chat-input-command-desc">{tab.url}</span>
+            </span>
+            <span className="chat-input-tab-id">#{tab.id}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  return null;
+}
+/* eslint-enable react/prop-types */
+
+function shouldOpenSlashCommand(input) {
+  return /^\/[a-zA-Z0-9_-]*$/.test(String(input || "").trimStart());
+}
+
+function filterSlashCommands(commands, skills, selectedSkills, input) {
+  const query = String(input || "").trimStart().replace(/^\//, "").toLowerCase();
+  const selectedSkillPaths = new Set((selectedSkills || []).map(skill => skill.path));
+  const builtins = (commands || [])
+    .filter(command => {
+      if (!query) return true;
+      return command.id.includes(query) || command.name.toLowerCase().includes(query) || command.title.toLowerCase().includes(query);
+    });
+  const skillCommands = (skills || [])
+    .map(serializeMentionSkill)
+    .filter(skill => skill.path && !selectedSkillPaths.has(skill.path))
+    .filter(skill => {
+      if (!query) return true;
+      return `${skill.name || ""} ${skill.path || ""} ${skill.description || ""}`.toLowerCase().includes(query);
+    })
+    .slice(0, 20)
+    .map(skill => ({
+      id: `skill:${skill.path}`,
+      type: "skill",
+      skill,
+      name: `/${skill.name || skill.path}`,
+      title: skill.name || skill.path,
+      description: skill.description || `使用 skill: ${skill.path}`
+    }));
+  return [...builtins, ...skillCommands];
+}
+
+function getActiveTabMentionState(input) {
+  const text = String(input || "");
+  const match = text.match(/(^|\s)@([^\s@]*)$/);
+  if (!match) return null;
+  const atOffset = match[0].lastIndexOf("@");
+  const start = match.index + atOffset;
+  return {
+    start,
+    end: text.length,
+    query: match[2] || ""
+  };
+}
+
+function isHttpTab(tab) {
+  return typeof tab?.id === "number" && /^https?:\/\//i.test(tab?.url || "");
+}
+
+function serializeMentionTab(tab) {
+  return {
+    id: tab.id,
+    url: tab.url || "",
+    title: tab.title || "",
+    windowId: tab.windowId,
+    favIconUrl: tab.favIconUrl || ""
+  };
+}
+
+function serializeMentionSkill(skill) {
+  return {
+    path: String(skill?.path || "").trim(),
+    name: String(skill?.name || "").trim(),
+    description: String(skill?.description || "").trim()
+  };
+}
+
+function filterMentionTabs(tabs, query, selectedTabs) {
+  const selectedIds = new Set((selectedTabs || []).map(tab => tab.id));
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  return (tabs || [])
+    .filter(tab => !selectedIds.has(tab.id))
+    .filter(tab => {
+      if (!normalizedQuery) return true;
+      return `${tab.title || ""} ${tab.url || ""} ${tab.id}`.toLowerCase().includes(normalizedQuery);
+    })
+    .slice(0, 12);
+}
+
+async function queryHttpTabsForMention() {
+  if (!chrome?.tabs?.query) return [];
+  const tabs = await chrome.tabs.query({});
+  return (Array.isArray(tabs) ? tabs : []).filter(isHttpTab).map(serializeMentionTab);
+}
+
+function buildUserInjectionMeta(tabs, skills) {
+  const normalizedTabs = (tabs || []).map(serializeMentionTab).filter(tab => tab.id);
+  const normalizedSkills = (skills || []).map(serializeMentionSkill).filter(skill => skill.path);
+  if (normalizedTabs.length === 0 && normalizedSkills.length === 0) return null;
+  return {
+    tabs: normalizedTabs,
+    skills: normalizedSkills
+  };
+}
+
+function buildInjectedUserText(text, injectionMeta) {
+  const body = String(text || "").trim() || "请根据我指定的上下文回答。";
+  const tabLines = (injectionMeta?.tabs || []).map(tab =>
+    `- tabId: ${tab.id}; title: ${tab.title || "未命名标签页"}; url: ${tab.url}`
+  );
+  const skillLines = (injectionMeta?.skills || []).map(skill =>
+    `- directoryName: ${skill.path}; name: ${skill.name || skill.path}; description: ${skill.description || ""}`
+  );
+  const parts = [body];
+  if (tabLines.length > 0) {
+    parts.push(
+      "",
+      "用户在输入框中明确 @ 选择了以下已打开的浏览器标签页。回答时应优先把这些 tabId 视为用户指定目标；如需读取页面内容，请直接对对应 tabId 使用 tab_extract 等浏览器工具：",
+      ...tabLines
+    );
+  }
+  if (skillLines.length > 0) {
+    parts.push(
+      "",
+      "用户在输入框中明确选择了以下 skill。请优先使用这些 skill 来回答接下来的问题或完成任务；需要完整 workflow 时，使用 skill-bridge 的 get_skill_detail 读取对应 directoryName：",
+      ...skillLines
+    );
+  }
+  return parts.join("\n");
+}
+
+function buildMemoryCommandPrompt() {
+  return [
+    "请总结本次对话中对未来有用、稳定、值得长期保存的信息。",
+    "如果当前可用工具中存在长期记忆/保存记忆能力，请使用相应工具保存这些信息；工具名称可能被 MCP 或系统加前缀，请根据工具描述判断。",
+    "只保存用户偏好、长期项目背景、稳定决策、反复会用到的上下文或纠错后的规则。不要保存临时状态、一次性问题、明显过期的信息或敏感凭据。",
+    "完成后请简要告诉我保存了什么；如果没有可用的记忆保存工具，或者没有值得保存的信息，也请明确说明。"
+  ].join("\n");
+}
+
+function buildRecallMemoryCommandPrompt() {
+  return [
+    "请根据当前对话、当前任务、用户最近的问题和已知项目上下文，检索可能相关的长期记忆。",
+    "如果当前可用工具中存在长期记忆检索/召回/搜索能力，请使用相应工具拉取相关记忆；工具名称可能被 MCP 或系统加前缀，请根据工具名称和描述判断。",
+    "检索查询应简洁，包含当前任务里的关键项目名、模块、功能、用户偏好、决策或约束。不要为临时网页状态、一次性事实或最新信息使用记忆召回。",
+    "完成后请把召回到的相关记忆简要整理到当前上下文，并说明哪些内容会影响接下来的回答或执行；如果没有可用的记忆检索工具或没有相关记忆，也请明确说明。"
+  ].join("\n");
 }
 
 function buildGlobalSessionSearchResult(sessionEntry, messages, query) {
@@ -2704,6 +3357,10 @@ function getFirstUsageNumber(source, fields) {
 
 function formatModelName(model) {
   return String(model || "").trim() || "未配置";
+}
+
+function normalizeReasoningEffort(value) {
+  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
 }
 
 function formatContextUsageK(contextUsage) {
@@ -3150,6 +3807,9 @@ function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
   if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
     message._responsesContent = doneMsg.response_content;
   }
+  if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
+    message._responsesReasoningItems = doneMsg.response_reasoning_items;
+  }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
 
@@ -3187,6 +3847,9 @@ function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
   }
   if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
     message._responsesContent = doneMsg.response_content;
+  }
+  if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
+    message._responsesReasoningItems = doneMsg.response_reasoning_items;
   }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
@@ -3420,14 +4083,17 @@ async function blobToDataUrl(blob) {
   });
 }
 
-function buildAnthropicAssistantContentFromMessage(msg) {
+function buildAnthropicAssistantContentFromMessage(msg, options = {}) {
+  const omitThinking = shouldOmitThinkingFromRequests(options);
+
   if (Array.isArray(msg.content)) {
-    const hasThinkingBlocks = msg.content.some(isAnthropicThinkingBlock);
-    const prependedThinkingBlocks = hasThinkingBlocks ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
-    return normalizeAnthropicAssistantContentBlocks([...prependedThinkingBlocks, ...msg.content]);
+    const contentBlocks = omitThinking ? msg.content.filter(block => !isAnthropicThinkingBlock(block)) : msg.content;
+    const hasThinkingBlocks = contentBlocks.some(isAnthropicThinkingBlock);
+    const prependedThinkingBlocks = omitThinking || hasThinkingBlocks ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
+    return normalizeAnthropicAssistantContentBlocks([...prependedThinkingBlocks, ...contentBlocks]);
   }
 
-  const blocks = extractAnthropicThinkingBlocksFromMessage(msg);
+  const blocks = omitThinking ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
   if (msg.content && typeof msg.content === "string" && msg.content.length > 0) {
     blocks.push({ type: "text", text: msg.content });
   }
@@ -3473,7 +4139,8 @@ function normalizeAnthropicAssistantContentBlock(block) {
   }
 
   if (block.type === "thinking") {
-    if (typeof block.thinking !== "string" && !block.signature) return null;
+    const signature = typeof block.signature === "string" ? block.signature : "";
+    if (!signature) return null;
     return {
       ...block,
       thinking: typeof block.thinking === "string" ? block.thinking : ""
@@ -3506,11 +4173,11 @@ function extractAnthropicThinkingBlocksFromMessage(msg) {
   if (Array.isArray(providerReasoningBlocks)) {
     for (const block of providerReasoningBlocks) {
       const reasoningText = block?.reasoningText;
-      if (reasoningText) {
+      if (reasoningText?.signature) {
         blocks.push({
           type: "thinking",
           thinking: reasoningText.text || reasoningText.thinking || "",
-          ...(reasoningText.signature ? { signature: reasoningText.signature } : {})
+          signature: reasoningText.signature
         });
         continue;
       }
@@ -3522,14 +4189,6 @@ function extractAnthropicThinkingBlocksFromMessage(msg) {
     }
   }
 
-  if (blocks.length === 0 && typeof msg?.reasoning_content === "string" && msg.reasoning_content.length > 0) {
-    blocks.push({ type: "thinking", thinking: msg.reasoning_content });
-  }
-
-  if (blocks.length === 0 && typeof msg?.thinking === "string" && msg.thinking.length > 0) {
-    blocks.push({ type: "thinking", thinking: msg.thinking });
-  }
-
   return normalizeAnthropicAssistantContentBlocks(blocks).filter(isAnthropicThinkingBlock);
 }
 
@@ -3537,9 +4196,10 @@ function isAnthropicThinkingBlock(block) {
   return block?.type === "thinking" || block?.type === "redacted_thinking";
 }
 
-function buildOpenAIAssistantMessageFromAnthropic(msg) {
-  if (!Array.isArray(msg.content)) return buildOpenAIAssistantMessageForApi(msg);
+function buildOpenAIAssistantMessageFromAnthropic(msg, options = {}) {
+  if (!Array.isArray(msg.content)) return buildOpenAIAssistantMessageForApi(msg, options);
 
+  const omitThinking = shouldOmitThinkingFromRequests(options);
   const textParts = [];
   const reasoningParts = [];
   const toolCalls = [];
@@ -3548,7 +4208,7 @@ function buildOpenAIAssistantMessageFromAnthropic(msg) {
     if (!block) continue;
     if (block.type === "text" && block.text) {
       textParts.push(block.text);
-    } else if (block.type === "thinking" && block.thinking) {
+    } else if (!omitThinking && block.type === "thinking" && block.thinking) {
       reasoningParts.push(block.thinking);
     } else if (block.type === "tool_use" && block.name) {
       toolCalls.push({
@@ -3570,12 +4230,12 @@ function buildOpenAIAssistantMessageFromAnthropic(msg) {
   if (reasoningParts.length > 0) {
     apiMessage.reasoning_content = reasoningParts.join("");
   }
-  return copyOpenAIReasoningFieldsForApi(msg, apiMessage);
+  return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
 }
 
-function buildOpenAIAssistantMessageForApi(msg) {
+function buildOpenAIAssistantMessageForApi(msg, options = {}) {
   if (Array.isArray(msg.content)) {
-    return buildOpenAIAssistantMessageFromAnthropic(msg);
+    return buildOpenAIAssistantMessageFromAnthropic(msg, options);
   }
 
   const apiMessage = {
@@ -3585,10 +4245,12 @@ function buildOpenAIAssistantMessageForApi(msg) {
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
     apiMessage.tool_calls = msg.tool_calls;
   }
-  return copyOpenAIReasoningFieldsForApi(msg, apiMessage);
+  return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
 }
 
-function copyOpenAIReasoningFieldsForApi(source, target) {
+function copyOpenAIReasoningFieldsForApi(source, target, options = {}) {
+  if (shouldOmitThinkingFromRequests(options)) return target;
+
   const reasoningContent = getOpenAIReasoningContentForApi(source);
   if (reasoningContent != null) {
     target.reasoning_content = reasoningContent;
@@ -3612,6 +4274,15 @@ function getOpenAIReasoningContentForApi(msg) {
   return null;
 }
 
+function copyOpenAIProviderMetadataForApi(source, target, options = {}) {
+  if (shouldOmitThinkingFromRequests(options)) return target;
+  if (normalizeApiType(options.apiType) !== API_TYPES.OPENAI_RESPONSES) return target;
+  if (Array.isArray(source?._responsesReasoningItems) && source._responsesReasoningItems.length > 0) {
+    target._responsesReasoningItems = source._responsesReasoningItems;
+  }
+  return target;
+}
+
 function buildOpenAIApiMessages(messages, options = {}) {
   const apiMessages = [];
 
@@ -3628,7 +4299,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
         j += 1;
       }
 
-      apiMessages.push(buildOpenAIAssistantMessageForApi(msg));
+      apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
       apiMessages.push(...followingToolMessages.map(toolMsg => ({
         role: "tool",
         tool_call_id: toolMsg.tool_call_id,
@@ -3640,7 +4311,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
     }
 
     if (msg.role === "assistant") {
-      apiMessages.push(buildOpenAIAssistantMessageForApi(msg));
+      apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
       continue;
     }
 
@@ -3671,7 +4342,7 @@ function buildOpenAIApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(buildPlainApiMessage(msg));
+    apiMessages.push(buildPlainApiMessage(msg, options));
   }
 
   return apiMessages;
@@ -3704,7 +4375,7 @@ function buildAnthropicApiMessages(messages, options = {}) {
     }
 
     if (msg.role === "assistant") {
-      const content = buildAnthropicAssistantContentFromMessage(msg);
+      const content = buildAnthropicAssistantContentFromMessage(msg, options);
       if (content.length === 0) continue;
       apiMessages.push({ role: "assistant", content });
       continue;
@@ -3725,13 +4396,13 @@ function buildAnthropicApiMessages(messages, options = {}) {
       continue;
     }
 
-    apiMessages.push(buildPlainApiMessage(msg));
+    apiMessages.push(buildPlainApiMessage(msg, options));
   }
 
   return apiMessages;
 }
 
-function buildPlainApiMessage(msg) {
+function buildPlainApiMessage(msg, options = {}) {
   if (!msg || typeof msg !== "object") return msg;
 
   const apiMessage = { ...msg };
@@ -3741,18 +4412,38 @@ function buildPlainApiMessage(msg) {
     "displayImageUrl",
     "displayImageMediaType",
     "_usageApiType",
-    "_usageModel"
+    "_usageModel",
+    "displayContent",
+    "injectedUserContext"
   ]) {
     delete apiMessage[field];
+  }
+  if (shouldOmitThinkingFromRequests(options)) {
+    for (const field of [
+      "thinking_blocks",
+      "provider_specific_fields",
+      "reasoning_content",
+      "reasoning",
+      "reasoning_details",
+      "thinking",
+      "_responsesReasoningItems"
+    ]) {
+      delete apiMessage[field];
+    }
   }
   return apiMessage;
 }
 
+function shouldOmitThinkingFromRequests(options = {}) {
+  return options.omitThinkingFromRequests === true;
+}
+
 function buildApiMessages(apiType, messages, options = {}) {
-  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
+  const normalizedApiType = normalizeApiType(apiType);
+  if (normalizedApiType === API_TYPES.ANTHROPIC) {
     return buildAnthropicApiMessages(messages, options);
   }
-  return buildOpenAIApiMessages(messages, options);
+  return buildOpenAIApiMessages(messages, { ...options, apiType: normalizedApiType });
 }
 
 function buildPlatformSystemPrompt(platformInfo) {

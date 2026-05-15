@@ -16,7 +16,6 @@
 }
 
 .search-result-button.button:hover,
-.search-result-button.button:focus,
 .search-result-button.button:active,
 .search-result-button.button.search-result-button-selected {
     background: var(--w-yellow);
@@ -27,8 +26,9 @@
     transform: none;
 }
 
-.search-result-button.button:focus:not(:hover) {
-    background: var(--w-yellow);
+.search-result-button.button:focus-visible {
+    outline: 2px solid var(--w-yellow-dark, var(--w-yellow));
+    outline-offset: 1px;
 }
 
 .search-result-badge.badge-container {
