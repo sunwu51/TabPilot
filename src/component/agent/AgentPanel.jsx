@@ -2712,7 +2712,7 @@ function formatModelName(model) {
 }
 
 function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "max"].includes(value) ? value : "default";
+  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
 }
 
 function formatContextUsageK(contextUsage) {

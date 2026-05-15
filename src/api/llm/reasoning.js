@@ -1,4 +1,4 @@
-const SUPPORTED_REASONING_EFFORTS = new Set(["low", "medium", "high", "max"]);
+const SUPPORTED_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 
 export function normalizeReasoningEffort(value) {
   return SUPPORTED_REASONING_EFFORTS.has(value) ? value : "";

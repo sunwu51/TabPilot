@@ -78,10 +78,10 @@ function SettingsDialogBody() {
   ];
   const reasoningEffortOptions = [
     { label: "供应商默认", value: "default" },
-    { label: "低", value: "low" },
-    { label: "中", value: "medium" },
-    { label: "高", value: "high" },
-    { label: "最高", value: "max" }
+    { label: "低 low", value: "low" },
+    { label: "中 medium", value: "medium" },
+    { label: "高 high", value: "high" },
+    { label: "超高 xhigh", value: "xhigh" }
   ];
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
 
@@ -515,5 +515,5 @@ function normalizeWsServerUrlInput(value) {
 }
 
 function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "max"].includes(value) ? value : "default";
+  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
 }
