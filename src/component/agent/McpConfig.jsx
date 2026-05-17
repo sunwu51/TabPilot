@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 
 const MCP_WARNING_LIMIT = 120 - BUILTIN_TOOL_COUNT;
 const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
+const MCP_SILENT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * MCP Server configuration component using camel-ui Dialog.
@@ -26,6 +27,7 @@ export default function McpConfig({ onToolsChanged }) {
   const overLimitRef = useRef(false);
   const dialogBodyRef = useRef(null);
   const hasAutoFocusedRef = useRef(false);
+  const silentRefreshInFlightRef = useRef(false);
 
   function focusServerNameInput(container = dialogBodyRef.current) {
     if (!container) return;
@@ -102,31 +104,58 @@ export default function McpConfig({ onToolsChanged }) {
     }, 0);
   }
 
-  /** Load saved servers and reconnect on mount */
+  /** Load saved servers and keep their session/tool registry fresh in the background. */
   useEffect(() => {
-    (async () => {
-      const { mcpServers } = await chrome.storage.local.get({ mcpServers: [] });
-      let reconnected = await Promise.all(
-        mcpServers.map(async (s) => {
-          const result = await connectMcpServer(s.url, s.headers || {});
-          return {
-            ...s,
-            name: s.name || normalizeServerName(result.name) || normalizeServerName(s.url) || `server_${Date.now()}`,
-            serverInfoName: result.name || s.serverInfoName || "",
-            tools: result.tools,
-            toolSettings: buildToolSettings(s.toolSettings || {}, result.tools),
-            error: result.error,
-            enabled: !result.error
-          };
-        })
-      );
-      reconnected = ensureUniqueServerNames(reconnected);
-      setServers(reconnected);
-      await _saveServers(reconnected);
-      _notifyTools(reconnected, { showWarning: false });
-    })();
+    let disposed = false;
+
+    async function refreshSavedServers() {
+      if (silentRefreshInFlightRef.current) return;
+      silentRefreshInFlightRef.current = true;
+      try {
+        const refreshed = await reconnectSavedServers();
+        if (disposed) return;
+        setServers(refreshed);
+        await _saveServers(refreshed);
+        if (disposed) return;
+        _notifyTools(refreshed, { showWarning: false });
+      } catch (error) {
+        console.error("Failed to silently refresh MCP servers:", error);
+      } finally {
+        silentRefreshInFlightRef.current = false;
+      }
+    }
+
+    void refreshSavedServers();
+    const intervalId = setInterval(() => {
+      void refreshSavedServers();
+    }, MCP_SILENT_REFRESH_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(intervalId);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function reconnectSavedServers() {
+    const { mcpServers } = await chrome.storage.local.get({ mcpServers: [] });
+    let reconnected = await Promise.all(
+      mcpServers.map(async (s) => {
+        const result = await connectMcpServer(s.url, s.headers || {});
+        return {
+          ...s,
+          name: s.name || normalizeServerName(result.name) || normalizeServerName(s.url) || `server_${Date.now()}`,
+          serverInfoName: result.name || s.serverInfoName || "",
+          tools: result.tools,
+          toolSettings: buildToolSettings(s.toolSettings || {}, result.tools),
+          error: result.error,
+          enabled: !result.error
+        };
+      })
+    );
+    reconnected = ensureUniqueServerNames(reconnected);
+    return reconnected;
+  }
 
   /** Notify parent of updated MCP tools with server routing info */
   function _notifyTools(serverList, { showWarning = true } = {}) {
