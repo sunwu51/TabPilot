@@ -621,6 +621,21 @@
   background: #9ca3af;
 }
 
+.chat-input-resize-handle-disabled {
+  cursor: default;
+  touch-action: auto;
+}
+
+.chat-input-resize-handle-disabled::before {
+  width: 28px;
+  background: #e5e7eb;
+}
+
+.chat-input-resize-handle-disabled:hover::before {
+  width: 28px;
+  background: #e5e7eb;
+}
+
 .chat-input-resizing {
   cursor: ns-resize;
   user-select: none;
@@ -844,6 +859,11 @@
   flex: 0 0 auto;
   max-width: 45%;
   text-align: right;
+}
+
+.chat-input-status-context-warning {
+  color: #dc2626;
+  font-weight: 700;
 }
 
 .chat-input-actions {

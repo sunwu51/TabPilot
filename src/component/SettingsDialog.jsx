@@ -3,8 +3,20 @@ import { Button, Checkbox, Dialog, Input, Select } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llmEndpoint";
-import { API_TYPES, getDefaultApiType, normalizeApiType } from "../api/llm";
+import {
+  API_TYPES,
+  DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  MODEL_CONTEXT_LIMIT_OPTIONS,
+  getDefaultApiType,
+  normalizeApiType,
+  normalizeModelContextLimitTokens
+} from "../api/llm";
 import { captureFullPageScreenshotToTab, openHelloWorldPlayground } from "../api/llm/builtins";
+import {
+  downloadSettingsBackup,
+  exportSettingsBackup,
+  importSettingsBackupFromText
+} from "../api/settingsBackup";
 import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/tabReuse";
 import {
   DEFAULT_WS_BRIDGE_STATUS,
@@ -19,6 +31,7 @@ const DEFAULT_SETTINGS = {
     baseUrl: "",
     apiKey: "",
     model: "",
+    modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
     reasoningEffort: "default",
@@ -54,6 +67,7 @@ function SettingsDialogBody() {
   const [apiKey, setApiKey] = useState(DEFAULT_SETTINGS.llmConfig.apiKey);
   const [showApiKey, setShowApiKey] = useState(false);
   const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
+  const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
   const [reasoningEffort, setReasoningEffort] = useState(DEFAULT_SETTINGS.llmConfig.reasoningEffort);
@@ -72,6 +86,7 @@ function SettingsDialogBody() {
   const [saving, setSaving] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const rootRef = useRef(null);
+  const settingsImportInputRef = useRef(null);
   const extractTextLimitOptions = [
     { label: "8k", value: 8000 },
     { label: "16k", value: 16000 },
@@ -118,6 +133,7 @@ function SettingsDialogBody() {
       setBaseUrl(nextLlmConfig.baseUrl || "");
       setApiKey(nextLlmConfig.apiKey || "");
       setModel(nextLlmConfig.model || "");
+      setModelContextLimitTokens(normalizeModelContextLimitTokens(nextLlmConfig.modelContextLimitTokens));
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
       setReasoningEffort(normalizeReasoningEffort(nextLlmConfig.reasoningEffort));
@@ -163,6 +179,7 @@ function SettingsDialogBody() {
           baseUrl,
           apiKey,
           model,
+          modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
           reasoningEffort: normalizeReasoningEffort(reasoningEffort),
@@ -241,6 +258,36 @@ function SettingsDialogBody() {
       toast.success("已打开高级用法");
     } catch (error) {
       toast.error(error?.message || "打开高级用法失败");
+    }
+  }
+
+  async function handleExportSettings() {
+    try {
+      const backup = await exportSettingsBackup();
+      downloadSettingsBackup(backup);
+      toast.success("配置已导出");
+    } catch (error) {
+      toast.error(`导出配置失败: ${error?.message || String(error)}`);
+    }
+  }
+
+  function handleImportSettingsClick() {
+    settingsImportInputRef.current?.click();
+  }
+
+  async function handleImportSettingsFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const result = await importSettingsBackupFromText(text);
+      await loadDraft();
+      const updatedCount = result.updatedKeys.length;
+      toast.success(updatedCount > 0 ? `配置已导入（${updatedCount} 项）` : "未发现可导入的配置项");
+    } catch (error) {
+      toast.error(`导入配置失败: ${error?.message || String(error)}`);
     }
   }
 
@@ -339,6 +386,15 @@ function SettingsDialogBody() {
             defaultValue={model}
             onChange={setModel}
             placeholder={apiType === API_TYPES.ANTHROPIC ? "claude-sonnet-4-20250514" : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-4.1-mini" : "deepseek-v4-flash")}
+          />
+          <Select
+            label="模型上下文大小（用于上下文告警）"
+            items={MODEL_CONTEXT_LIMIT_OPTIONS.map((item) => item.label)}
+            defaultIndex={Math.max(0, MODEL_CONTEXT_LIMIT_OPTIONS.findIndex((item) => item.value === modelContextLimitTokens))}
+            onSelectedItemChange={(changes) => {
+              const selected = MODEL_CONTEXT_LIMIT_OPTIONS.find((item) => item.label === changes.selectedItem);
+              setModelContextLimitTokens(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
+            }}
           />
           <Input
             label="LLM 首包超时（秒）"
@@ -482,6 +538,36 @@ function SettingsDialogBody() {
             >
               高级用法
             </Button>
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">配置备份</div>
+          <div className="settings-tab-action-row">
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleExportSettings}
+              isDisabled={loading || saving}
+            >
+              导出配置
+            </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleImportSettingsClick}
+              isDisabled={loading || saving}
+            >
+              导入配置
+            </Button>
+            <input
+              ref={settingsImportInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="settings-hidden-file-input"
+              onChange={handleImportSettingsFile}
+            />
+          </div>
+          <div className="settings-api-url-hint">
+            导出包含 API Key；导入只更新文件中存在的配置项。
           </div>
         </div>
       </div>

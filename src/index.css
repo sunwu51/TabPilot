@@ -169,6 +169,10 @@ html, body, #root {
   margin-top: 0.5rem;
 }
 
+.dialog-dialog .settings-hidden-file-input {
+  display: none;
+}
+
 .dialog-dialog .settings-dialog-actions {
   flex-shrink: 0;
   display: flex;

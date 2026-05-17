@@ -1,7 +1,19 @@
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
-import { API_TYPES, getDefaultApiType, normalizeApiType, streamChat, executeTool, findMcpToolByCallName, hasDownloadsPermission, isMcpToolCallName } from "../../api/llm";
+import {
+  API_TYPES,
+  DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  MODEL_CONTEXT_WARNING_THRESHOLD_RATIO,
+  getDefaultApiType,
+  normalizeApiType,
+  normalizeModelContextLimitTokens,
+  streamChat,
+  executeTool,
+  findMcpToolByCallName,
+  hasDownloadsPermission,
+  isMcpToolCallName
+} from "../../api/llm";
 import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
@@ -90,7 +102,14 @@ export default function AgentPanel() {
   const [skillStationTools, setSkillStationTools] = useState([]);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [llmConfigInfo, setLlmConfigInfo] = useState({ apiType: getDefaultApiType(), model: "", supportsImageInput: false, reasoningEffort: "default", omitThinkingFromRequests: false });
+  const [llmConfigInfo, setLlmConfigInfo] = useState({
+    apiType: getDefaultApiType(),
+    model: "",
+    modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+    supportsImageInput: false,
+    reasoningEffort: "default",
+    omitThinkingFromRequests: false
+  });
   const [contextUsage, setContextUsage] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
@@ -406,6 +425,7 @@ export default function AgentPanel() {
         setLlmConfigInfo({
           apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
           model: nextConfig.model || "",
+          modelContextLimitTokens: normalizeModelContextLimitTokens(nextConfig.modelContextLimitTokens),
           supportsImageInput: nextConfig.supportsImageInput === true,
           reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
           omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true
@@ -502,6 +522,7 @@ export default function AgentPanel() {
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
+      modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
@@ -1144,6 +1165,7 @@ export default function AgentPanel() {
         baseUrl: "",
         apiKey: "",
         model: "",
+        modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false,
         reasoningEffort: "default",
@@ -1154,6 +1176,7 @@ export default function AgentPanel() {
     setLlmConfigInfo({
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       model: llmConfig?.model || "",
+      modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
@@ -1161,6 +1184,7 @@ export default function AgentPanel() {
     return {
       ...llmConfig,
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
+      modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
@@ -2197,6 +2221,9 @@ export default function AgentPanel() {
   const pendingApprovalMeta = pendingApproval?.approvalMeta || getDangerousToolMeta(pendingApproval?.toolCall);
   const filteredSlashCommands = getFilteredSlashCommands();
   const filteredMentionTabs = getFilteredMentionTabs();
+  const contextUsageWarning = isContextUsageWarning(contextUsage, llmConfigInfo.modelContextLimitTokens);
+  const contextStatusTitle = `上下文：${formatContextUsageK(contextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
+  const inputResizeDisabled = loading || !!pendingApproval;
 
   return (
     <div className="agent-panel">
@@ -2612,9 +2639,10 @@ export default function AgentPanel() {
               </div>
             )}
             <div
-              className="chat-input-resize-handle"
+              className={`chat-input-resize-handle${inputResizeDisabled ? " chat-input-resize-handle-disabled" : ""}`}
               role="separator"
               aria-label="调整输入框高度"
+              aria-disabled={inputResizeDisabled}
               aria-orientation="horizontal"
               onPointerDown={handleInputResizePointerDown}
               onPointerMove={handleInputResizePointerMove}
@@ -2640,7 +2668,10 @@ export default function AgentPanel() {
               <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
                 模型：{formatModelName(llmConfigInfo.model)}
               </span>
-              <span className="chat-input-status-context" title={`上下文：${formatContextUsageK(contextUsage)}`}>
+              <span
+                className={`chat-input-status-context${contextUsageWarning ? " chat-input-status-context-warning" : ""}`}
+                title={contextStatusTitle}
+              >
                 上下文：{formatContextUsageK(contextUsage)}
               </span>
             </div>
@@ -3361,6 +3392,18 @@ function formatModelName(model) {
 
 function normalizeReasoningEffort(value) {
   return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
+}
+
+function isContextUsageWarning(contextUsage, limitTokens) {
+  const tokens = Number(contextUsage?.tokens);
+  const normalizedLimit = normalizeModelContextLimitTokens(limitTokens);
+  return Number.isFinite(tokens) && tokens >= normalizedLimit * MODEL_CONTEXT_WARNING_THRESHOLD_RATIO;
+}
+
+function formatContextLimitK(limitTokens) {
+  const normalizedLimit = normalizeModelContextLimitTokens(limitTokens);
+  if (normalizedLimit >= 1000000) return `${normalizedLimit / 1000000}M`;
+  return `${Math.round(normalizedLimit / 1000)}K`;
 }
 
 function formatContextUsageK(contextUsage) {
