@@ -57,6 +57,7 @@ const SYSTEM_PROMPT_PLACEHOLDER =
   "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const IMAGE_DEREF_PATTERN = /^\|deRef:(img_[A-Za-z0-9_-]+)\|$/;
 const SLASH_COMMANDS = [
   {
     id: "mem",
@@ -144,6 +145,7 @@ export default function AgentPanel() {
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
+  const sessionImageRefsRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
@@ -352,7 +354,7 @@ export default function AgentPanel() {
           loadSession(restored.id),
           loadSessionMeta(restored.id)
         ]);
-        sessionMessagesRef.current.set(restored.id, msgs);
+        setSessionMessages(restored.id, msgs);
         sessionPlansRef.current.set(restored.id, normalizeSessionPlans(meta.plans));
         activeSessionIdRef.current = restored.id;
         void saveLastActiveSessionId(restored.id);
@@ -372,7 +374,7 @@ export default function AgentPanel() {
         if (defaultSystemPrompt.systemPrompt) {
           await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
         }
-        sessionMessagesRef.current.set(id, []);
+        setSessionMessages(id, []);
         sessionPlansRef.current.set(id, []);
         activeSessionIdRef.current = id;
         void saveLastActiveSessionId(id);
@@ -593,9 +595,89 @@ export default function AgentPanel() {
 
   function setSessionMessages(targetSessionId, msgs) {
     sessionMessagesRef.current.set(targetSessionId, msgs);
+    if (sessionHasImageRefs(msgs)) {
+      rebuildSessionImageRefs(targetSessionId, msgs);
+    } else {
+      sessionImageRefsRef.current.delete(targetSessionId);
+    }
     if (activeSessionIdRef.current === targetSessionId) {
       setMessages(msgs);
     }
+  }
+
+  function getSessionImageRefCache(targetSessionId) {
+    let cache = sessionImageRefsRef.current.get(targetSessionId);
+    if (!cache) {
+      cache = {
+        refs: new Map(),
+        byDataUrl: new Map(),
+        nextIndex: 1
+      };
+      sessionImageRefsRef.current.set(targetSessionId, cache);
+    }
+    return cache;
+  }
+
+  function registerSessionImageDataUrl(targetSessionId, dataUrl, preferredRef) {
+    if (!targetSessionId || !isBase64DataUrl(dataUrl)) return null;
+    const cache = getSessionImageRefCache(targetSessionId);
+    const existing = cache.byDataUrl.get(dataUrl);
+    if (existing) return existing;
+
+    let ref = typeof preferredRef === "string" && /^img_[A-Za-z0-9_-]+$/.test(preferredRef)
+      ? preferredRef
+      : `img_${cache.nextIndex}`;
+    while (cache.refs.has(ref) && cache.refs.get(ref) !== dataUrl) {
+      ref = `img_${cache.nextIndex}`;
+      cache.nextIndex += 1;
+    }
+
+    cache.refs.set(ref, dataUrl);
+    cache.byDataUrl.set(dataUrl, ref);
+    const numericSuffix = Number(ref.match(/^img_(\d+)$/)?.[1]);
+    if (Number.isFinite(numericSuffix)) {
+      cache.nextIndex = Math.max(cache.nextIndex, numericSuffix + 1);
+    } else {
+      cache.nextIndex += 1;
+    }
+    return ref;
+  }
+
+  function rebuildSessionImageRefs(targetSessionId, msgs) {
+    if (!targetSessionId || !Array.isArray(msgs)) return;
+    sessionImageRefsRef.current.delete(targetSessionId);
+    for (const msg of msgs) {
+      if (!msg || typeof msg !== "object") continue;
+      if (Array.isArray(msg.imageRefs)) {
+        for (const item of msg.imageRefs) {
+          registerSessionImageDataUrl(targetSessionId, item?.dataUrl, item?.ref);
+        }
+      }
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          const dataUrl = imageBlockToDataUrl(block);
+          if (dataUrl) registerSessionImageDataUrl(targetSessionId, dataUrl);
+        }
+      }
+      if (isBase64DataUrl(msg.displayImageUrl)) {
+        registerSessionImageDataUrl(targetSessionId, msg.displayImageUrl);
+      }
+    }
+  }
+
+  function sessionHasImageRefs(msgs) {
+    if (!Array.isArray(msgs)) return false;
+    return msgs.some(msg => {
+      if (!msg || typeof msg !== "object") return false;
+      if (Array.isArray(msg.imageRefs) && msg.imageRefs.length > 0) return true;
+      if (isBase64DataUrl(msg.displayImageUrl)) return true;
+      return Array.isArray(msg.content) && msg.content.some(block => !!imageBlockToDataUrl(block));
+    });
+  }
+
+  function resolveToolImageRefs(targetSessionId, args) {
+    const cache = getSessionImageRefCache(targetSessionId);
+    return resolveImageRefsInValue(args, cache.refs);
   }
 
   async function openSession(id, options = {}) {
@@ -620,7 +702,7 @@ export default function AgentPanel() {
       cached ?? loadSession(id),
       loadSessionMeta(id)
     ]);
-    sessionMessagesRef.current.set(id, msgs);
+    setSessionMessages(id, msgs);
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
     activeSessionIdRef.current = id;
     void saveLastActiveSessionId(id);
@@ -994,7 +1076,7 @@ export default function AgentPanel() {
     if (defaultSystemPrompt.systemPrompt) {
       await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
     }
-    sessionMessagesRef.current.set(id, []);
+    setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
     activeSessionIdRef.current = id;
@@ -1151,6 +1233,8 @@ export default function AgentPanel() {
       `- If the user asks you to set a reminder and there is no reminder/notification tool available in the tool list, create a new tab with tab_open using a data: URL that displays the reminder content clearly. For example: data:text/html;charset=utf-8,<h1>立即喝水</h1><p>15 分钟后提醒</p>.\n` +
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
+      `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
+      `- If an image-generation tool returns an image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
       `- Respond in the same language as the user.` +
       currentSessionSystemPrompt +
       buildSkillsSystemPrompt(agentSkills) +
@@ -1254,25 +1338,33 @@ export default function AgentPanel() {
       return;
     }
 
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+
     const imageAtts = attachments.filter(a => a.type === "image");
     const textAtts = attachments.filter(a => a.type === "text");
     const injectionMeta = buildUserInjectionMeta(selectedTabs, selectedSkills);
     const finalText = injectionMeta ? buildInjectedUserText(text, injectionMeta) : text;
+    const imageRefs = imageAtts
+      .map(att => {
+        const ref = registerSessionImageDataUrl(currentSessionId, att.dataUrl);
+        return ref ? { ref, dataUrl: att.dataUrl } : null;
+      })
+      .filter(Boolean);
 
     const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
     const userMsg = {
       role: "user",
       sentAt: Date.now(),
       content: hasAnyAttachment
-        ? buildUserMessageContent(finalText, imageAtts, textAtts)
+        ? buildUserMessageContent(finalText, imageAtts, textAtts, imageRefs)
         : finalText
     };
+    if (imageRefs.length > 0) userMsg.imageRefs = imageRefs;
     if (injectionMeta) {
       userMsg.displayContent = text || "请根据我指定的上下文回答。";
       userMsg.injectedUserContext = injectionMeta;
     }
-    const currentSessionId = activeSessionIdRef.current;
-    if (!currentSessionId) return;
     const newMessages = [...getSessionMessages(currentSessionId), userMsg];
     enableAutoFollowBottom("auto");
     setSessionMessages(currentSessionId, newMessages);
@@ -1429,18 +1521,20 @@ export default function AgentPanel() {
             if (!isCurrentRun(targetSessionId, runId)) return;
             let result;
             const t0 = Date.now();
+            const resolvedArgs = resolveToolImageRefs(targetSessionId, tc.args);
             if (tc.name === "plan_create_for_session") {
-              result = await handlePlanCreateForSession(targetSessionId, runId, tc.args || {});
+              result = await handlePlanCreateForSession(targetSessionId, runId, resolvedArgs || {});
               if (!isCurrentRun(targetSessionId, runId)) return;
               setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
             } else if (tc.name === "plan_update_for_session") {
-              result = await handlePlanUpdateForSession(targetSessionId, tc.args || {});
+              result = await handlePlanUpdateForSession(targetSessionId, resolvedArgs || {});
             } else {
               let permissionDenied = false;
-              const permissionMeta = getPermissionMetaForToolCall(tc);
+              const resolvedToolCall = { ...tc, args: resolvedArgs };
+              const permissionMeta = getPermissionMetaForToolCall(resolvedToolCall);
               if (permissionMeta && !(await hasDownloadsPermission())) {
                 toast(`${permissionMeta.title}`, { duration: 2500 });
-                const { granted } = await requestPermissionApproval(targetSessionId, runId, tc, permissionMeta);
+                const { granted } = await requestPermissionApproval(targetSessionId, runId, resolvedToolCall, permissionMeta);
                 if (!isCurrentRun(targetSessionId, runId)) return;
                 if (granted) {
                   setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
@@ -1455,32 +1549,36 @@ export default function AgentPanel() {
               if (permissionDenied) {
                 // result already populated; skip dangerous + execution path
               } else {
-              const dangerousMeta = getDangerousToolMeta(tc);
+              const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
               if (dangerousMeta) {
                 const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
                 if (dangerousToolSkipApproval) {
                   setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                  result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                  result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
                 } else {
                   toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
-                  const approved = await requestDangerousToolApproval(targetSessionId, runId, tc, dangerousMeta);
+                  const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
                   if (!isCurrentRun(targetSessionId, runId)) return;
                   if (!approved) {
                     result = { error: "Execution canceled by user", cancelled: true };
                   } else {
                     setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                    result = await executeTool(tc.name, dangerousMeta.executeArgs ?? tc.args, combinedMcpTools);
+                    result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
                   }
                 }
               } else {
-                result = await executeTool(tc.name, tc.args, combinedMcpTools);
+                result = await executeTool(tc.name, resolvedArgs, combinedMcpTools);
               }
               }
             }
             const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
-            const toolResultMsg = buildDisplayToolResultMessage({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
-            toolResults.push({ id: tc.id, name: tc.name, args: tc.args, result, durationMs });
+            const toolResultMsg = buildDisplayToolResultMessage(
+              { id: tc.id, name: tc.name, args: resolvedArgs, result, durationMs },
+              targetSessionId,
+              registerSessionImageDataUrl
+            );
+            toolResults.push({ id: tc.id, name: tc.name, args: resolvedArgs, result, durationMs });
             // Replace the pending placeholder for this tool
             const currentMsgs = getSessionMessages(targetSessionId);
             const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
@@ -1489,7 +1587,7 @@ export default function AgentPanel() {
 
           if (!isCurrentRun(targetSessionId, runId)) return;
 
-          const toolResultMsgs = buildToolResultMessages(toolResults);
+          const toolResultMsgs = buildToolResultMessages(toolResults, targetSessionId, registerSessionImageDataUrl);
 
           const continuedMessages = [
             ...conversationMessages,
@@ -3663,15 +3761,7 @@ function serializeExportMessage(msg) {
   if (!msg || !msg.role) return [];
 
   if (msg.role === "user") {
-    if (Array.isArray(msg.content)) return [];
-    return [
-      "---",
-      "",
-      "## 用户",
-      "",
-      String(msg.content ?? "").trim() || "_空内容_",
-      ""
-    ];
+    return serializeUserExportMessage(msg);
   }
 
   if (msg.role === "assistant") {
@@ -3702,6 +3792,49 @@ function serializeExportMessage(msg) {
     formatUnknownContentForMarkdown(msg.content),
     ""
   ];
+}
+
+function serializeUserExportMessage(msg) {
+  return [
+    "---",
+    "",
+    "## 用户",
+    "",
+    formatUserContentForMarkdown(msg.content),
+    ""
+  ];
+}
+
+function formatUserContentForMarkdown(content) {
+  if (typeof content === "string") return content.trim() || "_空内容_";
+  if (!Array.isArray(content)) return formatUnknownContentForMarkdown(content);
+
+  const parts = content
+    .map(formatUserContentBlockForMarkdown)
+    .filter(part => typeof part === "string" && part.trim().length > 0);
+
+  return parts.length > 0 ? parts.join("\n\n") : "_空内容_";
+}
+
+function formatUserContentBlockForMarkdown(block) {
+  if (!block || typeof block !== "object") return "";
+
+  if (block.type === "text") {
+    return String(block.text ?? "").trim();
+  }
+
+  if (block.type === "file") {
+    const fileName = String(block.fileName || block.name || "attachment.txt").trim();
+    return [`### 附件 · ${fileName}`, "", formatTextFence(block.text ?? "")].join("\n");
+  }
+
+  const dataUrl = imageBlockToDataUrl(block);
+  if (dataUrl) {
+    const mediaType = parseImageDataUrl(dataUrl)?.mediaType || "image";
+    return `![用户图片 · ${mediaType}](${dataUrl})`;
+  }
+
+  return formatJsonFence(block);
 }
 
 function serializeAssistantExportMessage(msg) {
@@ -3927,8 +4060,8 @@ function copyAssistantReasoningFields(source, target) {
   return target;
 }
 
-function buildToolResultMessages(toolResults) {
-  return toolResults.map(tr => buildDisplayToolResultMessage(tr));
+function buildToolResultMessages(toolResults, targetSessionId, registerImageDataUrl) {
+  return toolResults.map(tr => buildDisplayToolResultMessage(tr, targetSessionId, registerImageDataUrl));
 }
 
 function buildLlmErrorDisplayMessage(error) {
@@ -3962,11 +4095,16 @@ function stampLastUserDuration(messages) {
   return updated;
 }
 
-function buildDisplayToolResultMessage(toolResult) {
+function buildDisplayToolResultMessage(toolResult, targetSessionId, registerImageDataUrl) {
   const parsedImage = parseImageDataUrl(toolResult?.result?.dataUrl);
-  const summary = summarizeToolResult(toolResult.result);
+  const imageRefs = [];
+  if (parsedImage && targetSessionId && typeof registerImageDataUrl === "function") {
+    const ref = registerImageDataUrl(targetSessionId, toolResult.result.dataUrl);
+    if (ref) imageRefs.push({ ref, dataUrl: toolResult.result.dataUrl });
+  }
+  const summary = summarizeToolResult(toolResult.result, imageRefs);
   const serializedContent = serializeToolResult(summary);
-  return {
+  const message = {
     role: "tool",
     tool_call_id: toolResult.id,
     tool_name: toolResult.name,
@@ -3975,6 +4113,8 @@ function buildDisplayToolResultMessage(toolResult) {
     displayImageMediaType: parsedImage?.mediaType,
     durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
   };
+  if (imageRefs.length > 0) message.imageRefs = imageRefs;
+  return message;
 }
 
 function serializeToolResult(summary) {
@@ -3983,7 +4123,7 @@ function serializeToolResult(summary) {
   return JSON.stringify(normalizeToolSummary(summary));
 }
 
-function summarizeToolResult(result) {
+function summarizeToolResult(result, imageRefs = []) {
   if (!result || typeof result !== "object") return result;
 
   const summary = { ...result };
@@ -3991,8 +4131,49 @@ function summarizeToolResult(result) {
     delete summary.dataUrl;
     summary.imageOmittedFromTextContext = true;
   }
+  if (imageRefs.length > 0) {
+    summary.imageRefs = imageRefs.map(({ ref }) => ref);
+    summary.imageRefInstruction = imageRefs
+      .map(({ ref }) => `Tool returned an image ref: ${ref}. For later tool calls requiring this image's base64 data URL, pass exactly "|deRef:${ref}|". Do not copy or rewrite the data URL.`)
+      .join("\n");
+  }
 
   return summary;
+}
+
+function isBase64DataUrl(dataUrl) {
+  return typeof dataUrl === "string" && /^data:[^;]+;base64,/.test(dataUrl);
+}
+
+function imageBlockToDataUrl(block) {
+  if (!block || typeof block !== "object") return null;
+  if (block.type === "image" && block.source?.type === "base64" && block.source.media_type && block.source.data) {
+    return `data:${block.source.media_type};base64,${block.source.data}`;
+  }
+  if (block.type === "image_url" && isBase64DataUrl(block.image_url?.url)) {
+    return block.image_url.url;
+  }
+  return null;
+}
+
+function resolveImageRefsInValue(value, refs) {
+  if (typeof value === "string") {
+    const match = value.match(IMAGE_DEREF_PATTERN);
+    if (!match) return value;
+    return refs.get(match[1]) || value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => resolveImageRefsInValue(item, refs));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, resolveImageRefsInValue(child, refs)])
+    );
+  }
+
+  return value;
 }
 
 function parseImageDataUrl(dataUrl) {
@@ -4065,11 +4246,17 @@ function buildOpenAIToolResultContent(msg, options = {}) {
 
 // ==================== User Image Input Helpers ====================
 
-function buildUserMessageContent(text, images, textFiles = []) {
+function buildUserMessageContent(text, images, textFiles = [], imageRefs = []) {
   const content = [];
 
-  if (text && text.trim()) {
-    content.push({ type: "text", text: text.trim() });
+  const textParts = [];
+  if (text && text.trim()) textParts.push(text.trim());
+  for (const item of imageRefs) {
+    if (!item?.ref) continue;
+    textParts.push(`Attached image ref: ${item.ref}. For any tool argument that requires this image's base64 data URL, pass exactly "|deRef:${item.ref}|". Do not copy or rewrite the data URL.`);
+  }
+  if (textParts.length > 0) {
+    content.push({ type: "text", text: textParts.join("\n\n") });
   }
 
   for (const f of textFiles) {

@@ -566,8 +566,8 @@ function SettingsDialogBody() {
               onChange={handleImportSettingsFile}
             />
           </div>
-          <div className="settings-api-url-hint">
-            导出包含 API Key；导入只更新文件中存在的配置项。
+          <div className="settings-api-url-hint !text-red-600">
+            只有保存后才能导出；导出包含 API Key，且不会导出 WS Bridge 相关配置；导入只更新文件中存在的配置项。
           </div>
         </div>
       </div>
