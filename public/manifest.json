@@ -38,7 +38,7 @@
     ]
   },
   "content_security_policy": {
-    "sandbox": "sandbox allow-scripts allow-forms allow-modals allow-popups allow-presentation; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src-elem * data: blob: 'unsafe-inline' 'unsafe-eval'; style-src * data: blob: 'unsafe-inline'; style-src-elem * data: blob: 'unsafe-inline'; img-src * data: blob:; font-src * data: blob:; connect-src * data: blob:; media-src * data: blob:; frame-src * data: blob:; worker-src * data: blob:; object-src * data: blob:"
+    "sandbox": "sandbox allow-scripts allow-forms allow-modals allow-popups allow-presentation allow-downloads; default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; script-src-elem * data: blob: 'unsafe-inline' 'unsafe-eval'; style-src * data: blob: 'unsafe-inline'; style-src-elem * data: blob: 'unsafe-inline'; img-src * data: blob:; font-src * data: blob:; connect-src * data: blob:; media-src * data: blob:; frame-src * data: blob:; worker-src * data: blob:; object-src * data: blob:"
   },
   "host_permissions": [
     "<all_urls>"

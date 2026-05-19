@@ -198,7 +198,10 @@ export async function clearSessionKeywords(id) {
 export async function deleteSession(id) {
   const key = `session_${id}`;
   const lastActiveSessionId = await loadLastActiveSessionId();
-  const keysToRemove = lastActiveSessionId === id ? [key, LAST_ACTIVE_SESSION_ID_KEY] : key;
+  const keysToRemove = [
+    key,
+    ...(lastActiveSessionId === id ? [LAST_ACTIVE_SESSION_ID_KEY] : [])
+  ];
   await chrome.storage.local.remove(keysToRemove);
 
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });

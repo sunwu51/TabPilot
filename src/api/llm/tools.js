@@ -9,6 +9,11 @@ const DOM_LOCATOR_PROPERTIES = {
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
 };
 const BETA_TOOL_NAMES = new Set(["list_macros", "describe_macro", "run_macro"]);
+const IMAGE_TOOL_NAMES = new Set(["image_gen", "image_edit"]);
+
+export function isImageToolName(toolName) {
+  return IMAGE_TOOL_NAMES.has(String(toolName || "").trim());
+}
 
 // ==================== Tool Definitions ====================
 
@@ -653,6 +658,54 @@ export const TOOLS = [
     }
   },
   {
+    name: "image_gen",
+    description: "Generate an image through the configured OpenAI-compatible Images API generations endpoint. Use this when the user asks to create a new image. The tool returns an image result that the host stores as a local ref; after the tool result tells you the ref, show it with Markdown like ![image](|deRef:img_1|) instead of copying base64.",
+    schema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Required image generation prompt." },
+        model: { type: "string", description: "Optional image model override. Defaults to the configured Image model." },
+        size: { type: "string", description: "Optional output size, such as auto, 1024x1024, 1024x1536, or 1536x1024." },
+        quality: { type: "string", enum: ["auto", "low", "medium", "high"], description: "Optional rendering quality. Defaults to the provider/model default." },
+        background: { type: "string", enum: ["auto", "opaque", "transparent"], description: "Optional background mode when supported by the model." },
+        output_format: { type: "string", enum: ["png", "jpeg", "webp"], description: "Optional output format. Defaults to png for local preview if the API returns base64 without a MIME type." },
+        output_compression: { type: "number", description: "Optional compression level from 0 to 100 for jpeg/webp outputs when supported." },
+        n: { type: "number", description: "Optional number of images to request. The UI previews the first returned image." }
+      },
+      required: ["prompt"]
+    }
+  },
+  {
+    name: "image_edit",
+    description: "Edit one or more input images through the configured OpenAI-compatible Images API edits endpoint. Use this when the user asks to modify an attached/generated image. Prefer `images` as an ordered array: the first image is the image to edit, and later images are references. If you have an image ref such as img_1, pass exactly \"|deRef:img_1|\" and the host will replace it before execution. Optional `mask` applies only to the first image and should be a PNG mask ref/data URL. The tool returns an image result stored as a local ref; show it with Markdown like ![image](|deRef:img_2|) after the tool result tells you the ref.",
+    schema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "Required edit instruction." },
+        images: {
+          type: "array",
+          items: { type: "string" },
+          description: "Ordered input images. The first item is edited; later items are reference images. Use exact placeholders like |deRef:img_1| for cached images."
+        },
+        image: { type: "string", description: "Legacy first/source image. Use exact placeholders like |deRef:img_1| for cached images when not using `images`." },
+        additional_images: {
+          type: "array",
+          items: { type: "string" },
+          description: "Legacy additional reference images used with `image`. Use exact placeholders like |deRef:img_2| when available."
+        },
+        mask: { type: "string", description: "Optional mask image for the first input image only. Use exact placeholders like |deRef:img_3| when available. For OpenAI Images API masks, the first image and mask should have the same dimensions and the mask should include alpha." },
+        model: { type: "string", description: "Optional image model override. Defaults to the configured Image model." },
+        size: { type: "string", description: "Optional output size, such as auto, 1024x1024, 1024x1536, or 1536x1024." },
+        quality: { type: "string", enum: ["auto", "low", "medium", "high"], description: "Optional rendering quality. Defaults to the provider/model default." },
+        background: { type: "string", enum: ["auto", "opaque", "transparent"], description: "Optional background mode when supported by the model." },
+        output_format: { type: "string", enum: ["png", "jpeg", "webp"], description: "Optional output format. Defaults to png for local preview if the API returns base64 without a MIME type." },
+        output_compression: { type: "number", description: "Optional compression level from 0 to 100 for jpeg/webp outputs when supported." },
+        n: { type: "number", description: "Optional number of images to request. The UI previews the first returned image." }
+      },
+      required: ["prompt"]
+    }
+  },
+  {
     name: "sleep",
     description: "Pause the agent for a fixed number of seconds. Use this when you must wait for a page transition, an external job, or a tool result that is not yet available, instead of polling repeatedly. Prefer sleep over tight retry loops. Range: 1 to 300 seconds (max 5 minutes per call). This tool has no built-in timeout.",
     schema: {
@@ -748,9 +801,10 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
  * @param {boolean} [options.supportsImageInput=false] - Whether the selected model accepts image inputs
  * @param {boolean} [options.enableBetaFeatures=true] - Whether to include beta built-in tools.
+ * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false } = {}) {
   // Convert MCP tools to our internal format
   const externalTools = mcpTools.map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
@@ -762,6 +816,7 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
     ? TOOLS.filter(tool => {
       if (!supportsImageInput && tool.name === "tab_screenshot") return false;
       if (enableBetaFeatures === false && BETA_TOOL_NAMES.has(tool.name)) return false;
+      if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
       return true;
     })
     : [];
@@ -794,4 +849,3 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
     }
   }));
 }
-

@@ -115,4 +115,15 @@ describe("llm tool definitions", () => {
     expect(playground.parameters.properties.expanded.description).toContain("Defaults to false");
     expect(BUILTIN_TOOL_NAMES).toContain("html_playground");
   });
+
+  it("exposes image tools only when Image API is configured", () => {
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).not.toContain("image_gen");
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).not.toContain("image_edit");
+
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, { imageToolsEnabled: true });
+    expect(names).toContain("image_gen");
+    expect(names).toContain("image_edit");
+    expect(BUILTIN_TOOL_NAMES).toContain("image_gen");
+    expect(BUILTIN_TOOL_NAMES).toContain("image_edit");
+  });
 });

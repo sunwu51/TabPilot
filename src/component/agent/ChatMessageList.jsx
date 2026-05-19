@@ -4,7 +4,14 @@ import ChatMessage from "./ChatMessage";
 const HIDDEN_TOOL_CARD_NAMES = new Set(["plan_create_for_session", "plan_update_for_session"]);
 
 /* eslint-disable react/prop-types */
-const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindToUserMessage, searchState }) {
+const ChatMessageList = memo(function ChatMessageList({
+  messages = [],
+  onRewindToUserMessage,
+  searchState,
+  imageEditingEnabled = false,
+  onImageEditRequest,
+  imageSrcResolver
+}) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
   return (
@@ -17,6 +24,9 @@ const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindT
               items={group.items}
               toolCallCount={group.toolCallCount}
               onRewindToUserMessage={onRewindToUserMessage}
+              imageEditingEnabled={imageEditingEnabled}
+              onImageEditRequest={onImageEditRequest}
+              imageSrcResolver={imageSrcResolver}
             />
           );
         }
@@ -26,6 +36,9 @@ const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindT
               key={group.key || `tool-sequence-${groupIndex}`}
               items={group.items}
               onRewindToUserMessage={onRewindToUserMessage}
+              imageEditingEnabled={imageEditingEnabled}
+              onImageEditRequest={onImageEditRequest}
+              imageSrcResolver={imageSrcResolver}
             />
           );
         }
@@ -36,17 +49,31 @@ const ChatMessageList = memo(function ChatMessageList({ messages = [], onRewindT
             messageIndex={group.index}
             onRewindToUserMessage={onRewindToUserMessage}
             searchState={searchState}
+            imageEditingEnabled={imageEditingEnabled}
+            onImageEditRequest={onImageEditRequest}
+            imageSrcResolver={imageSrcResolver}
           />
         );
       })}
     </>
   );
-}, (prevProps, nextProps) => prevProps.messages === nextProps.messages && prevProps.searchState === nextProps.searchState);
+}, (prevProps, nextProps) =>
+  prevProps.messages === nextProps.messages &&
+  prevProps.searchState === nextProps.searchState &&
+  prevProps.imageEditingEnabled === nextProps.imageEditingEnabled
+);
 
 export default ChatMessageList;
 
 /* eslint-disable react/prop-types */
-function CollapsedToolGroup({ items, toolCallCount, onRewindToUserMessage }) {
+function CollapsedToolGroup({
+  items,
+  toolCallCount,
+  onRewindToUserMessage,
+  imageEditingEnabled = false,
+  onImageEditRequest,
+  imageSrcResolver
+}) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
 
@@ -67,6 +94,9 @@ function CollapsedToolGroup({ items, toolCallCount, onRewindToUserMessage }) {
           <ToolMessageSequence
             items={items}
             onRewindToUserMessage={onRewindToUserMessage}
+            imageEditingEnabled={imageEditingEnabled}
+            onImageEditRequest={onImageEditRequest}
+            imageSrcResolver={imageSrcResolver}
           />
         </div>
       )}
@@ -75,7 +105,13 @@ function CollapsedToolGroup({ items, toolCallCount, onRewindToUserMessage }) {
 }
 
 /* eslint-disable react/prop-types */
-function ToolMessageSequence({ items, onRewindToUserMessage }) {
+function ToolMessageSequence({
+  items,
+  onRewindToUserMessage,
+  imageEditingEnabled = false,
+  onImageEditRequest,
+  imageSrcResolver
+}) {
   return (
     <>
       {items.map((item, index) => {
@@ -86,6 +122,9 @@ function ToolMessageSequence({ items, onRewindToUserMessage }) {
               msg={item.message}
               messageIndex={item.messageIndex}
               onRewindToUserMessage={onRewindToUserMessage}
+              imageEditingEnabled={imageEditingEnabled}
+              onImageEditRequest={onImageEditRequest}
+              imageSrcResolver={imageSrcResolver}
             />
           );
         }
@@ -123,8 +162,8 @@ function MergedToolCallBlock({ item }) {
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
         <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}{suffix}</span>
       </div>
-      {result.displayImageUrl && (
-        <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: expanded ? "8px" : "0" }}>
+      {expanded && result.displayImageUrl && (
+        <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
           <img
             src={result.displayImageUrl}
             alt={name || "tool screenshot"}
@@ -132,7 +171,7 @@ function MergedToolCallBlock({ item }) {
               display: "block",
               maxWidth: "100%",
               width: "100%",
-              maxHeight: expanded ? "420px" : "180px",
+              maxHeight: "420px",
               objectFit: "contain",
               borderRadius: "8px",
               background: "#f5f5f5"

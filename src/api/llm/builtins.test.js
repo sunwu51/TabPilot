@@ -179,6 +179,157 @@ describe("built-in tool execution", () => {
     expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
   });
 
+  it("calls the configured Image API generation endpoint and returns a data URL", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ b64_json: "aGVsbG8=", revised_prompt: "A revised prompt" }]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "img-token",
+        imageModel: "gpt-image-2"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_gen", {
+        prompt: "Draw a cat",
+        size: "1024x1024",
+        quality: "low"
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "generations",
+        model: "gpt-image-2",
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        revisedPrompt: "A revised prompt"
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://api.openai.com/v1/images/generations",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ Authorization: "Bearer img-token" })
+        })
+      );
+      const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+      expect(body).toMatchObject({
+        model: "gpt-image-2",
+        prompt: "Draw a cat",
+        size: "1024x1024",
+        quality: "low"
+      });
+      expect(body.b64_json).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("calls the configured Image API edit endpoint with multipart image and mask", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ b64_json: "aGVsbG8=" }]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1/images/generations",
+        imageApiKey: "img-token",
+        imageModel: "gpt-image-2"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_edit", {
+        prompt: "Add a hat",
+        image: "data:image/png;base64,aGVsbG8=",
+        mask: "data:image/png;base64,aGVsbG8=",
+        output_format: "webp"
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "edits",
+        dataUrl: "data:image/webp;base64,aGVsbG8=",
+        inputImageCount: 1,
+        maskApplied: true
+      });
+      expect(globalThis.fetch.mock.calls[0][0]).toBe("https://api.openai.com/v1/images/edits");
+      const init = globalThis.fetch.mock.calls[0][1];
+      expect(init.method).toBe("POST");
+      expect(init.headers).toEqual({ Authorization: "Bearer img-token" });
+      const entries = Array.from(init.body.entries());
+      expect(entries.find(([key]) => key === "prompt")?.[1]).toBe("Add a hat");
+      expect(entries.find(([key]) => key === "model")?.[1]).toBe("gpt-image-2");
+      expect(entries.find(([key]) => key === "output_format")?.[1]).toBe("webp");
+      expect(entries.find(([key]) => key === "image[]")?.[1]).toBeInstanceOf(File);
+      expect(entries.find(([key]) => key === "mask")?.[1]).toBeInstanceOf(File);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("accepts ordered image arrays for Image API edits", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ b64_json: "aGVsbG8=" }]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "img-token",
+        imageModel: "gpt-image-2"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_edit", {
+        prompt: "Use the second image as a style reference",
+        images: [
+          "data:image/png;base64,aGVsbG8=",
+          "data:image/png;base64,d29ybGQ="
+        ]
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "edits",
+        inputImageCount: 2
+      });
+      const entries = Array.from(globalThis.fetch.mock.calls[0][1].body.entries());
+      expect(entries.filter(([key]) => key === "image[]")).toHaveLength(2);
+      expect(entries.find(([key]) => key === "mask")).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("reports unresolved local image refs before calling the Image API", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn();
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "img-token",
+        imageModel: "gpt-image-2"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_edit", {
+        prompt: "Add a hat",
+        image: "data:image/png;base64,aGVsbG8=",
+        mask: "\"|deRef:img_2|\""
+      });
+
+      expect(result).toMatchObject({
+        error: "mask ref img_2 was not resolved before image tool execution"
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 
   it("serializes recent downloads", async () => {
     chrome.downloads.search.mockResolvedValueOnce([

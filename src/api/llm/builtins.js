@@ -4,6 +4,7 @@ import { buildMcpToolCallName, findMcpToolByCallName, isMcpToolCallName } from "
 import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
 import { DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS, DEFAULT_MCP_TOOL_TIMEOUT_SECONDS, DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS, DEFAULT_STASH_EXPIRE_AT, RUN_MACRO_TOOL_TIMEOUT_SECONDS, SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, STASH_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "./constants";
 import { deflateStringToQueryParam } from "../../utils/playgroundCodec";
+import { executeImageEdit, executeImageGeneration } from "./imageApi";
 
 
 /**
@@ -79,6 +80,8 @@ export async function executeTool(name, args, mcpRegistry = []) {
         case "download_list": return _execDownloadList(args);
         case "download_search": return _execDownloadSearch(args);
         case "html_playground": return _execHtmlPlayground(args);
+        case "image_gen": return executeImageGeneration(args);
+        case "image_edit": return executeImageEdit(args);
         case "sleep": return _execSleep(args);
         default: return { error: `Unknown tool: ${name}` };
       }
@@ -105,6 +108,7 @@ export async function executeTool(name, args, mcpRegistry = []) {
 
 function getBuiltinToolTimeoutSeconds(name) {
   if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
+  if (name === "image_gen" || name === "image_edit") return 180;
   return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
 }
 

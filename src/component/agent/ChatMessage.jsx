@@ -1,5 +1,5 @@
 /* global chrome */
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
@@ -14,7 +14,15 @@ import { memo, useEffect, useState } from "react";
  * @param {(index: number) => void} [props.onRewindToUserMessage]
  */
 /* eslint-disable react/prop-types */
-const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUserMessage, searchState }) {
+const ChatMessage = memo(function ChatMessage({
+  msg,
+  messageIndex,
+  onRewindToUserMessage,
+  searchState,
+  imageEditingEnabled = false,
+  onImageEditRequest,
+  imageSrcResolver
+}) {
   const { role, content } = msg;
   const messageSearchState = isSearchableChatMessage(msg)
     ? buildMessageSearchState(searchState, messageIndex)
@@ -74,6 +82,9 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
                 content={content}
                 searchState={messageSearchState}
                 displayContent={msg.displayContent}
+                imageRefs={msg.imageRefs}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
               />
               <InjectedUserContextBlock context={injectedContext} />
             </div>
@@ -154,7 +165,16 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
         const block = content[i];
         if (!block) continue;
         if (block.type === "text" && block.text) {
-          rendered.push(<AssistantTextBubble key={`t${i}`} text={block.text} searchState={messageSearchState} />);
+          rendered.push(
+            <AssistantTextBubble
+              key={`t${i}`}
+              text={block.text}
+              searchState={messageSearchState}
+              imageEditingEnabled={imageEditingEnabled}
+              onImageEditRequest={onImageEditRequest}
+              imageSrcResolver={imageSrcResolver}
+            />
+          );
         } else if (block.type === "thinking" || block.type === "redacted_thinking") {
           rendered.push(<ThinkingBlock key={`th${i}`} block={block} />);
         } else if (block.type === "tool_use") {
@@ -167,7 +187,16 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       // Render text content if present
       if (content && typeof content === "string") {
-        rendered.push(<AssistantTextBubble key="text" text={content} searchState={messageSearchState} />);
+        rendered.push(
+          <AssistantTextBubble
+            key="text"
+            text={content}
+            searchState={messageSearchState}
+            imageEditingEnabled={imageEditingEnabled}
+            onImageEditRequest={onImageEditRequest}
+            imageSrcResolver={imageSrcResolver}
+          />
+        );
       }
       for (let i = 0; i < msg.tool_calls.length; i++) {
         const tc = msg.tool_calls[i];
@@ -190,7 +219,16 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
     }
 
     if ((!msg.tool_calls || msg.tool_calls.length === 0) && content && typeof content === "string") {
-      rendered.push(<AssistantTextBubble key="plain" text={content} searchState={messageSearchState} />);
+      rendered.push(
+        <AssistantTextBubble
+          key="plain"
+          text={content}
+          searchState={messageSearchState}
+          imageEditingEnabled={imageEditingEnabled}
+          onImageEditRequest={onImageEditRequest}
+          imageSrcResolver={imageSrcResolver}
+        />
+      );
     }
 
     // If we rendered something from array/tool_calls, return it
@@ -198,7 +236,15 @@ const ChatMessage = memo(function ChatMessage({ msg, messageIndex, onRewindToUse
 
     // Plain text only
     if (content && typeof content === "string") {
-      return <AssistantTextBubble text={content} searchState={messageSearchState} />;
+      return (
+        <AssistantTextBubble
+          text={content}
+          searchState={messageSearchState}
+          imageEditingEnabled={imageEditingEnabled}
+          onImageEditRequest={onImageEditRequest}
+          imageSrcResolver={imageSrcResolver}
+        />
+      );
     }
 
     // Empty or null content with no tool_calls — skip
@@ -213,7 +259,14 @@ export default ChatMessage;
 
 /** Render user multimodal content (text + images) */
 /* eslint-disable react/prop-types */
-function UserMultimodalContent({ content, searchState, displayContent }) {
+function UserMultimodalContent({
+  content,
+  searchState,
+  displayContent,
+  imageRefs,
+  imageEditingEnabled = false,
+  onImageEditRequest
+}) {
   if (!Array.isArray(content)) return null;
   let displayedText = false;
 
@@ -235,18 +288,17 @@ function UserMultimodalContent({ content, searchState, displayContent }) {
         }
         if (block.type === "image" && block.source) {
           const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+          const ref = findImageRefForSource(imageRefs, dataUrl);
           return (
             <div key={index} style={{ marginTop: index > 0 ? "8px" : "0" }}>
-              <img
+              <EditableChatImage
                 src={dataUrl}
                 alt="用户上传的图片"
-                style={{
-                  display: "block",
-                  maxWidth: "min(50%, 300px)",
-                  height: "auto",
-                  borderRadius: "6px",
-                  background: "#f5f5f5"
-                }}
+                refId={ref}
+                editable={imageEditingEnabled}
+                onEdit={onImageEditRequest}
+                wrapperClassName="chat-user-image-wrap"
+                imageClassName="chat-user-image"
               />
             </div>
           );
@@ -258,7 +310,13 @@ function UserMultimodalContent({ content, searchState, displayContent }) {
 }
 
 /** Markdown-rendered assistant text bubble */
-export function AssistantTextBubble({ text, searchState }) {
+export function AssistantTextBubble({
+  text,
+  searchState,
+  imageEditingEnabled = false,
+  onImageEditRequest,
+  imageSrcResolver
+}) {
   const [copied, setCopied] = useState(false);
   const [hideCopyButton, setHideCopyButton] = useState(false);
   const hasSearchHits = !!searchState?.query && findTextHits(text, searchState.query).length > 0;
@@ -298,7 +356,12 @@ export function AssistantTextBubble({ text, searchState }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={buildAssistantRehypePlugins()}
-            components={ASSISTANT_MARKDOWN_COMPONENTS}
+            urlTransform={transformMarkdownUrl}
+            components={buildAssistantMarkdownComponents({
+              imageEditingEnabled,
+              onImageEditRequest,
+              imageSrcResolver
+            })}
           >
             {text}
           </ReactMarkdown>
@@ -418,7 +481,7 @@ function ThinkingBlock({ block }) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={buildAssistantRehypePlugins()}
-                components={ASSISTANT_MARKDOWN_COMPONENTS}
+                components={buildAssistantMarkdownComponents()}
               >
                 {thinkingText || "_空内容_"}
               </ReactMarkdown>
@@ -489,8 +552,8 @@ function ToolResultBlock({ msg }) {
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
         <span className="tool-result-label">{isError ? "❌" : "✅"} <span className="tool-duration">{durationStr}</span>{label}</span>
       </div>
-      {displayImageUrl && (
-        <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: expanded ? "8px" : "0" }}>
+      {expanded && displayImageUrl && (
+        <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
           <img
             src={displayImageUrl}
             alt={toolName || "tool screenshot"}
@@ -498,7 +561,7 @@ function ToolResultBlock({ msg }) {
               display: "block",
               maxWidth: "100%",
               width: "100%",
-              maxHeight: expanded ? "420px" : "180px",
+              maxHeight: "420px",
               objectFit: "contain",
               borderRadius: "8px",
               background: "#f5f5f5"
@@ -694,10 +757,151 @@ function InjectedUserContextBlock({ context }) {
   );
 }
 
-const ASSISTANT_MARKDOWN_COMPONENTS = {
-  pre: CodeBlock,
-  a: MarkdownLink
-};
+function buildAssistantMarkdownComponents({
+  imageEditingEnabled = false,
+  onImageEditRequest,
+  imageSrcResolver
+} = {}) {
+  return {
+    pre: CodeBlock,
+    a: MarkdownLink,
+    img: (props) => (
+      <MarkdownImage
+        {...props}
+        editable={imageEditingEnabled}
+        onImageEditRequest={onImageEditRequest}
+        imageSrcResolver={imageSrcResolver}
+      />
+    )
+  };
+}
+
+function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSrcResolver, ...props }) {
+  delete props.node;
+  const refId = extractImageDerefRef(src);
+  const imageSrc = normalizeMarkdownImageSrc(src, imageSrcResolver);
+  if (!imageSrc) return null;
+
+  return (
+    <EditableChatImage
+      {...props}
+      src={imageSrc}
+      alt={alt || "图片"}
+      refId={refId}
+      editable={editable}
+      onEdit={onImageEditRequest}
+      wrapperClassName="chat-assistant-image-wrap"
+      imageClassName="chat-assistant-image"
+    />
+  );
+}
+
+function EditableChatImage({
+  src,
+  alt,
+  refId,
+  editable = false,
+  onEdit,
+  wrapperClassName = "",
+  imageClassName = "",
+  ...imgProps
+}) {
+  function handleEditClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!editable || typeof onEdit !== "function") return;
+    onEdit({ src, alt, ref: refId || "" });
+  }
+
+  return (
+    <span className={`chat-editable-image-wrap ${wrapperClassName}`.trim()}>
+      <img
+        {...imgProps}
+        src={src}
+        alt={alt}
+        className={imageClassName}
+      />
+      {editable && (
+        <button
+          type="button"
+          className="chat-image-edit-btn"
+          onClick={handleEditClick}
+          title="编辑图片"
+          aria-label="编辑图片"
+        >
+          Edit
+        </button>
+      )}
+    </span>
+  );
+}
+
+function findImageRefForSource(imageRefs, source) {
+  if (!Array.isArray(imageRefs) || !source) return "";
+  const match = imageRefs.find(item => item?.dataUrl === source || item?.source === source || item?.url === source);
+  return match?.ref || "";
+}
+
+function transformMarkdownUrl(value, key, node) {
+  if (key === "src" && node?.tagName === "img" && extractImageDerefRef(value)) {
+    return String(value || "");
+  }
+  return defaultUrlTransform(value);
+}
+
+function extractImageDerefRef(src) {
+  const raw = String(src || "").trim();
+  if (!raw) return "";
+  const candidates = [raw];
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded !== raw) candidates.push(decoded);
+  } catch {
+    // Keep the raw candidate when the URL is not percent encoded.
+  }
+
+  for (const candidate of candidates) {
+    let value = candidate.trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1).trim();
+    }
+    const match = value.match(/^\|deRef:(img_[A-Za-z0-9_-]+)\|$/);
+    if (match) return match[1];
+  }
+
+  return "";
+}
+
+function normalizeMarkdownImageSrc(src, imageSrcResolver) {
+  const raw = String(src || "").trim();
+  if (!raw) return "";
+  const ref = extractImageDerefRef(raw);
+  if (ref) {
+    if (typeof imageSrcResolver !== "function") return "";
+    return normalizeDirectMarkdownImageSrc(imageSrcResolver(ref));
+  }
+  return normalizeDirectMarkdownImageSrc(raw);
+}
+
+function normalizeDirectMarkdownImageSrc(src) {
+  const raw = String(src || "").trim();
+  if (!raw) return "";
+  if (/^(data:image\/[^;]+;base64,|https?:\/\/|blob:|chrome-extension:\/\/)/i.test(raw)) return raw;
+
+  try {
+    const resolved = new URL(raw, window.location.href);
+    if (["http:", "https:", "blob:", "chrome-extension:"].includes(resolved.protocol)) {
+      return resolved.href;
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
 
 function MarkdownLink({ href, children, ...props }) {
   const safeHref = normalizeMarkdownHref(href);

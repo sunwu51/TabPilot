@@ -51,6 +51,17 @@ import toast from "react-hot-toast";
 import { formatProfileForSystemPrompt } from "../../api/userProfile";
 import { refreshSessionKeywords } from "../../api/sessionKeywords";
 import { getLongToolArgumentFields } from "../../api/llm/longToolArgs";
+import { DEFAULT_IMAGE_MODEL, isImageApiConfigured } from "../../api/llm/imageApi";
+import {
+  IMAGE_REF_PATTERN,
+  allocateGeneratedImageRef,
+  collectReservedImageRefsFromMessages,
+  extractPreferredImageRefFromToolMessage,
+  isBase64DataUrl,
+  mergeKnownImageRefsIntoMessages,
+  normalizeImageRefSource,
+  normalizeMessageImageRefs
+} from "./imageRefs";
 import "./chat.css";
 
 const SYSTEM_PROMPT_PLACEHOLDER =
@@ -58,6 +69,8 @@ const SYSTEM_PROMPT_PLACEHOLDER =
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const IMAGE_DEREF_PATTERN = /^\|deRef:(img_[A-Za-z0-9_-]+)\|$/;
+const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
+const IMAGE_FILE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 const SLASH_COMMANDS = [
   {
     id: "mem",
@@ -109,7 +122,8 @@ export default function AgentPanel() {
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     supportsImageInput: false,
     reasoningEffort: "default",
-    omitThinkingFromRequests: false
+    omitThinkingFromRequests: false,
+    imageToolsEnabled: false
   });
   const [contextUsage, setContextUsage] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
@@ -146,6 +160,7 @@ export default function AgentPanel() {
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
   const sessionImageRefsRef = useRef(new Map());
+  const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
@@ -157,6 +172,7 @@ export default function AgentPanel() {
   const latestPlanStatusRef = useRef(null);
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [imageEditRequest, setImageEditRequest] = useState(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [_inputFocused, setInputFocused] = useState(false);
@@ -366,6 +382,7 @@ export default function AgentPanel() {
         setShowJumpToBottom(false);
         setContextUsage(getSessionRuntime(restored.id).contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
         setMessages(msgs);
+        setImageEditRequest(null);
         setLoading(false);
       } else {
         // Create a fresh session
@@ -381,6 +398,7 @@ export default function AgentPanel() {
         setSessionId(id);
         setSessionTitle("新会话");
         setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
+        setImageEditRequest(null);
         applyLatestPlanFromPlans([]);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
@@ -430,7 +448,8 @@ export default function AgentPanel() {
           modelContextLimitTokens: normalizeModelContextLimitTokens(nextConfig.modelContextLimitTokens),
           supportsImageInput: nextConfig.supportsImageInput === true,
           reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
-          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true
+          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true,
+          imageToolsEnabled: isImageApiConfigured(nextConfig)
         });
       }
     }
@@ -473,6 +492,39 @@ export default function AgentPanel() {
   }, [messages.length]);
 
   const combinedMcpTools = mergeMcpToolLists(mcpTools, skillStationTools);
+  const externalImageEditTool = findImageEditMcpTool(combinedMcpTools);
+  const builtinImageEditTool = llmConfigInfo.imageToolsEnabled ? { name: "image_edit", _toolCallName: "image_edit" } : null;
+  const imageEditTool = externalImageEditTool || builtinImageEditTool;
+  const imageEditingEnabled = !!imageEditTool;
+
+  function openImageEditDialog(image) {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    if (!imageEditTool) {
+      toast.error("未找到 image_edit 工具，请先配置 Image API 或连接 image_edit MCP 工具");
+      return;
+    }
+
+    const source = normalizeImageRefSource(image?.src);
+    if (!source) {
+      toast.error("无法识别这张图片的来源");
+      return;
+    }
+
+    const ref = registerSessionImageDataUrl(currentSessionId, source, image?.ref);
+    if (!ref) {
+      toast.error("无法为这张图片创建 ref");
+      return;
+    }
+
+    const request = {
+      src: source,
+      alt: image?.alt || "图片",
+      ref,
+      toolCallName: getMcpToolCallName(imageEditTool)
+    };
+    setImageEditRequest(request);
+  }
 
   /**
    * The chat should feel pinned to the bottom only while the user is reading the
@@ -527,7 +579,8 @@ export default function AgentPanel() {
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
   }
 
@@ -537,13 +590,29 @@ export default function AgentPanel() {
    */
   async function autoSave(targetSessionId, msgs) {
     if (!targetSessionId) return;
-    const title = extractTitle(msgs);
-    await saveSession(targetSessionId, msgs, title);
-    const latestSessions = await listSessions();
-    setSessions(latestSessions);
-    if (activeSessionIdRef.current === targetSessionId) {
-      setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
-    }
+    const messagesToSave = attachKnownImageRefsToMessages(targetSessionId, msgs);
+    const title = extractTitle(messagesToSave);
+    const state = sessionSaveStateRef.current.get(targetSessionId) || {
+      version: 0,
+      chain: Promise.resolve()
+    };
+    const version = state.version + 1;
+    state.version = version;
+
+    const saveTask = state.chain.catch(() => undefined).then(async () => {
+      const latestState = sessionSaveStateRef.current.get(targetSessionId);
+      if (!latestState || latestState.version !== version) return;
+      await saveSession(targetSessionId, messagesToSave, title);
+      const latestSessions = await listSessions();
+      setSessions(latestSessions);
+      if (activeSessionIdRef.current === targetSessionId) {
+        setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
+      }
+    });
+
+    state.chain = saveTask;
+    sessionSaveStateRef.current.set(targetSessionId, state);
+    await saveTask;
   }
 
 
@@ -593,15 +662,23 @@ export default function AgentPanel() {
     return sessionMessagesRef.current.get(targetSessionId) || [];
   }
 
+  function attachKnownImageRefsToMessages(targetSessionId, msgs) {
+    if (!targetSessionId || !Array.isArray(msgs)) return msgs;
+    const cache = sessionImageRefsRef.current.get(targetSessionId);
+    if (!cache?.refs || cache.refs.size === 0) return msgs;
+    return mergeKnownImageRefsIntoMessages(msgs, cache);
+  }
+
   function setSessionMessages(targetSessionId, msgs) {
-    sessionMessagesRef.current.set(targetSessionId, msgs);
-    if (sessionHasImageRefs(msgs)) {
-      rebuildSessionImageRefs(targetSessionId, msgs);
+    const nextMessages = attachKnownImageRefsToMessages(targetSessionId, msgs);
+    sessionMessagesRef.current.set(targetSessionId, nextMessages);
+    if (Array.isArray(nextMessages) && nextMessages.length > 0) {
+      rebuildSessionImageRefs(targetSessionId, nextMessages);
     } else {
       sessionImageRefsRef.current.delete(targetSessionId);
     }
     if (activeSessionIdRef.current === targetSessionId) {
-      setMessages(msgs);
+      setMessages(nextMessages);
     }
   }
 
@@ -611,6 +688,7 @@ export default function AgentPanel() {
       cache = {
         refs: new Map(),
         byDataUrl: new Map(),
+        reservedRefs: new Set(),
         nextIndex: 1
       };
       sessionImageRefsRef.current.set(targetSessionId, cache);
@@ -619,38 +697,40 @@ export default function AgentPanel() {
   }
 
   function registerSessionImageDataUrl(targetSessionId, dataUrl, preferredRef) {
-    if (!targetSessionId || !isBase64DataUrl(dataUrl)) return null;
+    const source = normalizeImageRefSource(dataUrl);
+    if (!targetSessionId || !source) return null;
     const cache = getSessionImageRefCache(targetSessionId);
-    const existing = cache.byDataUrl.get(dataUrl);
+    const existing = cache.byDataUrl.get(source);
     if (existing) return existing;
 
-    let ref = typeof preferredRef === "string" && /^img_[A-Za-z0-9_-]+$/.test(preferredRef)
-      ? preferredRef
-      : `img_${cache.nextIndex}`;
-    while (cache.refs.has(ref) && cache.refs.get(ref) !== dataUrl) {
-      ref = `img_${cache.nextIndex}`;
-      cache.nextIndex += 1;
+    let ref = IMAGE_REF_PATTERN.test(String(preferredRef || "").trim())
+      ? String(preferredRef).trim()
+      : allocateGeneratedImageRef(cache);
+    while (cache.refs.has(ref) && cache.refs.get(ref) !== source) {
+      ref = allocateGeneratedImageRef(cache);
     }
 
-    cache.refs.set(ref, dataUrl);
-    cache.byDataUrl.set(dataUrl, ref);
+    cache.refs.set(ref, source);
+    cache.byDataUrl.set(source, ref);
     const numericSuffix = Number(ref.match(/^img_(\d+)$/)?.[1]);
     if (Number.isFinite(numericSuffix)) {
       cache.nextIndex = Math.max(cache.nextIndex, numericSuffix + 1);
-    } else {
-      cache.nextIndex += 1;
     }
     return ref;
   }
 
-  function rebuildSessionImageRefs(targetSessionId, msgs) {
+  function rebuildSessionImageRefs(targetSessionId, msgs, options = {}) {
     if (!targetSessionId || !Array.isArray(msgs)) return;
-    sessionImageRefsRef.current.delete(targetSessionId);
+    if (!options.preserveExisting) {
+      sessionImageRefsRef.current.delete(targetSessionId);
+    }
+    const cache = getSessionImageRefCache(targetSessionId);
+    cache.reservedRefs = collectReservedImageRefsFromMessages(msgs);
     for (const msg of msgs) {
       if (!msg || typeof msg !== "object") continue;
       if (Array.isArray(msg.imageRefs)) {
         for (const item of msg.imageRefs) {
-          registerSessionImageDataUrl(targetSessionId, item?.dataUrl, item?.ref);
+          registerSessionImageDataUrl(targetSessionId, item?.dataUrl || item?.source || item?.url, item?.ref);
         }
       }
       if (Array.isArray(msg.content)) {
@@ -659,25 +739,67 @@ export default function AgentPanel() {
           if (dataUrl) registerSessionImageDataUrl(targetSessionId, dataUrl);
         }
       }
-      if (isBase64DataUrl(msg.displayImageUrl)) {
-        registerSessionImageDataUrl(targetSessionId, msg.displayImageUrl);
+      if (normalizeImageRefSource(msg.displayImageUrl)) {
+        registerSessionImageDataUrl(
+          targetSessionId,
+          msg.displayImageUrl,
+          extractPreferredImageRefFromToolMessage(msg)
+        );
       }
     }
-  }
-
-  function sessionHasImageRefs(msgs) {
-    if (!Array.isArray(msgs)) return false;
-    return msgs.some(msg => {
-      if (!msg || typeof msg !== "object") return false;
-      if (Array.isArray(msg.imageRefs) && msg.imageRefs.length > 0) return true;
-      if (isBase64DataUrl(msg.displayImageUrl)) return true;
-      return Array.isArray(msg.content) && msg.content.some(block => !!imageBlockToDataUrl(block));
-    });
   }
 
   function resolveToolImageRefs(targetSessionId, args) {
     const cache = getSessionImageRefCache(targetSessionId);
     return resolveImageRefsInValue(args, cache.refs);
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const debugApi = {
+      list: () => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        return summarizeImageRefCache(currentSessionId, sessionImageRefsRef.current.get(currentSessionId));
+      },
+      listAll: () => Object.fromEntries(
+        Array.from(sessionImageRefsRef.current.entries()).map(([id, cache]) => [
+          id,
+          summarizeImageRefCache(id, cache)
+        ])
+      ),
+      has: (ref) => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        const cache = sessionImageRefsRef.current.get(currentSessionId);
+        const imageRef = normalizeImageRefToken(ref);
+        return !!(imageRef && cache?.refs?.has(imageRef));
+      },
+      get: (ref) => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        const cache = sessionImageRefsRef.current.get(currentSessionId);
+        const imageRef = normalizeImageRefToken(ref);
+        return imageRef ? (cache?.refs?.get(imageRef) || "") : "";
+      },
+      resolveArgs: (args) => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        const cache = sessionImageRefsRef.current.get(currentSessionId);
+        return resolveImageRefsInValue(args, cache?.refs || new Map());
+      }
+    };
+    window[IMAGE_REFS_DEBUG_GLOBAL] = debugApi;
+    return () => {
+      if (window[IMAGE_REFS_DEBUG_GLOBAL] === debugApi) {
+        delete window[IMAGE_REFS_DEBUG_GLOBAL];
+      }
+    };
+  }, []);
+
+  function resolveSessionImageSrc(ref) {
+    const imageRef = String(ref || "").trim();
+    if (!IMAGE_REF_PATTERN.test(imageRef)) return "";
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return "";
+    const cache = sessionImageRefsRef.current.get(currentSessionId);
+    return cache?.refs?.get(imageRef) || "";
   }
 
   async function openSession(id, options = {}) {
@@ -717,6 +839,7 @@ export default function AgentPanel() {
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
     setLoading(!!runtime.loading);
     setPendingApproval(runtime.pendingApproval || null);
+    setImageEditRequest(null);
     setShowHistory(false);
   }
 
@@ -1094,6 +1217,7 @@ export default function AgentPanel() {
     setStreamingToolArgs(null);
     setInput("");
     setPendingAttachments([]);
+    setImageEditRequest(null);
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
     closeInputCompletions();
@@ -1121,6 +1245,7 @@ export default function AgentPanel() {
     stopSessionGeneration(id);
 
     sessionMessagesRef.current.delete(id);
+    sessionImageRefsRef.current.delete(id);
     sessionPlansRef.current.delete(id);
     sessionRuntimeRef.current.delete(id);
     await deleteSession(id);
@@ -1234,7 +1359,8 @@ export default function AgentPanel() {
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
       `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
-      `- If an image-generation tool returns an image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
+      `- To show an image ref to the user, render it with Markdown image syntax as ![image](|deRef:img_1|). Do not paste or copy base64 into your message. The host system will resolve the ref only for the visual preview.\n` +
+      `- If an image-generation tool returns only a public image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
       `- Respond in the same language as the user.` +
       currentSessionSystemPrompt +
       buildSkillsSystemPrompt(agentSkills) +
@@ -1253,7 +1379,10 @@ export default function AgentPanel() {
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false,
         reasoningEffort: "default",
-        omitThinkingFromRequests: false
+        omitThinkingFromRequests: false,
+        imageBaseUrl: "",
+        imageApiKey: "",
+        imageModel: DEFAULT_IMAGE_MODEL
       },
       betaFeaturesEnabled: true
     });
@@ -1263,7 +1392,8 @@ export default function AgentPanel() {
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
     return {
       ...llmConfig,
@@ -1272,6 +1402,7 @@ export default function AgentPanel() {
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageToolsEnabled: isImageApiConfigured(llmConfig),
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
   }
@@ -1351,6 +1482,10 @@ export default function AgentPanel() {
         return ref ? { ref, dataUrl: att.dataUrl } : null;
       })
       .filter(Boolean);
+    const localImageRefs = normalizeMessageImageRefs([
+      ...imageRefs,
+      ...(Array.isArray(options.imageRefs) ? options.imageRefs : [])
+    ]);
 
     const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
     const userMsg = {
@@ -1360,7 +1495,9 @@ export default function AgentPanel() {
         ? buildUserMessageContent(finalText, imageAtts, textAtts, imageRefs)
         : finalText
     };
-    if (imageRefs.length > 0) userMsg.imageRefs = imageRefs;
+    if (localImageRefs.length > 0) {
+      userMsg.imageRefs = localImageRefs;
+    }
     if (injectionMeta) {
       userMsg.displayContent = text || "请根据我指定的上下文回答。";
       userMsg.injectedUserContext = injectionMeta;
@@ -1583,6 +1720,7 @@ export default function AgentPanel() {
             const currentMsgs = getSessionMessages(targetSessionId);
             const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
             setSessionMessages(targetSessionId, updatedMsgs);
+            void autoSave(targetSessionId, updatedMsgs);
           }
 
           if (!isCurrentRun(targetSessionId, runId)) return;
@@ -1628,7 +1766,8 @@ export default function AgentPanel() {
       sessionId: targetSessionId,
       supportsImageInput: config.supportsImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
-      enableBetaFeatures: config.enableBetaFeatures !== false
+      enableBetaFeatures: config.enableBetaFeatures !== false,
+      imageToolsEnabled: config.imageToolsEnabled === true
     });
 
     if (!isCurrentRun(targetSessionId, runId)) {
@@ -1648,7 +1787,6 @@ export default function AgentPanel() {
 
   async function handlePaste(e) {
     const items = Array.from(e.clipboardData?.items || []);
-    const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
     const canImage = llmConfigInfo.supportsImageInput;
 
     let imageFiles = [];
@@ -1656,16 +1794,16 @@ export default function AgentPanel() {
       imageFiles = items
         .filter(it => it.kind === "file" && (it.type.startsWith("image/") || it.type === ""))
         .map(it => it.getAsFile())
-        .filter(f => f && (f.type.startsWith("image/") || IMAGE_EXT.test(f.name)));
+        .filter(isImageFile);
 
       const allFiles = Array.from(e.clipboardData?.files || []);
       if (imageFiles.length === 0) {
-        imageFiles = allFiles.filter(f => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
+        imageFiles = allFiles.filter(isImageFile);
       }
     }
 
     const allFiles = Array.from(e.clipboardData?.files || []);
-    const textFiles = allFiles.filter(f => isTextFile(f) && !f.type.startsWith("image/") && !IMAGE_EXT.test(f.name));
+    const textFiles = allFiles.filter(f => isTextFile(f) && !isImageFile(f));
 
     if (imageFiles.length > 0 || textFiles.length > 0) {
       e.preventDefault();
@@ -1684,8 +1822,8 @@ export default function AgentPanel() {
     e.stopPropagation();
 
     const files = Array.from(e.dataTransfer?.files || []);
-    const imgs = files.filter(f => f.type.startsWith("image/"));
-    const texts = files.filter(f => isTextFile(f) && !f.type.startsWith("image/"));
+    const imgs = files.filter(isImageFile);
+    const texts = files.filter(f => isTextFile(f) && !isImageFile(f));
 
     if (imgs.length > 0) await handleImageFiles(imgs);
     if (texts.length > 0) await handleTextFiles(texts);
@@ -1707,17 +1845,8 @@ export default function AgentPanel() {
     const newItems = [];
     for (const file of files) {
       try {
-        const rawDataUrl = await blobToDataUrl(file);
-        const optimizedDataUrl = await optimizeImageDataUrl(rawDataUrl);
-        const parsed = parseImageDataUrl(optimizedDataUrl);
-        if (!parsed) continue;
-        newItems.push({
-          id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: "image",
-          dataUrl: optimizedDataUrl,
-          mediaType: parsed.mediaType,
-          fileName: file.name
-        });
+        const item = await imageFileToAttachmentItem(file);
+        if (item) newItems.push(item);
       } catch (error) {
         console.error("Failed to process image:", error);
         toast.error(`图片处理失败: ${file.name}`);
@@ -1755,6 +1884,66 @@ export default function AgentPanel() {
     setPendingAttachments(prev => prev.filter(a => a.id !== id));
   }
 
+  function closeImageEditDialog() {
+    setImageEditRequest(null);
+  }
+
+  async function handleConfirmImageEdit({ suggestion, maskDataUrl, referenceImages }) {
+    const request = imageEditRequest;
+    const currentSessionId = activeSessionIdRef.current;
+    if (!request || !currentSessionId) return;
+    if (loading || pendingApproval) {
+      toast.error("当前会话正在处理其他请求");
+      return;
+    }
+
+    const source = normalizeImageRefSource(request.src);
+    const imageRef = registerSessionImageDataUrl(currentSessionId, source, request.ref);
+    if (!imageRef) {
+      toast.error("无法为这张图片创建 ref");
+      return;
+    }
+
+    let maskRef = "";
+    const normalizedMask = normalizeImageRefSource(maskDataUrl);
+    if (normalizedMask) {
+      maskRef = registerSessionImageDataUrl(currentSessionId, normalizedMask);
+    }
+
+    const referenceSources = (Array.isArray(referenceImages) ? referenceImages : [])
+      .map(item => normalizeImageRefSource(item?.dataUrl || item?.source || item?.url))
+      .filter(Boolean);
+    const additionalImageRefs = referenceSources
+      .map(source => registerSessionImageDataUrl(currentSessionId, source))
+      .filter(Boolean);
+
+    const toolCallName = request.toolCallName || getMcpToolCallName(imageEditTool);
+    const text = buildImageEditUserPrompt({
+      toolCallName,
+      imageRef,
+      maskRef,
+      additionalImageRefs,
+      suggestion
+    });
+    const imageEditRefs = buildImageEditMessageRefs({
+      imageRef,
+      imageSource: source,
+      maskRef,
+      maskSource: normalizedMask,
+      referenceRefs: additionalImageRefs,
+      referenceSources
+    });
+
+    setImageEditRequest(null);
+    await sendMessage({
+      text,
+      attachments: [],
+      selectedTabs: [],
+      selectedSkills: [],
+      imageRefs: imageEditRefs
+    });
+  }
+
 
   function stopGeneration() {
     const currentSessionId = activeSessionIdRef.current;
@@ -1785,6 +1974,7 @@ export default function AgentPanel() {
       (Array.isArray(currentMessages) && currentMessages.length > 0) ||
       String(input || "").trim() ||
       pendingAttachments.length > 0 ||
+      imageEditRequest ||
       getSessionPlans(currentSessionId).length > 0;
     if (hasContent && shouldConfirm) {
       const ok = await requestClearCurrentSessionConfirm();
@@ -1798,6 +1988,7 @@ export default function AgentPanel() {
     applyLatestPlanFromPlans([]);
     setInput("");
     setPendingAttachments([]);
+    setImageEditRequest(null);
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
     closeInputCompletions();
@@ -2511,6 +2702,15 @@ export default function AgentPanel() {
         />
       )}
 
+      {imageEditRequest && (
+        <ImageEditDialog
+          request={imageEditRequest}
+          disabled={loading || !!pendingApproval}
+          onCancel={closeImageEditDialog}
+          onConfirm={handleConfirmImageEdit}
+        />
+      )}
+
       <div
         className="chat-messages"
         ref={messagesScrollerRef}
@@ -2531,12 +2731,20 @@ export default function AgentPanel() {
                 messages={messages}
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={openImageEditDialog}
+                imageSrcResolver={resolveSessionImageSrc}
               />
               {streamingThinking !== null && streamingThinking.length > 0 && (
                 <AssistantThinkingBubble text={streamingThinking} />
               )}
               {streamingContent !== null && streamingContent.length > 0 && (
-                <AssistantTextBubble text={streamingContent} />
+                <AssistantTextBubble
+                  text={streamingContent}
+                  imageEditingEnabled={imageEditingEnabled}
+                  onImageEditRequest={openImageEditDialog}
+                  imageSrcResolver={resolveSessionImageSrc}
+                />
               )}
               {streamingToolArgs && (
                 <StreamingToolArgsBubble state={streamingToolArgs} />
@@ -3407,6 +3615,351 @@ function PlanApprovalCard({ plan, onResolve }) {
   );
 }
 
+/* eslint-disable react/prop-types */
+function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
+  const [suggestion, setSuggestion] = useState("");
+  const [error, setError] = useState("");
+  const [maskEnabled, setMaskEnabled] = useState(false);
+  const [maskTouched, setMaskTouched] = useState(false);
+  const [referenceImages, setReferenceImages] = useState([]);
+  const canvasRef = useRef(null);
+  const referenceImageInputRef = useRef(null);
+  const drawingRef = useRef(false);
+  const maskPathsRef = useRef([]);
+  const activeMaskPathRef = useRef([]);
+
+  useEffect(() => {
+    setSuggestion("");
+    setError("");
+    setMaskEnabled(false);
+    setMaskTouched(false);
+    setReferenceImages([]);
+    drawingRef.current = false;
+    maskPathsRef.current = [];
+    activeMaskPathRef.current = [];
+    clearMaskCanvas();
+  }, [request?.src]);
+
+  async function addReferenceImageFiles(files) {
+    const imageFiles = Array.from(files || []).filter(isImageFile);
+    if (imageFiles.length === 0) return;
+
+    const newItems = [];
+    for (const file of imageFiles) {
+      try {
+        const item = await imageFileToAttachmentItem(file);
+        if (item) newItems.push(item);
+      } catch (err) {
+        console.error("Failed to process reference image:", err);
+        setError(`参考图处理失败: ${file.name || "图片"}`);
+      }
+    }
+
+    if (newItems.length > 0) {
+      setReferenceImages(prev => [...prev, ...newItems]);
+      if (error) setError("");
+    }
+  }
+
+  function handleReferenceImageSelect(event) {
+    const files = Array.from(event.target.files || []);
+    void addReferenceImageFiles(files);
+    event.target.value = "";
+  }
+
+  function handleReferenceImagePaste(event) {
+    const imageFiles = getClipboardImageFiles(event.clipboardData);
+    if (imageFiles.length === 0) return;
+    event.preventDefault();
+    void addReferenceImageFiles(imageFiles);
+  }
+
+  function handleReferenceImageDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleReferenceImageDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    void addReferenceImageFiles(event.dataTransfer?.files);
+  }
+
+  function removeReferenceImage(id) {
+    setReferenceImages(prev => prev.filter(item => item.id !== id));
+  }
+
+  function syncMaskCanvas(event) {
+    const image = event.currentTarget;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const width = Math.max(1, image.naturalWidth || image.clientWidth || 1);
+    const height = Math.max(1, image.naturalHeight || image.clientHeight || 1);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    renderMaskPreview();
+  }
+
+  function clearMaskCanvas() {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function handleClearMask(event) {
+    event.preventDefault();
+    maskPathsRef.current = [];
+    activeMaskPathRef.current = [];
+    drawingRef.current = false;
+    clearMaskCanvas();
+    setMaskTouched(false);
+  }
+
+  function getCanvasPoint(event) {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: (event.clientX - rect.left) * (canvas.width / rect.width),
+      y: (event.clientY - rect.top) * (canvas.height / rect.height)
+    };
+  }
+
+  function renderMaskPreview() {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (const path of maskPathsRef.current) {
+      drawClosedMaskPath(ctx, path, {
+        fillStyle: "rgba(239, 68, 68, 0.28)",
+        strokeStyle: "rgba(220, 38, 38, 0.75)"
+      });
+    }
+
+    const activePath = activeMaskPathRef.current;
+    if (activePath.length < 2) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(220, 38, 38, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(activePath[0].x, activePath[0].y);
+    for (let i = 1; i < activePath.length; i++) {
+      ctx.lineTo(activePath[i].x, activePath[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawClosedMaskPath(ctx, path, { fillStyle, strokeStyle }) {
+    if (!Array.isArray(path) || path.length < 3) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.fillStyle = fillStyle;
+    ctx.strokeStyle = strokeStyle;
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    for (let i = 1; i < path.length; i++) {
+      ctx.lineTo(path[i].x, path[i].y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function handleMaskPointerDown(event) {
+    if (!maskEnabled) return;
+    event.preventDefault();
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    drawingRef.current = true;
+    activeMaskPathRef.current = [point];
+    renderMaskPreview();
+  }
+
+  function handleMaskPointerMove(event) {
+    if (!maskEnabled || !drawingRef.current) return;
+    event.preventDefault();
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    const activePath = activeMaskPathRef.current;
+    const lastPoint = activePath[activePath.length - 1];
+    if (lastPoint && Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) < 2) return;
+    activePath.push(point);
+    renderMaskPreview();
+  }
+
+  function handleMaskPointerEnd(event) {
+    if (!drawingRef.current) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const activePath = activeMaskPathRef.current;
+    if (activePath.length >= 3) {
+      maskPathsRef.current = [...maskPathsRef.current, activePath];
+      setMaskTouched(true);
+    }
+    activeMaskPathRef.current = [];
+    drawingRef.current = false;
+    renderMaskPreview();
+  }
+
+  function exportMaskDataUrl() {
+    const canvas = canvasRef.current;
+    const paths = maskPathsRef.current;
+    if (!canvas || !maskTouched || paths.length === 0) return "";
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = canvas.width;
+    maskCanvas.height = canvas.height;
+    const maskCtx = maskCanvas.getContext("2d");
+    if (!maskCtx) return "";
+    maskCtx.fillStyle = "rgba(255, 255, 255, 1)";
+    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+    maskCtx.globalCompositeOperation = "destination-out";
+    for (const path of paths) {
+      drawClosedMaskPath(maskCtx, path, {
+        fillStyle: "rgba(0, 0, 0, 1)",
+        strokeStyle: "rgba(0, 0, 0, 1)"
+      });
+    }
+    maskCtx.globalCompositeOperation = "source-over";
+    return maskCanvas.toDataURL("image/png");
+  }
+
+  function handleConfirm() {
+    const trimmed = suggestion.trim();
+    if (!trimmed) {
+      setError("请输入修改建议");
+      return;
+    }
+    onConfirm?.({
+      suggestion: trimmed,
+      maskDataUrl: maskEnabled && maskPathsRef.current.length > 0 ? exportMaskDataUrl() : "",
+      referenceImages
+    });
+  }
+
+  return (
+    <div className="dialog-backdrop image-edit-backdrop" onClick={onCancel}>
+      <div
+        className="dialog-dialog image-edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="image-edit-dialog-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="dialog-close-button"
+          onClick={onCancel}
+          aria-label="关闭"
+        >
+          X
+        </button>
+        <div className="image-edit-dialog-body">
+          <div id="image-edit-dialog-title" className="image-edit-title">编辑图片</div>
+          <div className="image-edit-preview">
+            <img
+              src={request?.src}
+              alt={request?.alt || "图片"}
+              onLoad={syncMaskCanvas}
+            />
+            <canvas
+              ref={canvasRef}
+              className={`image-edit-mask-canvas${maskEnabled ? " image-edit-mask-canvas-active" : ""}`}
+              onPointerDown={handleMaskPointerDown}
+              onPointerMove={handleMaskPointerMove}
+              onPointerUp={handleMaskPointerEnd}
+              onPointerCancel={handleMaskPointerEnd}
+            />
+          </div>
+          <div className="image-edit-mask-row">
+            <label className="image-edit-mask-toggle">
+              <input
+                type="checkbox"
+                checked={maskEnabled}
+                onChange={(event) => setMaskEnabled(event.target.checked)}
+              />
+              <span>局部修改</span>
+            </label>
+            <button
+              type="button"
+              className="image-edit-mask-clear"
+              onClick={handleClearMask}
+              disabled={!maskTouched}
+            >
+              清除圈选
+            </button>
+          </div>
+          <textarea
+            className={`image-edit-prompt${error ? " image-edit-prompt-error" : ""}`}
+            value={suggestion}
+            onChange={(event) => {
+              setSuggestion(event.target.value);
+              if (error) setError("");
+            }}
+            onPaste={handleReferenceImagePaste}
+            onDragOver={handleReferenceImageDragOver}
+            onDrop={handleReferenceImageDrop}
+            placeholder="输入修改建议"
+            rows={3}
+            autoFocus
+          />
+          <div className="image-edit-reference-row">
+            <div className="image-edit-reference-title">参考图</div>
+            <button
+              type="button"
+              className="image-edit-reference-add"
+              onClick={() => referenceImageInputRef.current?.click()}
+            >
+              添加图片
+            </button>
+            <input
+              ref={referenceImageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="image-edit-reference-input"
+              onChange={handleReferenceImageSelect}
+            />
+          </div>
+          {referenceImages.length > 0 && (
+            <div className="image-edit-reference-images">
+              {referenceImages.map(item => (
+                <div key={item.id} className="chat-input-image-item image-edit-reference-item">
+                  <img src={item.dataUrl} alt={item.fileName || "参考图"} />
+                  <button
+                    type="button"
+                    className="chat-input-image-remove"
+                    onClick={() => removeReferenceImage(item.id)}
+                    aria-label="删除参考图"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {error && <div className="image-edit-error">{error}</div>}
+          <div className="image-edit-actions">
+            <Button className="!text-xs" onPress={onCancel}>取消</Button>
+            <Button className="!text-xs" onPress={handleConfirm} isDisabled={disabled}>确认</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function buildContextUsage(apiType, model, usage) {
   if (!usage || typeof usage !== "object") return null;
   const tokens = calculateContextTokens(apiType, usage);
@@ -4096,11 +4649,14 @@ function stampLastUserDuration(messages) {
 }
 
 function buildDisplayToolResultMessage(toolResult, targetSessionId, registerImageDataUrl) {
-  const parsedImage = parseImageDataUrl(toolResult?.result?.dataUrl);
+  const imageSource = normalizeImageRefSource(
+    toolResult?.result?.dataUrl || toolResult?.result?.imageUrl || toolResult?.result?.url
+  );
+  const parsedImage = parseImageDataUrl(imageSource);
   const imageRefs = [];
-  if (parsedImage && targetSessionId && typeof registerImageDataUrl === "function") {
-    const ref = registerImageDataUrl(targetSessionId, toolResult.result.dataUrl);
-    if (ref) imageRefs.push({ ref, dataUrl: toolResult.result.dataUrl });
+  if (imageSource && targetSessionId && typeof registerImageDataUrl === "function") {
+    const ref = registerImageDataUrl(targetSessionId, imageSource);
+    if (ref) imageRefs.push({ ref, dataUrl: imageSource });
   }
   const summary = summarizeToolResult(toolResult.result, imageRefs);
   const serializedContent = serializeToolResult(summary);
@@ -4109,11 +4665,14 @@ function buildDisplayToolResultMessage(toolResult, targetSessionId, registerImag
     tool_call_id: toolResult.id,
     tool_name: toolResult.name,
     content: serializedContent,
-    displayImageUrl: parsedImage ? toolResult.result.dataUrl : undefined,
+    displayImageUrl: imageSource || undefined,
     displayImageMediaType: parsedImage?.mediaType,
+    displayImageOmitFromRequests: isLocalImageGenerationTool(toolResult.name) ? true : undefined,
     durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
   };
-  if (imageRefs.length > 0) message.imageRefs = imageRefs;
+  if (imageRefs.length > 0) {
+    message.imageRefs = imageRefs;
+  }
   return message;
 }
 
@@ -4134,15 +4693,84 @@ function summarizeToolResult(result, imageRefs = []) {
   if (imageRefs.length > 0) {
     summary.imageRefs = imageRefs.map(({ ref }) => ref);
     summary.imageRefInstruction = imageRefs
-      .map(({ ref }) => `Tool returned an image ref: ${ref}. For later tool calls requiring this image's base64 data URL, pass exactly "|deRef:${ref}|". Do not copy or rewrite the data URL.`)
+      .map(({ ref }) => `Tool returned an image ref: ${ref}. To preview it for the user, write Markdown exactly as ![image](|deRef:${ref}|). For later tool calls requiring this image's base64 data URL, pass exactly "|deRef:${ref}|". Do not copy or rewrite the data URL.`)
       .join("\n");
   }
 
   return summary;
 }
 
-function isBase64DataUrl(dataUrl) {
-  return typeof dataUrl === "string" && /^data:[^;]+;base64,/.test(dataUrl);
+function isLocalImageGenerationTool(name) {
+  return name === "image_gen" || name === "image_edit";
+}
+
+function findImageEditMcpTool(tools = []) {
+  return (tools || []).find(tool => {
+    const names = [tool?.name, tool?._toolCallName]
+      .map(name => String(name || "").trim())
+      .filter(Boolean);
+    return names.some(name => name.replace(/-/g, "_").endsWith("image_edit"));
+  }) || null;
+}
+
+function getMcpToolCallName(tool) {
+  const explicit = String(tool?._toolCallName || "").trim();
+  if (explicit) return explicit;
+  const serverName = String(tool?._serverName || "server").trim();
+  const toolName = String(tool?.name || "image_edit").trim();
+  return `mcp_${serverName}_${toolName}`;
+}
+
+function buildImageEditUserPrompt({ toolCallName, imageRef, maskRef, additionalImageRefs = [], suggestion }) {
+  const allImageRefs = [
+    imageRef,
+    ...(Array.isArray(additionalImageRefs) ? additionalImageRefs : [])
+  ].filter(Boolean);
+  const imagePlaceholders = allImageRefs.map(ref => `\`|deRef:${ref}|\``).join(", ");
+  const lines = [
+    `请使用工具 \`${toolCallName || "image_edit"}\` 修改这张图片。`,
+    `原图 ref: ${imageRef}`,
+    `调用工具时请把图片输入按这个顺序传入 images 数组: ${imagePlaceholders}。第一张是正在编辑的原图，后续图片是参考图。`
+  ];
+
+  if (maskRef) {
+    lines.push(
+      `局部修改 mask ref: ${maskRef}`,
+      `mask 参数如果需要图片数据，请传入 \`|deRef:${maskRef}|\`。`,
+      "mask 只对 images 数组第一张，也就是正在展示的原图生效；mask 是 PNG alpha mask：透明区域表示需要修改范围，不透明区域表示保持不变。请尽量只改 mask 透明区域。"
+    );
+  }
+
+  if (allImageRefs.length === 1) {
+    lines.push(`如果工具没有 images 参数，请传入 image 参数: \`|deRef:${imageRef}|\`。`);
+  } else {
+    const additionalPlaceholders = allImageRefs.slice(1).map(ref => `\`|deRef:${ref}|\``).join(", ");
+    lines.push(
+      `如果工具没有 images 参数，请传入 image 参数: \`|deRef:${imageRef}|\`，并传入 additional_images 数组: ${additionalPlaceholders}。`
+    );
+  }
+
+  lines.push(`修改建议：${String(suggestion || "").trim()}`);
+  return lines.join("\n");
+}
+
+function buildImageEditMessageRefs({
+  imageRef,
+  imageSource,
+  maskRef,
+  maskSource,
+  referenceRefs = [],
+  referenceSources = []
+}) {
+  return normalizeMessageImageRefs([
+    { ref: imageRef, dataUrl: imageSource, role: "edit_image" },
+    ...referenceRefs.map((ref, index) => ({
+      ref,
+      dataUrl: referenceSources[index],
+      role: "edit_reference"
+    })),
+    maskRef ? { ref: maskRef, dataUrl: maskSource, role: "edit_mask" } : null
+  ]);
 }
 
 function imageBlockToDataUrl(block) {
@@ -4156,11 +4784,45 @@ function imageBlockToDataUrl(block) {
   return null;
 }
 
+function isImageFile(file) {
+  if (!file) return false;
+  return String(file.type || "").startsWith("image/") || IMAGE_FILE_EXT.test(String(file.name || ""));
+}
+
+function getClipboardImageFiles(clipboardData) {
+  const items = Array.from(clipboardData?.items || []);
+  let imageFiles = items
+    .filter(item => item.kind === "file" && (String(item.type || "").startsWith("image/") || item.type === ""))
+    .map(item => item.getAsFile())
+    .filter(isImageFile);
+
+  const files = Array.from(clipboardData?.files || []);
+  if (imageFiles.length === 0) {
+    imageFiles = files.filter(isImageFile);
+  }
+
+  return imageFiles;
+}
+
+async function imageFileToAttachmentItem(file) {
+  const rawDataUrl = await blobToDataUrl(file);
+  const optimizedDataUrl = await optimizeImageDataUrl(rawDataUrl);
+  const parsed = parseImageDataUrl(optimizedDataUrl);
+  if (!parsed) return null;
+  return {
+    id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    type: "image",
+    dataUrl: optimizedDataUrl,
+    mediaType: parsed.mediaType,
+    fileName: file.name
+  };
+}
+
 function resolveImageRefsInValue(value, refs) {
   if (typeof value === "string") {
-    const match = value.match(IMAGE_DEREF_PATTERN);
-    if (!match) return value;
-    return refs.get(match[1]) || value;
+    const imageRef = normalizeImageRefToken(value);
+    if (!imageRef) return value;
+    return refs.get(imageRef) || value;
   }
 
   if (Array.isArray(value)) {
@@ -4174,6 +4836,55 @@ function resolveImageRefsInValue(value, refs) {
   }
 
   return value;
+}
+
+function normalizeImageRefToken(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const candidates = [raw];
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded !== raw) candidates.push(decoded);
+  } catch {
+    // Keep the raw candidate when it is not URL encoded.
+  }
+
+  for (const candidate of candidates) {
+    let normalized = candidate.trim();
+    while (
+      (normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))
+    ) {
+      normalized = normalized.slice(1, -1).trim();
+    }
+    const derefMatch = normalized.match(IMAGE_DEREF_PATTERN);
+    if (derefMatch) return derefMatch[1];
+    if (IMAGE_REF_PATTERN.test(normalized)) return normalized;
+  }
+
+  return "";
+}
+
+function summarizeImageRefCache(sessionId, cache) {
+  const refs = cache?.refs instanceof Map ? cache.refs : new Map();
+  return {
+    sessionId,
+    count: refs.size,
+    refs: Object.fromEntries(
+      Array.from(refs.entries()).map(([ref, source]) => [ref, summarizeImageRefSource(source)])
+    )
+  };
+}
+
+function summarizeImageRefSource(source) {
+  const raw = String(source || "");
+  const parsed = parseImageDataUrl(raw);
+  return {
+    kind: parsed ? "data-url" : raw ? "url" : "empty",
+    mediaType: parsed?.mediaType || "",
+    length: raw.length,
+    preview: raw ? `${raw.slice(0, 80)}${raw.length > 80 ? "..." : ""}` : ""
+  };
 }
 
 function parseImageDataUrl(dataUrl) {
@@ -4200,7 +4911,7 @@ function normalizeToolSummary(summary) {
 function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
   const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false) {
+  if (!parsedImage || options.supportsImageInput === false || msg.displayImageOmitFromRequests === true) {
     return typeof summary === "string" ? summary : JSON.stringify(summary);
   }
 
@@ -4223,7 +4934,7 @@ function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
 function buildOpenAIToolResultContent(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
   const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false) {
+  if (!parsedImage || options.supportsImageInput === false || msg.displayImageOmitFromRequests === true) {
     return typeof summary === "string" ? summary : JSON.stringify(summary);
   }
 
@@ -4641,10 +5352,12 @@ function buildPlainApiMessage(msg, options = {}) {
     "durationMs",
     "displayImageUrl",
     "displayImageMediaType",
+    "displayImageOmitFromRequests",
     "_usageApiType",
     "_usageModel",
     "displayContent",
-    "injectedUserContext"
+    "injectedUserContext",
+    "imageRefs"
   ]) {
     delete apiMessage[field];
   }

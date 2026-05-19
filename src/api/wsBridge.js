@@ -1,5 +1,6 @@
 /* global chrome */
-import { TOOLS, executeTool } from "./llm";
+import { TOOLS, executeTool, isImageToolName } from "./llm";
+import { isImageApiConfigured } from "./llm/imageApi";
 import { DEFAULT_WS_BRIDGE_STATUS, WS_BRIDGE_STATUS_STORAGE_KEY } from "./wsBridgeShared";
 
 const RECONNECT_BASE_MS = 1000;
@@ -497,10 +498,11 @@ async function handleRequest(req) {
       });
       break;
 
-    case "tools/list":
-      toolCount = TOOLS.length;
+    case "tools/list": {
+      const tools = await getBridgeTools();
+      toolCount = tools.length;
       sendResponse(id, {
-        tools: TOOLS.map(t => ({
+        tools: tools.map(t => ({
           name: t.name,
           description: t.description,
           inputSchema: t.schema
@@ -519,6 +521,7 @@ async function handleRequest(req) {
         error: null
       });
       break;
+    }
 
     case "tools/call": {
       if (!params || typeof params.name !== "string") {
@@ -532,6 +535,12 @@ async function handleRequest(req) {
     default:
       sendError(id, -32601, `Method not found: ${method}`);
   }
+}
+
+async function getBridgeTools() {
+  const { llmConfig } = await chrome.storage.local.get({ llmConfig: {} });
+  const imageToolsEnabled = isImageApiConfigured(llmConfig);
+  return TOOLS.filter(tool => imageToolsEnabled || !isImageToolName(tool.name));
 }
 
 async function executeToolCall(id, params) {

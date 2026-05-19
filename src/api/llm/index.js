@@ -15,6 +15,7 @@ export {
   findMcpToolByCallName,
   getMcpToolCallAliases,
   getTools,
+  isImageToolName,
   isMcpToolCallName
 } from "./tools";
 export { executeTool } from "./builtins";

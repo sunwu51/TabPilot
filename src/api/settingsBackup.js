@@ -22,7 +22,10 @@ const LLM_CONFIG_KEYS = [
   "firstPacketTimeoutSeconds",
   "supportsImageInput",
   "reasoningEffort",
-  "omitThinkingFromRequests"
+  "omitThinkingFromRequests",
+  "imageBaseUrl",
+  "imageApiKey",
+  "imageModel"
 ];
 
 export async function exportSettingsBackup() {
@@ -104,6 +107,9 @@ function normalizeLlmConfigPatch(value) {
   addStringPatch(patch, source, "baseUrl");
   addStringPatch(patch, source, "apiKey");
   addStringPatch(patch, source, "model");
+  addStringPatch(patch, source, "imageBaseUrl");
+  addStringPatch(patch, source, "imageApiKey");
+  addStringPatch(patch, source, "imageModel");
   if (Object.prototype.hasOwnProperty.call(source, "modelContextLimitTokens")) {
     patch.modelContextLimitTokens = normalizeModelContextLimitTokens(source.modelContextLimitTokens);
   }
