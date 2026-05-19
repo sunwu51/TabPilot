@@ -177,4 +177,114 @@ describe("OpenAI responses reasoning helpers", () => {
       { type: "function_call", id: "fc_123", call_id: "call_123", name: "lookup", arguments: "{\"query\":\"x\"}" }
     ]);
   });
+
+  it("builds structured image function call outputs when image input is enabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: JSON.stringify({ success: true, imageRefs: ["img_1", "img_2"] }),
+        displayImages: [
+          { url: "data:image/png;base64,aGVsbG8=" },
+          { url: "data:image/png;base64,d29ybGQ=" }
+        ]
+      }
+    ], { supportsImageInput: true });
+
+    expect(result.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: [
+          { type: "input_text", text: "{\"success\":true,\"imageRefs\":[\"img_1\",\"img_2\"]}" },
+          { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=", detail: "low" },
+          { type: "input_image", image_url: "data:image/png;base64,d29ybGQ=", detail: "low" }
+        ]
+      }
+    ]);
+  });
+
+  it("keeps image function call outputs textual when image input is disabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: "done",
+        displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
+      }
+    ], { supportsImageInput: false });
+
+    expect(result.input).toEqual([
+      { type: "function_call_output", call_id: "call_123", output: "done" }
+    ]);
+  });
+
+  it("keeps regular JSON tool output textual", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: JSON.stringify({
+          success: true,
+          dataUrl: "data:image/png;base64,aGVsbG8=",
+          images: [
+            { dataUrl: "data:image/jpeg;base64,d29ybGQ=", width: 100 }
+          ]
+        })
+      }
+    ]);
+
+    expect(result.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: "{\"success\":true,\"dataUrl\":\"data:image/png;base64,aGVsbG8=\",\"images\":[{\"dataUrl\":\"data:image/jpeg;base64,d29ybGQ=\",\"width\":100}]}"
+      }
+    ]);
+  });
+
+  it("parses JSON stringified tool content blocks into structured responses output", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: JSON.stringify([
+          { type: "text", text: "Tool result for tab_screenshot: {\"success\":true}" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "low" } }
+        ])
+      }
+    ], { supportsImageInput: true });
+
+    expect(result.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: [
+          { type: "input_text", text: "Tool result for tab_screenshot: {\"success\":true}" },
+          { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=", detail: "low" }
+        ]
+      }
+    ]);
+  });
+
+  it("omits structured image blocks when image input is disabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: JSON.stringify([
+          { type: "text", text: "done" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "low" } }
+        ])
+      }
+    ], { supportsImageInput: false });
+
+    expect(result.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: "done\n[omitted image from previous tool output]"
+      }
+    ]);
+  });
 });

@@ -1,6 +1,6 @@
 /* global chrome */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeTool, openHelloWorldPlayground } from "./builtins";
+import { executeTool, getBuiltinToolTimeoutSeconds, openHelloWorldPlayground } from "./builtins";
 
 vi.mock("../mcp", () => ({
   callMcpTool: vi.fn(async (url, headers, name, args, timeoutMs) => ({
@@ -52,6 +52,12 @@ describe("built-in tool execution", () => {
       2000
     );
     expect(result).toMatchObject({ name: "lookup", args: { query: "tabs" } });
+  });
+
+  it("uses a longer timeout for image tools", () => {
+    expect(getBuiltinToolTimeoutSeconds("image_gen")).toBe(600);
+    expect(getBuiltinToolTimeoutSeconds("image_edit")).toBe(600);
+    expect(getBuiltinToolTimeoutSeconds("tab_list")).toBe(10);
   });
 
   it("rejects namespaced MCP aliases outside the canonical call-name format", async () => {
@@ -179,10 +185,13 @@ describe("built-in tool execution", () => {
     expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
   });
 
-  it("calls the configured Image API generation endpoint and returns a data URL", async () => {
+  it("calls the configured Image API generation endpoint and returns multiple data URLs", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
-      data: [{ b64_json: "aGVsbG8=", revised_prompt: "A revised prompt" }]
+      data: [
+        { b64_json: "aGVsbG8=", revised_prompt: "A revised prompt" },
+        { b64_json: "d29ybGQ=" }
+      ]
     }), { status: 200 }));
     await chrome.storage.local.set({
       llmConfig: {
@@ -204,7 +213,12 @@ describe("built-in tool execution", () => {
         endpoint: "generations",
         model: "gpt-image-2",
         dataUrl: "data:image/png;base64,aGVsbG8=",
-        revisedPrompt: "A revised prompt"
+        imageCount: 2,
+        revisedPrompt: "A revised prompt",
+        images: [
+          { dataUrl: "data:image/png;base64,aGVsbG8=", outputFormat: "png", revisedPrompt: "A revised prompt" },
+          { dataUrl: "data:image/png;base64,d29ybGQ=", outputFormat: "png" }
+        ]
       });
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "https://api.openai.com/v1/images/generations",
@@ -221,6 +235,71 @@ describe("built-in tool execution", () => {
         quality: "low"
       });
       expect(body.b64_json).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("calls the configured chat/completions image endpoint and reads OpenRouter-style images", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      choices: [
+        {
+          message: {
+            content: "Generated",
+            images: [
+              { image_url: { url: "data:image/png;base64,aGVsbG8=" } }
+            ]
+          }
+        }
+      ]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://openrouter.ai/api/v1",
+        imageApiKey: "img-token",
+        imageApiProtocol: "chat_completions",
+        imageModel: "google/gemini-2.5-flash-image-preview"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_gen", {
+        prompt: "Draw a cat",
+        size: "1024x1024"
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "chat_completions",
+        model: "google/gemini-2.5-flash-image-preview",
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        imageCount: 1
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://openrouter.ai/api/v1/chat/completions",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            "Content-Type": "application/json",
+            Authorization: "Bearer img-token"
+          })
+        })
+      );
+      const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+      expect(body).toMatchObject({
+        model: "google/gemini-2.5-flash-image-preview",
+        modalities: ["image", "text"],
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Draw a cat" }
+            ]
+          }
+        ],
+        size: "1024x1024"
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -299,6 +378,82 @@ describe("built-in tool execution", () => {
       const entries = Array.from(globalThis.fetch.mock.calls[0][1].body.entries());
       expect(entries.filter(([key]) => key === "image[]")).toHaveLength(2);
       expect(entries.find(([key]) => key === "mask")).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("sends edit images through chat/completions image_url content", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      choices: [
+        {
+          message: {
+            images: [
+              { type: "image_url", image_url: { url: "https://example.com/generated.png" } }
+            ]
+          }
+        }
+      ]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://openrouter.ai/api/v1/chat/completions",
+        imageApiKey: "img-token",
+        imageApiProtocol: "chat_completions",
+        imageModel: "google/gemini-2.5-flash-image-preview"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_edit", {
+        prompt: "Add a hat",
+        images: [
+          "data:image/png;base64,aGVsbG8=",
+          "https://example.com/ref.png"
+        ]
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "chat_completions",
+        inputImageCount: 2,
+        imageUrl: "https://example.com/generated.png"
+      });
+      const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+      expect(body.messages[0].content).toEqual([
+        { type: "text", text: "Add a hat" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=" } },
+        { type: "image_url", image_url: { url: "https://example.com/ref.png" } }
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("reports mask as unsupported for chat/completions image edits", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn();
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://openrouter.ai/api/v1",
+        imageApiKey: "img-token",
+        imageApiProtocol: "chat_completions",
+        imageModel: "google/gemini-2.5-flash-image-preview"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_edit", {
+        prompt: "Add a hat",
+        image: "data:image/png;base64,aGVsbG8=",
+        mask: "data:image/png;base64,aGVsbG8="
+      });
+
+      expect(result).toEqual({
+        error: "mask is not supported by the chat/completions image protocol"
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = originalFetch;
     }

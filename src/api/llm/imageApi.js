@@ -1,9 +1,14 @@
 /* global chrome */
 
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
+export const IMAGE_API_PROTOCOLS = {
+  GENERATE: "generate",
+  CHAT_COMPLETIONS: "chat_completions"
+};
 
 const IMAGE_GENERATIONS_PATH = "/v1/images/generations";
 const IMAGE_EDITS_PATH = "/v1/images/edits";
+const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const IMAGE_OUTPUT_FORMATS = new Set(["png", "jpeg", "webp"]);
 const IMAGE_DEREF_PATTERN = /^\|deRef:(img_[A-Za-z0-9_-]+)\|$/;
 const IMAGE_REF_PATTERN = /^img_[A-Za-z0-9_-]+$/;
@@ -13,6 +18,10 @@ export function isImageApiConfigured(config = {}) {
 }
 
 export function resolveImageApiRequestUrl(baseUrl, endpoint) {
+  if (endpoint === "chat_completions") {
+    return resolveChatCompletionsRequestUrl(baseUrl);
+  }
+
   const raw = String(baseUrl || "").trim();
   if (!raw) return "";
 
@@ -42,6 +51,12 @@ export function resolveImageApiRequestUrl(baseUrl, endpoint) {
   }
 }
 
+export function normalizeImageApiProtocol(value) {
+  return value === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
+    ? IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
+    : IMAGE_API_PROTOCOLS.GENERATE;
+}
+
 export async function executeImageGeneration(args = {}) {
   const config = await readImageApiConfig();
   const validationError = validateImageApiConfig(config);
@@ -49,6 +64,10 @@ export async function executeImageGeneration(args = {}) {
 
   const prompt = String(args.prompt || "").trim();
   if (!prompt) return { error: "prompt is required" };
+
+  if (config.imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS) {
+    return executeChatCompletionsImageGeneration(args, config, { prompt });
+  }
 
   const body = buildImageRequestBody(args, config, { prompt });
   const url = resolveImageApiRequestUrl(config.imageBaseUrl, "generations");
@@ -73,6 +92,11 @@ export async function executeImageEdit(args = {}) {
 
   const images = normalizeEditImages(args);
   if (images.length === 0) return { error: "image is required" };
+
+  if (config.imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS) {
+    return executeChatCompletionsImageEdit(args, config, { prompt, images });
+  }
+
   const body = buildImageRequestBody(args, config, { prompt });
   const form = new FormData();
   for (const [key, value] of Object.entries(body)) {
@@ -129,7 +153,8 @@ async function readImageApiConfig() {
   return {
     imageBaseUrl: String(llmConfig?.imageBaseUrl || "").trim(),
     imageApiKey: String(llmConfig?.imageApiKey || "").trim(),
-    imageModel: String(llmConfig?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL
+    imageModel: String(llmConfig?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL,
+    imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol)
   };
 }
 
@@ -158,6 +183,93 @@ function buildImageRequestBody(args, config, requiredFields) {
   addNumberField(body, args, "n", { min: 1, max: 10, integer: true });
 
   return body;
+}
+
+async function executeChatCompletionsImageGeneration(args, config, { prompt }) {
+  const body = buildChatCompletionsImageRequestBody(args, config, {
+    prompt,
+    images: []
+  });
+  const url = resolveImageApiRequestUrl(config.imageBaseUrl, "chat_completions");
+  const result = await postImageJson(url, config.imageApiKey, body);
+  if (result.error) return result;
+
+  return buildImageToolResult(result.payload, {
+    endpoint: "chat_completions",
+    model: body.model,
+    prompt,
+    outputFormat: args.output_format
+  });
+}
+
+async function executeChatCompletionsImageEdit(args, config, { prompt, images }) {
+  const mask = String(args.mask || "").trim();
+  if (mask) {
+    return { error: "mask is not supported by the chat/completions image protocol" };
+  }
+
+  const contentImages = [];
+  for (let i = 0; i < images.length; i++) {
+    contentImages.push(await imageSourceToChatImageContent(images[i], `image-${i + 1}`));
+  }
+  const body = buildChatCompletionsImageRequestBody(args, config, {
+    prompt,
+    images: contentImages
+  });
+  const url = resolveImageApiRequestUrl(config.imageBaseUrl, "chat_completions");
+  const result = await postImageJson(url, config.imageApiKey, body);
+  if (result.error) return result;
+
+  return buildImageToolResult(result.payload, {
+    endpoint: "chat_completions",
+    model: body.model,
+    prompt,
+    inputImageCount: images.length,
+    outputFormat: args.output_format
+  });
+}
+
+function buildChatCompletionsImageRequestBody(args, config, { prompt, images = [] }) {
+  const model = String(args.model || config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
+  const userContent = [
+    { type: "text", text: prompt },
+    ...images
+  ];
+  const body = {
+    model,
+    messages: [
+      {
+        role: "user",
+        content: userContent
+      }
+    ],
+    modalities: ["image", "text"]
+  };
+
+  addStringField(body, args, "size");
+  addStringField(body, args, "quality");
+  addNumberField(body, args, "n", { min: 1, max: 10, integer: true });
+
+  return body;
+}
+
+async function imageSourceToChatImageContent(source, fallbackName) {
+  const raw = String(source || "").trim();
+  if (!raw) throw new Error(`${fallbackName} is empty`);
+
+  if (/^data:[^;]+;base64,/i.test(raw) || /^https?:\/\//i.test(raw)) {
+    return { type: "image_url", image_url: { url: raw } };
+  }
+
+  const unresolvedRef = normalizeImageRefToken(raw);
+  if (unresolvedRef) {
+    throw new Error(`${fallbackName} ref ${unresolvedRef} was not resolved before image tool execution`);
+  }
+  if (raw.includes("|deRef:")) {
+    throw new Error(`${fallbackName} contains an unresolved image ref`);
+  }
+
+  throw new Error(`${fallbackName} must be a data URL or http(s) URL`);
 }
 
 async function postImageJson(url, apiKey, body) {
@@ -212,11 +324,36 @@ async function readImageApiResponse(res) {
 }
 
 function buildImageToolResult(payload, meta) {
-  const image = extractFirstImagePayload(payload);
-  if (!image) {
+  const images = extractImagePayloads(payload);
+  if (images.length === 0) {
     return {
       error: "Image API response did not contain an image",
-      responseShape: summarizeImageResponseShape(payload)
+      responseShape: summarizeImageResponseShape(payload),
+      rawResponse: payload
+    };
+  }
+
+  const format = normalizeOutputFormat(meta.outputFormat);
+  const normalizedImages = images.map(image => {
+    const item = {};
+    if (image.b64) {
+      item.dataUrl = `data:image/${format};base64,${stripDataUrlPrefix(image.b64)}`;
+      item.outputFormat = format;
+    } else if (isBase64DataUrl(image.url)) {
+      item.dataUrl = image.url;
+      item.outputFormat = extractDataUrlImageFormat(image.url) || format;
+    } else if (image.url) {
+      item.imageUrl = image.url;
+    }
+    if (image.revisedPrompt) item.revisedPrompt = image.revisedPrompt;
+    return item;
+  }).filter(item => item.dataUrl || item.imageUrl);
+
+  if (normalizedImages.length === 0) {
+    return {
+      error: "Image API response did not contain an image",
+      responseShape: summarizeImageResponseShape(payload),
+      rawResponse: payload
     };
   }
 
@@ -225,49 +362,90 @@ function buildImageToolResult(payload, meta) {
     endpoint: meta.endpoint,
     model: meta.model,
     prompt: meta.prompt,
-    imageCount: image.count
+    imageCount: normalizedImages.length,
+    images: normalizedImages
   };
   if (meta.inputImageCount) result.inputImageCount = meta.inputImageCount;
   if (meta.hasMask) result.maskApplied = true;
-  if (image.revisedPrompt) result.revisedPrompt = image.revisedPrompt;
+  const revisedPrompt = findFirstString(...normalizedImages.map(image => image.revisedPrompt));
+  if (revisedPrompt) result.revisedPrompt = revisedPrompt;
 
-  if (image.b64) {
-    const format = normalizeOutputFormat(meta.outputFormat);
-    result.dataUrl = `data:image/${format};base64,${stripDataUrlPrefix(image.b64)}`;
-    result.outputFormat = format;
-    return result;
+  const firstImage = normalizedImages[0];
+  if (firstImage.dataUrl) {
+    result.dataUrl = firstImage.dataUrl;
+    result.outputFormat = firstImage.outputFormat;
+  } else if (firstImage.imageUrl) {
+    result.imageUrl = firstImage.imageUrl;
   }
-
-  result.imageUrl = image.url;
   return result;
 }
 
-function extractFirstImagePayload(payload) {
+function extractImagePayloads(payload) {
   const candidates = [];
   if (Array.isArray(payload?.data)) candidates.push(...payload.data);
   if (Array.isArray(payload?.images)) candidates.push(...payload.images);
+  if (Array.isArray(payload?.choices)) {
+    for (const choice of payload.choices) {
+      const message = choice?.message || choice?.delta || {};
+      if (Array.isArray(message.images)) candidates.push(...message.images);
+      if (Array.isArray(message.content)) candidates.push(...message.content);
+      if (message.image) candidates.push(message.image);
+      if (message.image_url) candidates.push(message.image_url);
+    }
+  }
   if (payload?.image) candidates.push(payload.image);
   if (payload?.b64_json || payload?.url) candidates.push(payload);
 
+  const images = [];
   for (const candidate of candidates) {
     const b64 = findFirstString(
       candidate?.b64_json,
       candidate?.base64,
       candidate?.image_base64,
-      candidate?.data
+      candidate?.data,
+      candidate?.source?.data,
+      candidate?.image_url?.base64
     );
-    const url = findFirstString(candidate?.url, candidate?.image_url);
+    const url = findFirstString(
+      candidate?.url,
+      candidate?.image_url,
+      candidate?.image_url?.url
+    );
     if (b64 || url) {
-      return {
+      images.push({
         b64,
         url,
-        revisedPrompt: findFirstString(candidate?.revised_prompt, candidate?.revisedPrompt),
-        count: Math.max(1, candidates.length)
-      };
+        revisedPrompt: findFirstString(candidate?.revised_prompt, candidate?.revisedPrompt)
+      });
     }
   }
 
-  return null;
+  return images;
+}
+
+function resolveChatCompletionsRequestUrl(baseUrl) {
+  const raw = String(baseUrl || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = new URL(raw);
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+    if (!normalizedPath || normalizedPath === "/") {
+      parsed.pathname = CHAT_COMPLETIONS_PATH;
+    } else if (/\/chat\/completions$/i.test(normalizedPath)) {
+      parsed.pathname = normalizedPath;
+    } else if (/\/v1$/i.test(normalizedPath)) {
+      parsed.pathname = `${normalizedPath}/chat/completions`;
+    } else {
+      parsed.pathname = `${normalizedPath}/v1/chat/completions`;
+    }
+    return parsed.toString();
+  } catch {
+    const withoutSlash = raw.replace(/\/+$/, "");
+    if (/\/chat\/completions$/i.test(withoutSlash)) return withoutSlash;
+    if (/\/v1$/i.test(withoutSlash)) return `${withoutSlash}/chat/completions`;
+    return `${withoutSlash}${CHAT_COMPLETIONS_PATH}`;
+  }
 }
 
 async function imageSourceToFile(source, fallbackName) {
@@ -348,6 +526,17 @@ function stripDataUrlPrefix(value) {
   const raw = String(value || "").trim();
   const match = raw.match(/^data:[^;]+;base64,(.+)$/i);
   return match ? match[1] : raw;
+}
+
+function isBase64DataUrl(value) {
+  return /^data:image\/[^;]+;base64,/i.test(String(value || "").trim());
+}
+
+function extractDataUrlImageFormat(value) {
+  const match = String(value || "").trim().match(/^data:image\/([^;]+);base64,/i);
+  if (!match) return "";
+  const format = match[1].toLowerCase();
+  return format === "jpg" ? "jpeg" : format;
 }
 
 function normalizeOutputFormat(value) {

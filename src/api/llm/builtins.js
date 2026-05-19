@@ -106,9 +106,9 @@ export async function executeTool(name, args, mcpRegistry = []) {
   }
 }
 
-function getBuiltinToolTimeoutSeconds(name) {
+export function getBuiltinToolTimeoutSeconds(name) {
   if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
-  if (name === "image_gen" || name === "image_edit") return 180;
+  if (name === "image_gen" || name === "image_edit") return 600;
   return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
 }
 

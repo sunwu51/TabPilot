@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
@@ -51,7 +52,12 @@ import toast from "react-hot-toast";
 import { formatProfileForSystemPrompt } from "../../api/userProfile";
 import { refreshSessionKeywords } from "../../api/sessionKeywords";
 import { getLongToolArgumentFields } from "../../api/llm/longToolArgs";
-import { DEFAULT_IMAGE_MODEL, isImageApiConfigured } from "../../api/llm/imageApi";
+import {
+  DEFAULT_IMAGE_MODEL,
+  IMAGE_API_PROTOCOLS,
+  isImageApiConfigured,
+  normalizeImageApiProtocol
+} from "../../api/llm/imageApi";
 import {
   IMAGE_REF_PATTERN,
   allocateGeneratedImageRef,
@@ -123,9 +129,11 @@ export default function AgentPanel() {
     supportsImageInput: false,
     reasoningEffort: "default",
     omitThinkingFromRequests: false,
+    imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
     imageToolsEnabled: false
   });
   const [contextUsage, setContextUsage] = useState(null);
+  const [requestBodySize, setRequestBodySize] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
@@ -380,7 +388,9 @@ export default function AgentPanel() {
         applyLatestPlanFromPlans(meta.plans);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
-        setContextUsage(getSessionRuntime(restored.id).contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+        const restoredRuntime = getSessionRuntime(restored.id);
+        setContextUsage(restoredRuntime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+        setRequestBodySize(restoredRuntime.requestBodySize || null);
         setMessages(msgs);
         setImageEditRequest(null);
         setLoading(false);
@@ -403,6 +413,7 @@ export default function AgentPanel() {
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
         setContextUsage(null);
+        setRequestBodySize(null);
         setMessages([]);
         setLoading(false);
         setSessions(await listSessions());
@@ -449,6 +460,7 @@ export default function AgentPanel() {
           supportsImageInput: nextConfig.supportsImageInput === true,
           reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
           omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true,
+          imageApiProtocol: normalizeImageApiProtocol(nextConfig.imageApiProtocol),
           imageToolsEnabled: isImageApiConfigured(nextConfig)
         });
       }
@@ -496,6 +508,7 @@ export default function AgentPanel() {
   const builtinImageEditTool = llmConfigInfo.imageToolsEnabled ? { name: "image_edit", _toolCallName: "image_edit" } : null;
   const imageEditTool = externalImageEditTool || builtinImageEditTool;
   const imageEditingEnabled = !!imageEditTool;
+  const imageEditMaskSupported = !!externalImageEditTool || llmConfigInfo.imageApiProtocol !== IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS;
 
   function openImageEditDialog(image) {
     const currentSessionId = activeSessionIdRef.current;
@@ -521,7 +534,8 @@ export default function AgentPanel() {
       src: source,
       alt: image?.alt || "图片",
       ref,
-      toolCallName: getMcpToolCallName(imageEditTool)
+      toolCallName: getMcpToolCallName(imageEditTool),
+      maskSupported: imageEditMaskSupported
     };
     setImageEditRequest(request);
   }
@@ -632,7 +646,8 @@ export default function AgentPanel() {
       abort: null,
       runId: 0,
       pendingApproval: null,
-      contextUsage: null
+      contextUsage: null,
+      requestBodySize: null
     };
   }
 
@@ -643,6 +658,7 @@ export default function AgentPanel() {
       setLoading(!!next.loading);
       setPendingApproval(next.pendingApproval || null);
       setContextUsage(next.contextUsage || null);
+      setRequestBodySize(next.requestBodySize || null);
       if (!next.loading && !next.pendingApproval && shouldFocusInputWhenReadyRef.current) {
         requestAnimationFrame(() => {
           if (!activeSessionIdRef.current || activeSessionIdRef.current !== targetSessionId) return;
@@ -739,12 +755,15 @@ export default function AgentPanel() {
           if (dataUrl) registerSessionImageDataUrl(targetSessionId, dataUrl);
         }
       }
-      if (normalizeImageRefSource(msg.displayImageUrl)) {
-        registerSessionImageDataUrl(
-          targetSessionId,
-          msg.displayImageUrl,
-          extractPreferredImageRefFromToolMessage(msg)
-        );
+      const displayImageSources = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
+        ? msg.displayImages.map(image => image?.url)
+        : [msg.displayImageUrl];
+      const preferredRef = extractPreferredImageRefFromToolMessage(msg);
+      for (const source of displayImageSources) {
+        const displayImageSource = normalizeImageRefSource(source);
+        if (isBase64DataUrl(displayImageSource)) {
+          registerSessionImageDataUrl(targetSessionId, displayImageSource, preferredRef);
+        }
       }
     }
   }
@@ -837,6 +856,7 @@ export default function AgentPanel() {
     setMessages(msgs);
     const runtime = getSessionRuntime(id);
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+    setRequestBodySize(runtime.requestBodySize || null);
     setLoading(!!runtime.loading);
     setPendingApproval(runtime.pendingApproval || null);
     setImageEditRequest(null);
@@ -1201,7 +1221,7 @@ export default function AgentPanel() {
     }
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
-    setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
+    setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
     void saveLastActiveSessionId(id);
     setSessionId(id);
@@ -1211,6 +1231,7 @@ export default function AgentPanel() {
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
+    setRequestBodySize(null);
     setMessages([]);
     setStreamingContent(null);
     setStreamingThinking(null);
@@ -1382,6 +1403,7 @@ export default function AgentPanel() {
         omitThinkingFromRequests: false,
         imageBaseUrl: "",
         imageApiKey: "",
+        imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
         imageModel: DEFAULT_IMAGE_MODEL
       },
       betaFeaturesEnabled: true
@@ -1393,6 +1415,7 @@ export default function AgentPanel() {
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
     return {
@@ -1402,6 +1425,7 @@ export default function AgentPanel() {
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(llmConfig),
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
@@ -1594,6 +1618,12 @@ export default function AgentPanel() {
         if (activeSessionIdRef.current === targetSessionId) {
           setStreamingToolArgs(null);
         }
+      },
+
+      onRequestBodySize: (size) => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        const nextRequestBodySize = normalizeRequestBodySize(size);
+        setSessionRuntime(targetSessionId, { requestBodySize: nextRequestBodySize });
       },
 
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
@@ -1982,7 +2012,7 @@ export default function AgentPanel() {
     }
     stopSessionGeneration(currentSessionId);
     enableAutoFollowBottom("auto");
-    setSessionRuntime(currentSessionId, { contextUsage: null });
+    setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
     setSessionMessages(currentSessionId, []);
     sessionPlansRef.current.set(currentSessionId, []);
     applyLatestPlanFromPlans([]);
@@ -2483,7 +2513,7 @@ export default function AgentPanel() {
 
     const truncated = msgs.slice(0, index);
     enableAutoFollowBottom("auto");
-    setSessionRuntime(currentSessionId, { contextUsage: null });
+    setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
     setSessionMessages(currentSessionId, truncated);
     setInput(text);
     setPendingAttachments(restoredAttachments);
@@ -2512,6 +2542,9 @@ export default function AgentPanel() {
   const filteredMentionTabs = getFilteredMentionTabs();
   const contextUsageWarning = isContextUsageWarning(contextUsage, llmConfigInfo.modelContextLimitTokens);
   const contextStatusTitle = `上下文：${formatContextUsageK(contextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
+  const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
+  const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
+  const requestBodySizeTitle = `请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`;
   const inputResizeDisabled = loading || !!pendingApproval;
 
   return (
@@ -2965,7 +2998,7 @@ export default function AgentPanel() {
               onPaste={handlePaste}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              placeholder={`输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
+              placeholder={loading ? "模型正在输出，暂时不能输入..." : `输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
               rows={3}
               readOnly={loading}
               disabled={!!pendingApproval}
@@ -2974,6 +3007,14 @@ export default function AgentPanel() {
               <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
                 模型：{formatModelName(llmConfigInfo.model)}
               </span>
+              {showRequestBodySize && (
+                <span
+                  className={`chat-input-status-request-body${requestBodySizeWarning ? " chat-input-status-request-body-warning" : ""}`}
+                  title={requestBodySizeTitle}
+                >
+                  请求体：{formatRequestBodySizeM(requestBodySize)}
+                </span>
+              )}
               <span
                 className={`chat-input-status-context${contextUsageWarning ? " chat-input-status-context-warning" : ""}`}
                 title={contextStatusTitle}
@@ -3616,7 +3657,7 @@ function PlanApprovalCard({ plan, onResolve }) {
 }
 
 /* eslint-disable react/prop-types */
-function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
+export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
   const [suggestion, setSuggestion] = useState("");
   const [error, setError] = useState("");
   const [maskEnabled, setMaskEnabled] = useState(false);
@@ -3627,6 +3668,7 @@ function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
   const drawingRef = useRef(false);
   const maskPathsRef = useRef([]);
   const activeMaskPathRef = useRef([]);
+  const maskSupported = request?.maskSupported !== false;
 
   useEffect(() => {
     setSuggestion("");
@@ -3639,6 +3681,16 @@ function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
     activeMaskPathRef.current = [];
     clearMaskCanvas();
   }, [request?.src]);
+
+  useEffect(() => {
+    if (maskSupported) return;
+    setMaskEnabled(false);
+    setMaskTouched(false);
+    maskPathsRef.current = [];
+    activeMaskPathRef.current = [];
+    drawingRef.current = false;
+    clearMaskCanvas();
+  }, [maskSupported]);
 
   async function addReferenceImageFiles(files) {
     const imageFiles = Array.from(files || []).filter(isImageFile);
@@ -3882,24 +3934,26 @@ function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
               onPointerCancel={handleMaskPointerEnd}
             />
           </div>
-          <div className="image-edit-mask-row">
-            <label className="image-edit-mask-toggle">
-              <input
-                type="checkbox"
-                checked={maskEnabled}
-                onChange={(event) => setMaskEnabled(event.target.checked)}
-              />
-              <span>局部修改</span>
-            </label>
-            <button
-              type="button"
-              className="image-edit-mask-clear"
-              onClick={handleClearMask}
-              disabled={!maskTouched}
-            >
-              清除圈选
-            </button>
-          </div>
+          {maskSupported && (
+            <div className="image-edit-mask-row">
+              <label className="image-edit-mask-toggle">
+                <input
+                  type="checkbox"
+                  checked={maskEnabled}
+                  onChange={(event) => setMaskEnabled(event.target.checked)}
+                />
+                <span>局部修改</span>
+              </label>
+              <button
+                type="button"
+                className="image-edit-mask-clear"
+                onClick={handleClearMask}
+                disabled={!maskTouched}
+              >
+                清除圈选
+              </button>
+            </div>
+          )}
           <textarea
             className={`image-edit-prompt${error ? " image-edit-prompt-error" : ""}`}
             value={suggestion}
@@ -4065,6 +4119,37 @@ function formatContextUsageK(contextUsage) {
   if (value >= 100) return `${Math.round(value)}K`;
   if (value >= 10) return `${value.toFixed(1)}K`;
   return `${value.toFixed(2)}K`;
+}
+
+const REQUEST_BODY_SIZE_DISPLAY_BYTES = 1024 * 1024;
+const REQUEST_BODY_SIZE_WARNING_BYTES = 5 * 1024 * 1024;
+
+function normalizeRequestBodySize(size) {
+  const bytes = Number(size?.bytes ?? size);
+  if (!Number.isFinite(bytes) || bytes < 0) return null;
+  return {
+    bytes,
+    apiType: size?.apiType || "",
+    model: size?.model || ""
+  };
+}
+
+function shouldShowRequestBodySize(size) {
+  const bytes = Number(size?.bytes);
+  return Number.isFinite(bytes) && bytes >= REQUEST_BODY_SIZE_DISPLAY_BYTES;
+}
+
+function isRequestBodySizeWarning(size) {
+  const bytes = Number(size?.bytes);
+  return Number.isFinite(bytes) && bytes >= REQUEST_BODY_SIZE_WARNING_BYTES;
+}
+
+function formatRequestBodySizeM(size) {
+  const bytes = Number(size?.bytes);
+  if (!Number.isFinite(bytes)) return "未计算";
+  const value = bytes / REQUEST_BODY_SIZE_DISPLAY_BYTES;
+  if (value >= 10) return `${Math.round(value)}M`;
+  return `${value.toFixed(1)}M`;
 }
 
 /* eslint-disable react/prop-types */
@@ -4294,7 +4379,8 @@ function isTerminalScheduleStatus(status) {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
-function buildSessionExportMarkdown({ title, sessionId, messages }) {
+export function buildSessionExportMarkdown({ title, sessionId, messages }) {
+  const imageRefMap = buildExportImageRefMap(messages);
   const sections = [
     `# ${title || "新会话"}`,
     "",
@@ -4304,13 +4390,13 @@ function buildSessionExportMarkdown({ title, sessionId, messages }) {
   ];
 
   for (const msg of messages || []) {
-    sections.push(...serializeExportMessage(msg));
+    sections.push(...serializeExportMessage(msg, imageRefMap));
   }
 
   return sections.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function serializeExportMessage(msg) {
+function serializeExportMessage(msg, imageRefMap = new Map()) {
   if (!msg || !msg.role) return [];
 
   if (msg.role === "user") {
@@ -4318,7 +4404,7 @@ function serializeExportMessage(msg) {
   }
 
   if (msg.role === "assistant") {
-    return serializeAssistantExportMessage(msg);
+    return serializeAssistantExportMessage(msg, imageRefMap);
   }
 
   if (msg.role === "tool") {
@@ -4390,18 +4476,18 @@ function formatUserContentBlockForMarkdown(block) {
   return formatJsonFence(block);
 }
 
-function serializeAssistantExportMessage(msg) {
+function serializeAssistantExportMessage(msg, imageRefMap = new Map()) {
   const sections = [];
 
   if (typeof msg.content === "string" && msg.content.trim()) {
-    sections.push("## 助手", "", msg.content.trim(), "");
+    sections.push("## 助手", "", replaceMarkdownImageDerefSources(msg.content.trim(), imageRefMap), "");
   }
 
   if (Array.isArray(msg.content)) {
     for (const block of msg.content) {
       if (!block) continue;
       if (block.type === "text" && block.text) {
-        sections.push("## 助手", "", String(block.text).trim(), "");
+        sections.push("## 助手", "", replaceMarkdownImageDerefSources(String(block.text).trim(), imageRefMap), "");
       } else if (block.type === "tool_use") {
         sections.push(
           `## 工具调用${block.name ? ` · ${block.name}` : ""}`,
@@ -4440,20 +4526,43 @@ function serializeAssistantExportMessage(msg) {
   return sections;
 }
 
+function buildExportImageRefMap(messages = []) {
+  const refs = new Map();
+  for (const msg of messages || []) {
+    for (const item of normalizeMessageImageRefs(msg?.imageRefs)) {
+      if (isBase64DataUrl(item.dataUrl) && !refs.has(item.ref)) {
+        refs.set(item.ref, item.dataUrl);
+      }
+    }
+  }
+  return refs;
+}
+
+function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map()) {
+  if (typeof markdown !== "string" || !markdown.includes("|deRef:")) return markdown;
+  return markdown.replace(/(!\[[^\]\n]*\]\()\|deRef:(img_[A-Za-z0-9_-]+)\|(\))/g, (match, prefix, ref, suffix) => {
+    const dataUrl = imageRefMap.get(ref);
+    return isBase64DataUrl(dataUrl) ? `${prefix}${dataUrl}${suffix}` : match;
+  });
+}
+
 function formatToolResultForMarkdown(msg) {
   const parsed = parseToolMessageContent(msg.content);
   const contentBlock = typeof parsed === "string"
     ? formatTextFence(parsed)
     : formatJsonFence(parsed ?? {});
+  const displayImages = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
+    ? msg.displayImages.map(image => image?.url).filter(Boolean)
+    : (msg.displayImageUrl ? [msg.displayImageUrl] : []);
 
-  if (!msg.displayImageUrl) {
+  if (displayImages.length === 0) {
     return contentBlock;
   }
 
   return [
     contentBlock,
     "",
-    `![工具截图](${msg.displayImageUrl})`
+    ...displayImages.map((url, index) => `![工具图片${displayImages.length > 1 ? ` ${index + 1}` : ""}](${url})`)
   ].join("\n");
 }
 
@@ -4649,14 +4758,16 @@ function stampLastUserDuration(messages) {
 }
 
 function buildDisplayToolResultMessage(toolResult, targetSessionId, registerImageDataUrl) {
-  const imageSource = normalizeImageRefSource(
-    toolResult?.result?.dataUrl || toolResult?.result?.imageUrl || toolResult?.result?.url
-  );
-  const parsedImage = parseImageDataUrl(imageSource);
+  const displayImages = collectToolResultDisplayImages(toolResult?.result);
+  const primaryImage = displayImages[0] || null;
+  const parsedImage = parseImageDataUrl(primaryImage?.url);
   const imageRefs = [];
-  if (imageSource && targetSessionId && typeof registerImageDataUrl === "function") {
-    const ref = registerImageDataUrl(targetSessionId, imageSource);
-    if (ref) imageRefs.push({ ref, dataUrl: imageSource });
+  if (targetSessionId && typeof registerImageDataUrl === "function") {
+    for (const image of displayImages) {
+      if (!isBase64DataUrl(image.url)) continue;
+      const ref = registerImageDataUrl(targetSessionId, image.url);
+      if (ref) imageRefs.push({ ref, dataUrl: image.url });
+    }
   }
   const summary = summarizeToolResult(toolResult.result, imageRefs);
   const serializedContent = serializeToolResult(summary);
@@ -4665,9 +4776,9 @@ function buildDisplayToolResultMessage(toolResult, targetSessionId, registerImag
     tool_call_id: toolResult.id,
     tool_name: toolResult.name,
     content: serializedContent,
-    displayImageUrl: imageSource || undefined,
+    displayImageUrl: primaryImage?.url || undefined,
+    displayImages: displayImages.length > 0 ? displayImages : undefined,
     displayImageMediaType: parsedImage?.mediaType,
-    displayImageOmitFromRequests: isLocalImageGenerationTool(toolResult.name) ? true : undefined,
     durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
   };
   if (imageRefs.length > 0) {
@@ -4696,12 +4807,69 @@ function summarizeToolResult(result, imageRefs = []) {
       .map(({ ref }) => `Tool returned an image ref: ${ref}. To preview it for the user, write Markdown exactly as ![image](|deRef:${ref}|). For later tool calls requiring this image's base64 data URL, pass exactly "|deRef:${ref}|". Do not copy or rewrite the data URL.`)
       .join("\n");
   }
+  if (Array.isArray(summary.images)) {
+    summary.images = summary.images.map(image => {
+      if (!image || typeof image !== "object") return image;
+      if (typeof image.dataUrl === "string" && image.dataUrl.startsWith("data:")) {
+        const rest = { ...image };
+        delete rest.dataUrl;
+        return { ...rest, imageOmittedFromTextContext: true };
+      }
+      return image;
+    });
+  }
 
   return summary;
 }
 
-function isLocalImageGenerationTool(name) {
-  return name === "image_gen" || name === "image_edit";
+export function collectToolResultDisplayImages(result) {
+  const images = [];
+  const pushImage = (source, options = {}) => {
+    const url = normalizeImageRefSource(source);
+    if (!url) return;
+    if (!shouldDisplayToolResultImage(url, options)) return;
+    const parsed = parseImageDataUrl(url);
+    images.push({
+      url,
+      mediaType: parsed?.mediaType,
+      kind: parsed ? "data-url" : "url"
+    });
+  };
+
+  if (Array.isArray(result?.images)) {
+    for (const image of result.images) {
+      pushImage(image?.dataUrl || image?.imageUrl || image?.url, { explicitImageField: true });
+    }
+  }
+  pushImage(result?.dataUrl, { explicitImageField: true });
+  pushImage(result?.imageUrl, { explicitImageField: true });
+  pushImage(result?.url, { explicitImageField: false });
+
+  const seen = new Set();
+  return images.filter(image => {
+    if (!image?.url || seen.has(image.url)) return false;
+    seen.add(image.url);
+    return true;
+  });
+}
+
+function shouldDisplayToolResultImage(url, { explicitImageField = false } = {}) {
+  if (!url) return false;
+  if (isBase64DataUrl(url)) return true;
+  if (/^(blob:|chrome-extension:\/\/)/i.test(url)) return explicitImageField;
+  if (/^https?:\/\//i.test(url)) {
+    return explicitImageField || isLikelyImageUrl(url);
+  }
+  return false;
+}
+
+function isLikelyImageUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return /\.(png|jpe?g|gif|webp|bmp|avif|svg)(?:$|[?#])/i.test(parsed.pathname);
+  } catch {
+    return /\.(png|jpe?g|gif|webp|bmp|avif|svg)(?:$|[?#])/i.test(String(url || ""));
+  }
 }
 
 function findImageEditMcpTool(tools = []) {
@@ -4910,8 +5078,8 @@ function normalizeToolSummary(summary) {
 
 function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
-  const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false || msg.displayImageOmitFromRequests === true) {
+  const parsedImages = getToolResultParsedImages(msg);
+  if (parsedImages.length === 0 || options.supportsImageInput === false) {
     return typeof summary === "string" ? summary : JSON.stringify(summary);
   }
 
@@ -4920,21 +5088,21 @@ function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
       type: "text",
       text: JSON.stringify({ ...summary, imageAttachedToToolResult: true })
     },
-    {
+    ...parsedImages.map(parsedImage => ({
       type: "image",
       source: {
         type: "base64",
         media_type: parsedImage.mediaType,
         data: parsedImage.data
       }
-    }
+    }))
   ];
 }
 
 function buildOpenAIToolResultContent(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
-  const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false || msg.displayImageOmitFromRequests === true) {
+  const parsedImages = getToolResultParsedImages(msg);
+  if (parsedImages.length === 0 || options.supportsImageInput === false) {
     return typeof summary === "string" ? summary : JSON.stringify(summary);
   }
 
@@ -4945,14 +5113,24 @@ function buildOpenAIToolResultContent(msg, options = {}) {
         `Tool result for ${msg.tool_name || "unknown tool"}: ` +
         JSON.stringify({ ...summary, imageAttachedToToolResult: true })
     },
-    {
+    ...parsedImages.map(parsedImage => ({
       type: "image_url",
       image_url: {
-        url: msg.displayImageUrl,
+        url: parsedImage.url,
         detail: "low"
       }
-    }
+    }))
   ];
+}
+
+function getToolResultParsedImages(msg) {
+  const sources = Array.isArray(msg?.displayImages) && msg.displayImages.length > 0
+    ? msg.displayImages.map(image => image?.url)
+    : [msg?.displayImageUrl];
+  return sources
+    .map(url => ({ url: normalizeImageRefSource(url), parsed: parseImageDataUrl(normalizeImageRefSource(url)) }))
+    .filter(item => item.url && item.parsed)
+    .map(item => ({ url: item.url, ...item.parsed }));
 }
 
 // ==================== User Image Input Helpers ====================
@@ -5351,6 +5529,7 @@ function buildPlainApiMessage(msg, options = {}) {
     "sentAt",
     "durationMs",
     "displayImageUrl",
+    "displayImages",
     "displayImageMediaType",
     "displayImageOmitFromRequests",
     "_usageApiType",

@@ -35,6 +35,26 @@ describe("settings backup", () => {
     });
   });
 
+  it("exports image API config inside llmConfig", async () => {
+    getChrome().storage.local.get.mockResolvedValueOnce({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "img-secret",
+        imageApiProtocol: "chat_completions",
+        imageModel: "gpt-image-2"
+      }
+    });
+
+    const backup = await exportSettingsBackup();
+
+    expect(backup.settings.llmConfig).toEqual({
+      imageBaseUrl: "https://api.openai.com/v1",
+      imageApiKey: "img-secret",
+      imageApiProtocol: "chat_completions",
+      imageModel: "gpt-image-2"
+    });
+  });
+
   it("merges imported llmConfig fields without clearing missing fields", async () => {
     getChrome().storage.local.get.mockResolvedValueOnce({
       llmConfig: {
@@ -61,6 +81,34 @@ describe("settings backup", () => {
         baseUrl: "https://api.example/messages",
         apiKey: "new",
         model: "old-model"
+      }
+    });
+  });
+
+  it("imports the image API protocol field", async () => {
+    getChrome().storage.local.get.mockResolvedValueOnce({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "old",
+        imageModel: "gpt-image-2"
+      }
+    });
+
+    const result = await importSettingsBackupFromText(JSON.stringify({
+      settings: {
+        llmConfig: {
+          imageApiProtocol: "chat_completions"
+        }
+      }
+    }));
+
+    expect(result.updatedKeys).toEqual(["llmConfig"]);
+    expect(getChrome().storage.local.set).toHaveBeenCalledWith({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "old",
+        imageModel: "gpt-image-2",
+        imageApiProtocol: "chat_completions"
       }
     });
   });

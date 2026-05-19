@@ -504,15 +504,20 @@ function ThinkingBlock({ block }) {
 function ToolResultBlock({ msg }) {
   const [expanded, setExpanded] = useState(false);
   const { content, displayImageUrl, tool_name: toolName, durationMs } = msg;
+  const displayImages = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
+    ? msg.displayImages.map(image => image?.url).filter(Boolean)
+    : (displayImageUrl ? [displayImageUrl] : []);
   const durationStr = typeof durationMs === "number" ? ` ${durationMs}ms` : "";
 
   if (msg._pending) {
+    const pendingHint = isImageToolName(toolName) ? "图片生成中..." : "";
     return (
       <div className="tool-result-msg">
         <div className="tool-result-header">
           <span className="tool-result-arrow">▶</span>
           <span className="tool-result-label">⏳ {toolName || "tool"}…</span>
         </div>
+        {pendingHint && <div className="tool-result-pending-hint loading-dots">{pendingHint}</div>}
       </div>
     );
   }
@@ -552,21 +557,25 @@ function ToolResultBlock({ msg }) {
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
         <span className="tool-result-label">{isError ? "❌" : "✅"} <span className="tool-duration">{durationStr}</span>{label}</span>
       </div>
-      {expanded && displayImageUrl && (
+      {expanded && displayImages.length > 0 && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
-          <img
-            src={displayImageUrl}
-            alt={toolName || "tool screenshot"}
-            style={{
-              display: "block",
-              maxWidth: "100%",
-              width: "100%",
-              maxHeight: "420px",
-              objectFit: "contain",
-              borderRadius: "8px",
-              background: "#f5f5f5"
-            }}
-          />
+          {displayImages.map((src, index) => (
+            <img
+              key={`${src}-${index}`}
+              src={src}
+              alt={displayImages.length > 1 ? `${toolName || "tool image"} ${index + 1}` : (toolName || "tool screenshot")}
+              style={{
+                display: "block",
+                maxWidth: "100%",
+                width: "100%",
+                maxHeight: "420px",
+                objectFit: "contain",
+                borderRadius: "8px",
+                background: "#f5f5f5",
+                marginTop: index === 0 ? 0 : "8px"
+              }}
+            />
+          ))}
         </div>
       )}
       {expanded && (
@@ -1021,6 +1030,10 @@ function formatDuration(ms) {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+}
+
+function isImageToolName(name) {
+  return name === "image_gen" || name === "image_edit";
 }
 
 async function copyTextToClipboard(text) {

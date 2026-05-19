@@ -25,6 +25,7 @@ const LLM_CONFIG_KEYS = [
   "omitThinkingFromRequests",
   "imageBaseUrl",
   "imageApiKey",
+  "imageApiProtocol",
   "imageModel"
 ];
 
@@ -109,6 +110,7 @@ function normalizeLlmConfigPatch(value) {
   addStringPatch(patch, source, "model");
   addStringPatch(patch, source, "imageBaseUrl");
   addStringPatch(patch, source, "imageApiKey");
+  addStringPatch(patch, source, "imageApiProtocol");
   addStringPatch(patch, source, "imageModel");
   if (Object.prototype.hasOwnProperty.call(source, "modelContextLimitTokens")) {
     patch.modelContextLimitTokens = normalizeModelContextLimitTokens(source.modelContextLimitTokens);

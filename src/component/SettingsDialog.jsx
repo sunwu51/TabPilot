@@ -24,7 +24,12 @@ import {
   getWsBridgeStateMeta,
   WS_BRIDGE_STATUS_STORAGE_KEY
 } from "../api/wsBridgeShared";
-import { DEFAULT_IMAGE_MODEL, resolveImageApiRequestUrl } from "../api/llm/imageApi";
+import {
+  DEFAULT_IMAGE_MODEL,
+  IMAGE_API_PROTOCOLS,
+  normalizeImageApiProtocol,
+  resolveImageApiRequestUrl
+} from "../api/llm/imageApi";
 
 const DEFAULT_SETTINGS = {
   llmConfig: {
@@ -39,6 +44,7 @@ const DEFAULT_SETTINGS = {
     omitThinkingFromRequests: false,
     imageBaseUrl: "",
     imageApiKey: "",
+    imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
     imageModel: DEFAULT_IMAGE_MODEL
   },
   mcpToolTimeoutSeconds: 60,
@@ -79,6 +85,7 @@ function SettingsDialogBody() {
   const [omitThinkingFromRequests, setOmitThinkingFromRequests] = useState(DEFAULT_SETTINGS.llmConfig.omitThinkingFromRequests);
   const [imageBaseUrl, setImageBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.imageBaseUrl);
   const [imageApiKey, setImageApiKey] = useState(DEFAULT_SETTINGS.llmConfig.imageApiKey);
+  const [imageApiProtocol, setImageApiProtocol] = useState(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
   const [imageModel, setImageModel] = useState(DEFAULT_SETTINGS.llmConfig.imageModel);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
@@ -111,6 +118,11 @@ function SettingsDialogBody() {
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
   const resolvedImageGenUrl = resolveImageApiRequestUrl(imageBaseUrl, "generations");
   const resolvedImageEditUrl = resolveImageApiRequestUrl(imageBaseUrl, "edits");
+  const resolvedImageChatUrl = resolveImageApiRequestUrl(imageBaseUrl, "chat_completions");
+  const imageProtocolOptions = [
+    { label: "Generate / Edit API", value: IMAGE_API_PROTOCOLS.GENERATE },
+    { label: "Chat Completions", value: IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS }
+  ];
 
   useEffect(() => {
     void loadDraft();
@@ -150,6 +162,7 @@ function SettingsDialogBody() {
       setOmitThinkingFromRequests(nextLlmConfig.omitThinkingFromRequests === true);
       setImageBaseUrl(nextLlmConfig.imageBaseUrl || "");
       setImageApiKey(nextLlmConfig.imageApiKey || "");
+      setImageApiProtocol(normalizeImageApiProtocol(nextLlmConfig.imageApiProtocol));
       setImageModel(nextLlmConfig.imageModel || DEFAULT_IMAGE_MODEL);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
@@ -199,6 +212,7 @@ function SettingsDialogBody() {
           omitThinkingFromRequests,
           imageBaseUrl,
           imageApiKey,
+          imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
           imageModel: imageModel || DEFAULT_IMAGE_MODEL
         },
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
@@ -472,8 +486,19 @@ function SettingsDialogBody() {
             onChange={setImageBaseUrl}
             placeholder="https://api.openai.com/v1"
           />
+          <Select
+            label="Image API 规范"
+            items={imageProtocolOptions.map((item) => item.label)}
+            defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
+            onSelectedItemChange={(changes) => {
+              const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
+              setImageApiProtocol(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+            }}
+          />
           <div className="settings-api-url-hint">
-            生成 {resolvedImageGenUrl || "—"}；编辑 {resolvedImageEditUrl || "—"}
+            {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
+              ? `Chat Completions ${resolvedImageChatUrl || "—"}`
+              : `生成 ${resolvedImageGenUrl || "—"}；编辑 ${resolvedImageEditUrl || "—"}`}
           </div>
           <div className="settings-secret-field">
             <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-image-api-key">Image API Token</label>
@@ -538,7 +563,7 @@ function SettingsDialogBody() {
             placeholder={DEFAULT_IMAGE_MODEL}
           />
           <div className="settings-api-url-hint">
-            配置完整后会向模型开放 image_gen 和 image_edit 内置工具；工具结果只在本地预览/缓存图片。
+            配置完整后会向模型开放 image_gen 和 image_edit 内置工具；Chat Completions 规范不支持 mask；工具结果只在本地预览/缓存图片。
           </div>
           <div className="mt-2">
             <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>

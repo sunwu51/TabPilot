@@ -139,7 +139,7 @@ function MergedToolCallBlock({ item }) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
   const result = summarizeToolResultMessage(item.resultMessage);
-  const hasResult = !!item.resultMessage;
+  const hasResult = !!item.resultMessage && !item.resultMessage._pending;
   const isError = result.isError;
   const name = item.name || result.toolName || "tool";
   const inputDetail = formatToolInputDetail(item.input);
@@ -148,7 +148,8 @@ function MergedToolCallBlock({ item }) {
   const suffix = hasResult && result.label ? ` · ${result.label}` : "";
   const durationMs = item.resultMessage?.durationMs;
   const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
-  const icon = hasResult ? (isError ? "❌" : "✅") : "🔧";
+  const icon = hasResult ? (isError ? "❌" : "✅") : "⏳";
+  const pendingHint = !hasResult && isImageToolName(name) ? "图片生成中..." : "";
 
   return (
     <div className={`tool-result-msg ${isError ? "tool-result-error" : ""}`}>
@@ -162,6 +163,7 @@ function MergedToolCallBlock({ item }) {
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
         <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}{suffix}</span>
       </div>
+      {pendingHint && <div className="tool-result-pending-hint loading-dots">{pendingHint}</div>}
       {expanded && result.displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
           <img
@@ -588,6 +590,10 @@ function formatToolDisplayValue(value) {
     isJson: false,
     parsedJson: null
   };
+}
+
+function isImageToolName(name) {
+  return name === "image_gen" || name === "image_edit";
 }
 
 function parseStructuredJson(value, depth = 0) {

@@ -582,6 +582,7 @@
 .chat-input-area textarea {
   width: 100%;
   border: 1px solid #d1d5db;
+  border-left-width: 1px;
   border-radius: 6px;
   padding: 8px 10px;
   font-size: 13px;
@@ -592,6 +593,7 @@
   font-family: inherit;
   box-sizing: border-box;
   overflow-y: hidden;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .chat-input-resize-handle {
@@ -861,6 +863,17 @@
   text-align: right;
 }
 
+.chat-input-status-request-body {
+  flex: 0 0 auto;
+  max-width: 30%;
+  text-align: right;
+}
+
+.chat-input-status-request-body-warning {
+  color: #dc2626;
+  font-weight: 700;
+}
+
 .chat-input-status-context-warning {
   color: #dc2626;
   font-weight: 700;
@@ -897,12 +910,21 @@
 }
 
 .chat-input-area textarea:read-only {
-  background: #f9fafb;
-  color: #6b7280;
+  background: #fff;
+  border-color: #f59e0b;
+  border-left-width: 4px;
+  color: #4b5563;
+  cursor: not-allowed;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.16);
 }
 
 .chat-input-area textarea:read-only:focus {
-  border-color: #93c5fd;
+  border-color: #f59e0b;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.24), 0 0 0 2px rgba(245, 158, 11, 0.14);
+}
+
+.chat-input-area textarea:read-only::placeholder {
+  color: #92400e;
 }
 
 .chat-input-command-menu {
@@ -1506,6 +1528,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tool-result-pending-hint {
+  padding: 0 8px 6px 22px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .tool-result-content {

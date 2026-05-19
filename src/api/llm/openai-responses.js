@@ -6,7 +6,7 @@ import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completi
 import { isLongToolArgumentName } from "./longToolArgs";
 import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "./reasoning";
 
-export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
+export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onRequestBodySize }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
@@ -25,6 +25,12 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       ...buildOpenAIResponsesIncludeFields(config, options),
       ...buildOpenAICacheFields(options)
     };
+    const requestBodyText = JSON.stringify(requestBody);
+    onRequestBodySize?.({
+      bytes: measureUtf8Bytes(requestBodyText),
+      apiType: API_TYPES.OPENAI_RESPONSES,
+      model: config.model || ""
+    });
 
     const res = await fetch(url, {
       method: "POST",
@@ -32,7 +38,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.apiKey}`
       },
-      body: JSON.stringify(requestBody),
+      body: requestBodyText,
       signal: timeoutState.signal
     });
 
@@ -194,7 +200,7 @@ export function buildResponsesRequestInput(messages, options = {}) {
       input.push({
         type: "function_call_output",
         call_id: msg.tool_call_id,
-        output: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "")
+        output: buildResponsesFunctionCallOutput(msg, options)
       });
       continue;
     }
@@ -265,7 +271,7 @@ function sanitizeResponsesRequestInputItem(item) {
     return {
       type: "function_call_output",
       call_id: item.call_id || "",
-      output: typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "")
+      output: item.output
     };
   }
 
@@ -281,6 +287,120 @@ function sanitizeResponsesRequestInputItem(item) {
   delete sanitized.status;
   delete sanitized.order;
   return sanitized;
+}
+
+function measureUtf8Bytes(text) {
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(String(text ?? "")).length;
+  }
+  return new Blob([String(text ?? "")]).size;
+}
+
+function buildResponsesFunctionCallOutput(msg, options = {}) {
+  const supportsImageInput = options.supportsImageInput !== false;
+  const output = normalizeResponsesFunctionCallOutput(msg.content, { supportsImageInput });
+  const images = supportsImageInput ? collectResponsesToolOutputImages(msg) : [];
+  if (images.length === 0) return output;
+
+  const blocks = Array.isArray(output)
+    ? output
+    : [{ type: "input_text", text: String(output ?? "") }];
+  const existingImageUrls = new Set(
+    blocks
+      .filter(block => block?.type === "input_image" && typeof block.image_url === "string")
+      .map(block => block.image_url)
+  );
+  return [
+    ...blocks,
+    ...images.filter(image => !existingImageUrls.has(image.image_url))
+  ];
+}
+
+function normalizeResponsesFunctionCallOutput(output, options = {}) {
+  const supportsImageInput = options.supportsImageInput !== false;
+  if (typeof output === "string") {
+    const parsed = tryParseJson(output);
+    if (parsed.ok) {
+      const normalized = normalizeResponsesFunctionCallOutput(parsed.value, options);
+      if (Array.isArray(parsed.value) || Array.isArray(normalized)) return normalized;
+    }
+    return output;
+  }
+  if (Array.isArray(output)) {
+    const blocks = output.flatMap(block => normalizeResponsesFunctionCallOutputBlock(block, { supportsImageInput }));
+    if (supportsImageInput && blocks.some(block => block.type === "input_image" || block.type === "input_file")) {
+      return blocks;
+    }
+    const text = blocks
+      .map(block => block?.text || block?.file_id || block?.file_url || "")
+      .filter(Boolean)
+      .join("\n");
+    return text || JSON.stringify(output ?? "");
+  }
+  return typeof output === "object" && output != null ? JSON.stringify(output) : String(output ?? "");
+}
+
+function normalizeResponsesFunctionCallOutputBlock(block, options = {}) {
+  const supportsImageInput = options.supportsImageInput !== false;
+  if (typeof block === "string") return [{ type: "input_text", text: block }];
+  if (!block || typeof block !== "object") return [];
+
+  if ((block.type === "text" || block.type === "input_text" || block.type === "output_text") && typeof block.text === "string") {
+    return [{ type: "input_text", text: block.text }];
+  }
+
+  if ((block.type === "image_url" || block.type === "input_image" || block.type === "output_image") && typeof (block.image_url?.url || block.image_url) === "string") {
+    if (!supportsImageInput) return [{ type: "input_text", text: "[omitted image from previous tool output]" }];
+    return [{
+      type: "input_image",
+      image_url: block.image_url?.url || block.image_url,
+      detail: block.image_url?.detail || block.detail || "low"
+    }];
+  }
+
+  if (block.type === "image" && block.source?.type === "base64" && block.source?.media_type && block.source?.data) {
+    if (!supportsImageInput) return [{ type: "input_text", text: "[omitted image from previous tool output]" }];
+    return [{
+      type: "input_image",
+      image_url: `data:${block.source.media_type};base64,${block.source.data}`,
+      detail: block.detail || "low"
+    }];
+  }
+
+  if ((block.type === "input_file" || block.type === "output_file") && (block.file_id || block.file_url || block.file_data)) {
+    return [{
+      type: "input_file",
+      ...(block.file_id ? { file_id: block.file_id } : {}),
+      ...(block.file_url ? { file_url: block.file_url } : {}),
+      ...(block.file_data ? { file_data: block.file_data } : {}),
+      ...(block.filename ? { filename: block.filename } : {})
+    }];
+  }
+
+  return [{ type: "input_text", text: JSON.stringify(block) }];
+}
+
+function tryParseJson(text) {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch (error) {
+    return { ok: false, value: null };
+  }
+}
+
+function collectResponsesToolOutputImages(msg) {
+  const sources = Array.isArray(msg?.displayImages) && msg.displayImages.length > 0
+    ? msg.displayImages.map(image => image?.url)
+    : [msg?.displayImageUrl];
+  const seen = new Set();
+  const images = [];
+  for (const source of sources) {
+    const imageUrl = String(source || "").trim();
+    if (!/^data:[^;]+;base64,/i.test(imageUrl) || seen.has(imageUrl)) continue;
+    seen.add(imageUrl);
+    images.push({ type: "input_image", image_url: imageUrl, detail: "low" });
+  }
+  return images;
 }
 
 function buildResponsesFunctionCallInputItem(toolCall = {}) {
