@@ -6,7 +6,7 @@ import {
   DEFAULT_MCP_TOOL_TIMEOUT_SECONDS,
   RUN_MACRO_TOOL_TIMEOUT_SECONDS
 } from "./constants";
-import { executeImageEdit, executeImageGeneration } from "./imageApi";
+import { executeImageEdit, executeImageGeneration } from "./builtins/imageApi";
 
 import { withTimeout } from "./builtins/_shared";
 import {

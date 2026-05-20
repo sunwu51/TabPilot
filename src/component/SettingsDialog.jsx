@@ -29,7 +29,7 @@ import {
   IMAGE_API_PROTOCOLS,
   normalizeImageApiProtocol,
   resolveImageApiRequestUrl
-} from "../api/llm/imageApi";
+} from "../api/llm/builtins/imageApi";
 
 const DEFAULT_SETTINGS = {
   llmConfig: {
