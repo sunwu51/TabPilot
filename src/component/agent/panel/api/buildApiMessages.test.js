@@ -54,4 +54,38 @@ describe("buildApiMessages image options", () => {
     });
     expect(result[1].content[0].content).toBe(JSON.stringify({ success: true }));
   });
+
+  it("does not send unhydrated session-image placeholders to OpenAI", () => {
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", source: { type: "session_image", ref: "img_1", media_type: "image/png" } }
+      ]
+    }], {
+      supportsImageInput: true
+    });
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "look" }]
+    }]);
+  });
+
+  it("does not send unhydrated session-image placeholders to Anthropic", () => {
+    const result = buildApiMessages(API_TYPES.ANTHROPIC, [{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", source: { type: "session_image", ref: "img_1", media_type: "image/png" } }
+      ]
+    }], {
+      supportsImageInput: true
+    });
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "look" }]
+    }]);
+  });
 });

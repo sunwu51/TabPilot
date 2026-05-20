@@ -1,11 +1,11 @@
-import { normalizeMessageImageRefs, isBase64DataUrl } from "../../imageRefs";
+import { normalizeMessageImageRefs, isBase64DataUrl, IMAGE_REF_PATTERN } from "../../imageRefs";
 import { formatJsonFence, formatTextFence } from "../utils/scheduleStatus";
 import { parseImageDataUrl, parseToolMessageContent } from "../messages/toolResults";
 import { imageBlockToDataUrl } from "../messages/userMessage";
 
-export function buildSessionExportMarkdown({ title, sessionId, messages, includeImages = true }) {
-  const imageRefMap = buildExportImageRefMap(messages);
-  const exportOptions = { includeImages };
+export function buildSessionExportMarkdown({ title, sessionId, messages, includeImages = true, imageStore = null }) {
+  const imageRefMap = buildExportImageRefMap(messages, imageStore);
+  const exportOptions = { includeImages, imageRefMap };
   const sections = [
     `# ${title || "新会话"}`,
     "",
@@ -92,7 +92,7 @@ export function formatUserContentBlockForMarkdown(block, options = {}) {
     return [`### 附件 · ${fileName}`, "", formatTextFence(block.text ?? "")].join("\n");
   }
 
-  const dataUrl = imageBlockToDataUrl(block);
+  const dataUrl = imageBlockToExportDataUrl(block, options.imageRefMap);
   if (dataUrl) {
     const mediaType = parseImageDataUrl(dataUrl)?.mediaType || "image";
     if (options.includeImages === false) {
@@ -154,8 +154,15 @@ export function serializeAssistantExportMessage(msg, imageRefMap = new Map(), op
   return sections;
 }
 
-export function buildExportImageRefMap(messages = []) {
+export function buildExportImageRefMap(messages = [], imageStore = null) {
   const refs = new Map();
+  if (imageStore && typeof imageStore === "object") {
+    for (const [ref, dataUrl] of Object.entries(imageStore)) {
+      if (IMAGE_REF_PATTERN.test(ref) && isBase64DataUrl(dataUrl) && !refs.has(ref)) {
+        refs.set(ref, dataUrl);
+      }
+    }
+  }
   for (const msg of messages || []) {
     for (const item of normalizeMessageImageRefs(msg?.imageRefs)) {
       if (isBase64DataUrl(item.dataUrl) && !refs.has(item.ref)) {
@@ -164,6 +171,14 @@ export function buildExportImageRefMap(messages = []) {
     }
   }
   return refs;
+}
+
+function imageBlockToExportDataUrl(block, imageRefMap = new Map()) {
+  const dataUrl = imageBlockToDataUrl(block);
+  if (dataUrl) return dataUrl;
+  if (block?.type !== "image" || block.source?.type !== "session_image") return "";
+  const ref = String(block.source.ref || "").trim();
+  return IMAGE_REF_PATTERN.test(ref) ? (imageRefMap.get(ref) || "") : "";
 }
 
 export function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map(), options = {}) {

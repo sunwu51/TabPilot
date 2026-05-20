@@ -1,7 +1,8 @@
 /* eslint-disable react/prop-types */
 import { Button } from "@sunwu51/camel-ui";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import toast from "react-hot-toast";
+import { loadSessionImageStore } from "../../../../api/agent/sessions";
 import { buildSessionExportMarkdown, downloadMarkdownFile } from "../export/sessionExport";
 import { copyTextToClipboard, shareMarkdown } from "../export/sessionShare";
 
@@ -11,14 +12,16 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
   const [sharing, setSharing] = useState(false);
   const hasContent = !!sessionId && Array.isArray(messages) && messages.length > 0;
 
-  const markdown = useMemo(() => {
-    if (!hasContent) return "";
+  async function buildMarkdownForAction(options = {}) {
+    const imageStore = await loadSessionImageStore(sessionId);
     return buildSessionExportMarkdown({
       title: title || "新会话",
       sessionId,
-      messages
+      messages,
+      imageStore,
+      ...options
     });
-  }, [hasContent, messages, sessionId, title]);
+  }
 
   async function handleExport() {
     if (!hasContent) {
@@ -28,7 +31,8 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
 
     setExporting(true);
     try {
-      const result = await downloadMarkdownFile(`${sessionId}.md`, markdown);
+      const exportMarkdown = await buildMarkdownForAction();
+      const result = await downloadMarkdownFile(`${sessionId}.md`, exportMarkdown);
       if (result?.error) throw new Error(result.error);
       toast.success(`已导出 ${sessionId}.md`);
     } catch (error) {
@@ -47,12 +51,7 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
 
     setSharing(true);
     try {
-      const shareMarkdownContent = buildSessionExportMarkdown({
-        title: title || "新会话",
-        sessionId,
-        messages,
-        includeImages: false
-      });
+      const shareMarkdownContent = await buildMarkdownForAction({ includeImages: false });
       const result = await shareMarkdown({
         markdown: shareMarkdownContent,
         password

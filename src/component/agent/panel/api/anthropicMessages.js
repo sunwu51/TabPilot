@@ -150,6 +150,7 @@ export function buildAnthropicApiMessages(messages, options = {}) {
     if (msg.role === "user" && Array.isArray(msg.content)) {
       const anthropicContent = msg.content
         .filter(block => !(block.type === "image" && options.supportsImageInput === false))
+        .filter(block => !(block.type === "image" && block.source?.type === "session_image"))
         .map(block => {
           if (block.type === "file") {
             const result = { type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` };

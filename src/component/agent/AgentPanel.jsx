@@ -22,6 +22,7 @@ import {
   listSessions,
   createSession,
   loadSession,
+  loadSessionImageStore,
   loadSessionMeta,
   loadLastActiveSessionId,
   saveSession,
@@ -113,7 +114,8 @@ import {
   buildLlmErrorDisplayMessage,
   stampLastUserDuration,
   buildDisplayToolResultMessage,
-  collectToolResultDisplayImages
+  collectToolResultDisplayImages,
+  parseImageDataUrl
 } from "./panel/messages/toolResults";
 import {
   findImageEditMcpTool,
@@ -152,6 +154,7 @@ export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDi
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
+const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
 
 function resolveSupportsToolImageInput(llmConfig = {}) {
   if (llmConfig?.supportsImageInput !== true) return false;
@@ -226,6 +229,7 @@ export default function AgentPanel() {
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
   const sessionImageRefsRef = useRef(new Map());
+  const sessionImageStoreVersionRef = useRef(new Map());
   const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
@@ -746,8 +750,59 @@ export default function AgentPanel() {
     return mergeKnownImageRefsIntoMessages(msgs, cache);
   }
 
+  function hydrateStoredImageRefsInMessages(targetSessionId, msgs) {
+    if (!targetSessionId || !Array.isArray(msgs)) return msgs;
+    const cache = sessionImageRefsRef.current.get(targetSessionId);
+    if (!cache?.refs || cache.refs.size === 0) return msgs;
+    return hydrateStoredImageRefsInValue(msgs, cache.refs);
+  }
+
+  function hydrateStoredImageRefsInValue(value, refs) {
+    if (typeof value === "string") {
+      const imageRef = parseStoredSessionImageRef(value);
+      return imageRef ? (refs.get(imageRef) || value) : value;
+    }
+    if (Array.isArray(value)) {
+      let changed = false;
+      const next = value.map(item => {
+        const hydrated = hydrateStoredImageRefsInValue(item, refs);
+        if (hydrated !== item) changed = true;
+        return hydrated;
+      });
+      return changed ? next : value;
+    }
+    if (!value || typeof value !== "object") return value;
+    if (value.type === "image" && value.source?.type === "session_image") {
+      const dataUrl = refs.get(value.source.ref);
+      const parsed = parseImageDataUrl(dataUrl);
+      if (parsed) {
+        return {
+          ...value,
+          source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
+        };
+      }
+      return value;
+    }
+    let changed = false;
+    const next = {};
+    for (const [key, child] of Object.entries(value)) {
+      const hydrated = hydrateStoredImageRefsInValue(child, refs);
+      next[key] = hydrated;
+      if (hydrated !== child) changed = true;
+    }
+    return changed ? next : value;
+  }
+
+  function parseStoredSessionImageRef(value) {
+    const raw = String(value || "");
+    return raw.startsWith("session-image:") ? raw.slice("session-image:".length) : "";
+  }
+
   function setSessionMessages(targetSessionId, msgs) {
-    const nextMessages = attachKnownImageRefsToMessages(targetSessionId, msgs);
+    const nextMessages = hydrateStoredImageRefsInMessages(
+      targetSessionId,
+      attachKnownImageRefsToMessages(targetSessionId, msgs)
+    );
     sessionMessagesRef.current.set(targetSessionId, nextMessages);
     if (Array.isArray(nextMessages) && nextMessages.length > 0) {
       rebuildSessionImageRefs(targetSessionId, nextMessages);
@@ -757,6 +812,24 @@ export default function AgentPanel() {
     if (activeSessionIdRef.current === targetSessionId) {
       setMessages(nextMessages);
     }
+  }
+
+  function getSessionImageStoreVersion(targetSessionId) {
+    return sessionImageStoreVersionRef.current.get(targetSessionId) || 0;
+  }
+
+  function invalidateSessionImageStore(targetSessionId) {
+    if (!targetSessionId) return;
+    sessionImageStoreVersionRef.current.set(
+      targetSessionId,
+      getSessionImageStoreVersion(targetSessionId) + 1
+    );
+  }
+
+  function clearSessionImageState(targetSessionId) {
+    if (!targetSessionId) return;
+    invalidateSessionImageStore(targetSessionId);
+    sessionImageRefsRef.current.delete(targetSessionId);
   }
 
   function getSessionImageRefCache(targetSessionId) {
@@ -807,7 +880,10 @@ export default function AgentPanel() {
       if (!msg || typeof msg !== "object") continue;
       if (Array.isArray(msg.imageRefs)) {
         for (const item of msg.imageRefs) {
-          registerSessionImageDataUrl(targetSessionId, item?.dataUrl || item?.source || item?.url, item?.ref);
+          const storedRef = parseStoredSessionImageRef(item?.dataUrl || item?.source || item?.url);
+          if (!storedRef) {
+            registerSessionImageDataUrl(targetSessionId, item?.dataUrl || item?.source || item?.url, item?.ref);
+          }
         }
       }
       if (Array.isArray(msg.content)) {
@@ -882,7 +958,176 @@ export default function AgentPanel() {
     return cache?.refs?.get(imageRef) || "";
   }
 
+  async function loadSessionImagesIntoCache(targetSessionId, perf) {
+    if (!targetSessionId) return false;
+    const version = getSessionImageStoreVersion(targetSessionId);
+    perf?.mark?.("before-image-store-load");
+    const imageStore = await loadSessionImageStore(targetSessionId);
+    perf?.mark?.("after-image-store-load");
+    if (version !== getSessionImageStoreVersion(targetSessionId)) return false;
+    const entries = Object.entries(imageStore || {});
+    if (entries.length === 0) return false;
+
+    const cache = getSessionImageRefCache(targetSessionId);
+    let changed = false;
+    for (const [ref, source] of entries) {
+      if (!IMAGE_REF_PATTERN.test(ref) || !isBase64DataUrl(source)) continue;
+      if (cache.refs.get(ref) === source) continue;
+      cache.refs.set(ref, source);
+      cache.byDataUrl.set(source, ref);
+      changed = true;
+    }
+    if (!changed) return false;
+
+    if (version !== getSessionImageStoreVersion(targetSessionId)) return false;
+    const currentMessages = sessionMessagesRef.current.get(targetSessionId) || [];
+    const hydratedMessages = hydrateStoredImageRefsInMessages(targetSessionId, currentMessages);
+    if (version !== getSessionImageStoreVersion(targetSessionId)) return false;
+    if (hydratedMessages !== currentMessages) {
+      sessionMessagesRef.current.set(targetSessionId, hydratedMessages);
+      if (activeSessionIdRef.current === targetSessionId) {
+        setMessages(hydratedMessages);
+      }
+    }
+    return true;
+  }
+
+  function startSessionSwitchPerf(targetSessionId, info = {}) {
+    const marks = [];
+    const startedAt = performance.now();
+    const payload = {
+      targetSessionId,
+      fromSessionId: info.fromSessionId || "",
+      cached: !!info.cached,
+      messages: null
+    };
+
+    function mark(name) {
+      marks.push({ name, at: performance.now() });
+    }
+
+    mark("start");
+
+    return {
+      mark,
+      attachMessageStats(msgs) {
+        payload.messages = summarizeSessionSwitchMessages(msgs);
+      },
+      flushAfterPaint(scrollerRef) {
+        const scheduleFrame = typeof requestAnimationFrame === "function"
+          ? requestAnimationFrame
+          : (callback) => setTimeout(() => callback(performance.now()), 0);
+        scheduleFrame(() => {
+          mark("paint-1");
+          scheduleFrame(() => {
+            mark("paint-2");
+            const scroller = scrollerRef?.current || null;
+            const report = buildSessionSwitchPerfReport({
+              startedAt,
+              marks,
+              payload,
+              dom: scroller ? {
+                renderedMessages: scroller.querySelectorAll(".chat-msg").length,
+                renderedImages: scroller.querySelectorAll("img").length,
+                scrollHeight: scroller.scrollHeight,
+                clientHeight: scroller.clientHeight
+              } : null
+            });
+            console.info(SESSION_SWITCH_PERF_LABEL, report);
+          });
+        });
+      }
+    };
+  }
+
+  function summarizeSessionSwitchMessages(msgs) {
+    const summary = {
+      count: Array.isArray(msgs) ? msgs.length : 0,
+      imageBlocks: 0,
+      displayImages: 0,
+      imageRefs: 0,
+      base64Chars: 0,
+      estimatedBase64MB: 0
+    };
+    if (!Array.isArray(msgs)) return summary;
+
+    for (const msg of msgs) {
+      if (!msg || typeof msg !== "object") continue;
+      if (Array.isArray(msg.imageRefs)) {
+        summary.imageRefs += msg.imageRefs.length;
+        for (const item of msg.imageRefs) {
+          summary.base64Chars += getBase64DataCharCount(item?.dataUrl || item?.source || item?.url);
+        }
+      }
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block?.type !== "image") continue;
+          summary.imageBlocks += 1;
+          summary.base64Chars += String(block?.source?.data || "").length;
+        }
+      }
+      const displaySources = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
+        ? msg.displayImages.map(image => image?.url)
+        : [msg.displayImageUrl];
+      for (const source of displaySources) {
+        const count = getBase64DataCharCount(source);
+        if (count > 0) {
+          summary.displayImages += 1;
+          summary.base64Chars += count;
+        }
+      }
+    }
+    summary.estimatedBase64MB = Number((summary.base64Chars / 1024 / 1024).toFixed(2));
+    return summary;
+  }
+
+  function getBase64DataCharCount(value) {
+    const raw = String(value || "");
+    if (!/^data:[^;]+;base64,/i.test(raw)) return 0;
+    const commaIndex = raw.indexOf(",");
+    return commaIndex >= 0 ? Math.max(0, raw.length - commaIndex - 1) : raw.length;
+  }
+
+  function hasInlineBase64SessionImages(msgs) {
+    if (!Array.isArray(msgs)) return false;
+    return msgs.some(msg => {
+      if (!msg || typeof msg !== "object") return false;
+      if (getBase64DataCharCount(msg.displayImageUrl) > 0) return true;
+      if (Array.isArray(msg.displayImages) && msg.displayImages.some(image => getBase64DataCharCount(image?.url) > 0)) return true;
+      if (Array.isArray(msg.imageRefs) && msg.imageRefs.some(item =>
+        getBase64DataCharCount(item?.dataUrl || item?.source || item?.url) > 0
+      )) {
+        return true;
+      }
+      if (!Array.isArray(msg.content)) return false;
+      return msg.content.some(block =>
+        block?.type === "image" &&
+        block?.source?.type === "base64" &&
+        typeof block?.source?.data === "string" &&
+        block.source.data.length > 0
+      );
+    });
+  }
+
+  function buildSessionSwitchPerfReport({ startedAt, marks, payload, dom }) {
+    const durations = {};
+    for (let i = 1; i < marks.length; i++) {
+      durations[`${marks[i - 1].name}->${marks[i].name}`] = Number((marks[i].at - marks[i - 1].at).toFixed(1));
+    }
+    return {
+      ...payload,
+      totalMs: Number(((marks[marks.length - 1]?.at || performance.now()) - startedAt).toFixed(1)),
+      durations,
+      marks: marks.map(mark => ({ name: mark.name, ms: Number((mark.at - startedAt).toFixed(1)) })),
+      dom
+    };
+  }
+
   async function openSession(id, options = {}) {
+    const perf = startSessionSwitchPerf(id, {
+      fromSessionId: activeSessionIdRef.current || "",
+      cached: sessionMessagesRef.current.has(id)
+    });
     closeInputCompletions();
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
@@ -900,13 +1145,19 @@ export default function AgentPanel() {
     setStreamingThinking(sessionStreamingThinkingRef.current.get(id) ?? null);
     setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
     const cached = sessionMessagesRef.current.get(id);
+    perf.mark("before-load");
     const [msgs, meta] = await Promise.all([
       cached ?? loadSession(id),
       loadSessionMeta(id)
     ]);
-    setSessionMessages(id, msgs);
-    sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
+    perf.mark("after-load");
+    perf.attachMessageStats(msgs);
+    const shouldMigrateInlineImages = hasInlineBase64SessionImages(msgs);
     activeSessionIdRef.current = id;
+    perf.mark("before-setSessionMessages");
+    setSessionMessages(id, msgs);
+    perf.mark("after-setSessionMessages");
+    sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
     void saveLastActiveSessionId(id);
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
@@ -914,7 +1165,6 @@ export default function AgentPanel() {
     applyLatestPlanFromPlans(meta.plans);
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
-    setMessages(msgs);
     const runtime = getSessionRuntime(id);
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
     setRequestBodySize(runtime.requestBodySize || null);
@@ -922,6 +1172,20 @@ export default function AgentPanel() {
     setPendingApproval(runtime.pendingApproval || null);
     setImageEditRequest(null);
     setShowHistory(false);
+    perf.mark("after-state-queue");
+    perf.flushAfterPaint(messagesScrollerRef);
+    void loadSessionImagesIntoCache(id, perf).then((loaded) => {
+      if (!loaded) return;
+      perf.mark("after-image-hydrate");
+      perf.flushAfterPaint(messagesScrollerRef);
+    }).catch(error => {
+      console.error("Failed to load session image store:", error);
+    });
+    if (shouldMigrateInlineImages) {
+      void saveSession(id, msgs).catch(error => {
+        console.error("Failed to migrate session image storage:", error);
+      });
+    }
   }
 
   function stopSessionGeneration(targetSessionId) {
@@ -1327,7 +1591,7 @@ export default function AgentPanel() {
     stopSessionGeneration(id);
 
     sessionMessagesRef.current.delete(id);
-    sessionImageRefsRef.current.delete(id);
+    clearSessionImageState(id);
     sessionPlansRef.current.delete(id);
     sessionRuntimeRef.current.delete(id);
     await deleteSession(id);
@@ -2079,6 +2343,7 @@ export default function AgentPanel() {
     stopSessionGeneration(currentSessionId);
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
+    clearSessionImageState(currentSessionId);
     setSessionMessages(currentSessionId, []);
     sessionPlansRef.current.set(currentSessionId, []);
     applyLatestPlanFromPlans([]);

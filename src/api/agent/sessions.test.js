@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   clearSessionKeywords,
+  compactSessionMessages,
   createSession,
   deleteSession,
   extractTitle,
@@ -8,7 +9,9 @@ import {
   listSessions,
   loadLastActiveSessionId,
   loadDefaultNewSessionSystemPrompt,
+  loadHydratedSession,
   loadSession,
+  loadSessionImageStore,
   loadSessionMeta,
   resetSessionTitle,
   saveLastActiveSessionId,
@@ -65,6 +68,94 @@ describe("sessions storage", () => {
     expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }] });
     const [entry] = await listSessions();
     expect(entry).toMatchObject({ title: "Auto title", startedAt: 100, updatedAt: 100 });
+  });
+
+  it("stores repeated base64 session images out of the main message payload", async () => {
+    const dataUrl = "data:image/png;base64,aGVsbG8=";
+    resetChromeMock({
+      session_a: { systemPrompt: "keep", messages: [] },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+    vi.spyOn(Date, "now").mockReturnValue(100);
+
+    await saveSession("a", [{
+      role: "tool",
+      content: "image result",
+      displayImageUrl: dataUrl,
+      imageRefs: [
+        { ref: "img_1", dataUrl },
+        { ref: "img_1", dataUrl }
+      ]
+    }], "A");
+
+    expect(await loadSession("a")).toEqual([{
+      role: "tool",
+      content: "image result",
+      displayImageUrl: "session-image:img_1",
+      imageRefs: [
+        { ref: "img_1", dataUrl: "session-image:img_1" },
+        { ref: "img_1", dataUrl: "session-image:img_1" }
+      ]
+    }]);
+    expect(await loadSessionImageStore("a")).toEqual({ img_1: dataUrl });
+    expect(await loadHydratedSession("a")).toEqual([{
+      role: "tool",
+      content: "image result",
+      displayImageUrl: dataUrl,
+      imageRefs: [
+        { ref: "img_1", dataUrl },
+        { ref: "img_1", dataUrl }
+      ]
+    }]);
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [] });
+  });
+
+  it("stores user image blocks out of the main message payload", async () => {
+    resetChromeMock({
+      session_a: { messages: [] },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    await saveSession("a", [{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "dXNlcg==" } }
+      ]
+    }], "A");
+
+    expect(await loadSession("a")).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", source: { type: "session_image", ref: "img_1", media_type: "image/png" } }
+      ]
+    }]);
+    expect(await loadSessionImageStore("a")).toEqual({
+      img_1: "data:image/png;base64,dXNlcg=="
+    });
+    expect(await loadHydratedSession("a")).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "dXNlcg==" } }
+      ]
+    }]);
+  });
+
+  it("does not compact base64 data URLs embedded inside text", () => {
+    const dataUrl = "data:image/png;base64,d29ybGQ=";
+
+    expect(compactSessionMessages([{
+      role: "assistant",
+      content: `![image](${dataUrl})`
+    }])).toEqual({
+      messages: [{
+        role: "assistant",
+        content: `![image](${dataUrl})`
+      }],
+      imageStore: undefined
+    });
   });
 
   it("does not overwrite manual titles with automatic titles", async () => {
@@ -129,12 +220,14 @@ describe("sessions storage", () => {
   it("deletes session payload and index entry", async () => {
     resetChromeMock({
       session_a: { messages: [{ role: "user", content: "hello" }] },
+      session_a_images: { img_1: "data:image/png;base64,aGVsbG8=" },
       sessions_index: [{ id: "a" }, { id: "b" }]
     });
 
     await deleteSession("a");
 
     expect(await loadSession("a")).toEqual([]);
+    expect(await loadSessionImageStore("a")).toEqual({});
     expect((await listSessions()).map(session => session.id)).toEqual(["b"]);
   });
 

@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="860" viewBox="0 0 1280 860" role="img" aria-labelledby="title desc">
+  <title id="title">Agent image state flow</title>
+  <desc id="desc">State transitions for agent image messages across component state, memory, persistence, LLM requests, rendering, exports, and cleanup.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; }
+      .runtime { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.5; rx: 8; }
+      .store { fill: #f8fafc; stroke: #475569; stroke-width: 1.5; rx: 8; }
+      .api { fill: #f0fdf4; stroke: #16a34a; stroke-width: 1.5; rx: 8; }
+      .warn { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.5; rx: 8; }
+      .danger { fill: #fef2f2; stroke: #dc2626; stroke-width: 1.5; rx: 8; }
+      .title { font-size: 19px; font-weight: 700; }
+      .label { font-size: 14px; font-weight: 700; }
+      .body { font-size: 12px; }
+      .small { font-size: 11px; fill: #475569; }
+      .arrow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 6 5; }
+    </style>
+  </defs>
+
+  <text x="40" y="42" class="title">Agent Image State Flow</text>
+  <text x="40" y="66" class="small">Intent: session switching reads lightweight messages first; base64 is loaded only when render, export, or tool deref needs it.</text>
+
+  <rect x="40" y="100" width="240" height="150" class="box"/>
+  <text x="60" y="128" class="label">A. Normal Component State</text>
+  <text x="60" y="154" class="body">ChatMessage props and content blocks</text>
+  <text x="60" y="176" class="body">user image: source.base64</text>
+  <text x="60" y="198" class="body">tool image: displayImageUrl</text>
+  <text x="60" y="220" class="body">assistant preview: |deRef:img_1|</text>
+
+  <rect x="345" y="100" width="250" height="150" class="runtime"/>
+  <text x="365" y="128" class="label">B. Runtime Memory State</text>
+  <text x="365" y="154" class="body">sessionMessagesRef has messages</text>
+  <text x="365" y="176" class="body">sessionImageRefsRef cache:</text>
+  <text x="365" y="198" class="body">img_1 -&gt; data:image/...</text>
+  <text x="365" y="220" class="body">hydrated messages may contain base64</text>
+
+  <rect x="660" y="86" width="260" height="178" class="store"/>
+  <text x="680" y="114" class="label">C. Persistent Session Key</text>
+  <text x="680" y="140" class="body">key: session_&lt;id&gt;</text>
+  <text x="680" y="162" class="body">message structure stays readable</text>
+  <text x="680" y="184" class="body">displayImageUrl: session-image:img_1</text>
+  <text x="680" y="206" class="body">imageRefs[].dataUrl: session-image:img_1</text>
+  <text x="680" y="228" class="body">user block: source.session_image</text>
+  <text x="680" y="250" class="body">no large base64 on switch path</text>
+
+  <rect x="990" y="100" width="240" height="150" class="store"/>
+  <text x="1010" y="128" class="label">D. Persistent Image Store</text>
+  <text x="1010" y="154" class="body">key: session_&lt;id&gt;_images</text>
+  <text x="1010" y="176" class="body">{ img_1: data:image/... }</text>
+  <text x="1010" y="198" class="body">deduped by data URL</text>
+  <text x="1010" y="220" class="body">removed on delete or clear-save</text>
+
+  <rect x="40" y="335" width="260" height="164" class="runtime"/>
+  <text x="60" y="363" class="label">E. Session Switch</text>
+  <text x="60" y="389" class="body">1. loadSession(id)</text>
+  <text x="60" y="411" class="body">2. setSessionMessages()</text>
+  <text x="60" y="433" class="body">3. UI paints placeholders quickly</text>
+  <text x="60" y="455" class="body">4. loadSessionImageStore(id) async</text>
+  <text x="60" y="477" class="body">5. hydrate if version still current</text>
+
+  <rect x="365" y="335" width="260" height="164" class="box"/>
+  <text x="385" y="363" class="label">F. Component Rendering</text>
+  <text x="385" y="389" class="body">base64 data URL: render img</text>
+  <text x="385" y="411" class="body">session-image:*: loading placeholder</text>
+  <text x="385" y="433" class="body">Markdown |deRef:img_1| asks</text>
+  <text x="385" y="455" class="body">imageSrcResolver for cache value</text>
+  <text x="385" y="477" class="body">no cache value: keep placeholder</text>
+
+  <rect x="695" y="335" width="240" height="164" class="api"/>
+  <text x="715" y="363" class="label">G. LLM Request State</text>
+  <text x="715" y="389" class="body">buildApiMessages strips imageRefs</text>
+  <text x="715" y="411" class="body">display fields are omitted</text>
+  <text x="715" y="433" class="body">base64 image blocks can be sent</text>
+  <text x="715" y="455" class="body">session_image blocks are filtered</text>
+  <text x="715" y="477" class="body">never send session-image:* as image</text>
+
+  <rect x="990" y="335" width="240" height="164" class="api"/>
+  <text x="1010" y="363" class="label">H. Tool Deref State</text>
+  <text x="1010" y="389" class="body">LLM emits |deRef:img_1|</text>
+  <text x="1010" y="411" class="body">resolveToolImageRefs(args)</text>
+  <text x="1010" y="433" class="body">uses sessionImageRefsRef cache</text>
+  <text x="1010" y="455" class="body">tool receives base64 at execution</text>
+  <text x="1010" y="477" class="body">placeholder is not persisted in args</text>
+
+  <rect x="40" y="585" width="280" height="146" class="box"/>
+  <text x="60" y="613" class="label">I. Export / Share</text>
+  <text x="60" y="639" class="body">only on user action:</text>
+  <text x="60" y="661" class="body">loadSessionImageStore(sessionId)</text>
+  <text x="60" y="683" class="body">build imageRefMap from store + messages</text>
+  <text x="60" y="705" class="body">replace |deRef:*| and user blocks</text>
+
+  <rect x="375" y="585" width="300" height="146" class="danger"/>
+  <text x="395" y="613" class="label">J. Clear / Delete Guard</text>
+  <text x="395" y="639" class="body">clearSessionImageState(id)</text>
+  <text x="395" y="661" class="body">increments image-store version</text>
+  <text x="395" y="683" class="body">deletes runtime image cache</text>
+  <text x="395" y="705" class="body">stale async loads are discarded</text>
+
+  <rect x="730" y="585" width="500" height="146" class="warn"/>
+  <text x="750" y="613" class="label">Invariants</text>
+  <text x="750" y="639" class="body">1. img_1 is the semantic ref visible to prompts, Markdown, export, and tools.</text>
+  <text x="750" y="661" class="body">2. session-image:img_1 is only a persistence/render placeholder.</text>
+  <text x="750" y="683" class="body">3. session_&lt;id&gt;_images may be large, so do not read it on the switch critical path.</text>
+  <text x="750" y="705" class="body">4. LLM request payloads must contain either real base64 image blocks or no image block.</text>
+
+  <path d="M 280 175 C 305 175, 320 175, 345 175" class="arrow"/>
+  <text x="294" y="159" class="small">message created</text>
+
+  <path d="M 595 175 C 625 175, 640 175, 660 175" class="arrow"/>
+  <text x="612" y="159" class="small">saveSession compact</text>
+
+  <path d="M 920 175 C 950 175, 965 175, 990 175" class="arrow"/>
+  <text x="936" y="159" class="small">base64 moved out</text>
+
+  <path d="M 790 264 C 780 300, 250 300, 170 335" class="arrow"/>
+  <text x="370" y="292" class="small">switch reads only session_&lt;id&gt;</text>
+
+  <path d="M 1110 250 C 1085 295, 1040 310, 930 335" class="arrow dash"/>
+  <text x="1018" y="292" class="small">async store read</text>
+
+  <path d="M 300 417 C 325 417, 340 417, 365 417" class="arrow"/>
+  <text x="315" y="401" class="small">render</text>
+
+  <path d="M 625 417 C 650 417, 670 417, 695 417" class="arrow"/>
+  <text x="642" y="401" class="small">send</text>
+
+  <path d="M 935 417 C 955 417, 970 417, 990 417" class="arrow"/>
+  <text x="952" y="401" class="small">tool args</text>
+
+  <path d="M 1110 499 C 1110 548, 975 560, 885 585" class="arrow dash"/>
+  <text x="987" y="545" class="small">cache supplies base64</text>
+
+  <path d="M 1110 250 C 1010 555, 290 538, 180 585" class="arrow dash"/>
+  <text x="462" y="545" class="small">export loads store outside switch path</text>
+
+  <path d="M 505 585 C 430 540, 300 515, 175 499" class="arrow dash"/>
+  <text x="285" y="536" class="small">clear/delete invalidates pending hydrate</text>
+</svg>
