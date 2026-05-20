@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractOpenAIReasoningDeltas } from "./openai-chat-completions";
-import { buildOpenAIChatReasoningFields } from "./reasoning";
+import { buildOpenAIChatReasoningFields } from "../core/reasoning";
 
 describe("OpenAI chat completions reasoning helpers", () => {
   it("sets both chat completions reasoning effort fields", () => {

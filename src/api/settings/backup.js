@@ -1,5 +1,5 @@
 /* global chrome */
-import { getDefaultApiType, normalizeApiType, normalizeModelContextLimitTokens } from "./llm";
+import { getDefaultApiType, normalizeApiType, normalizeModelContextLimitTokens } from "../llm";
 
 export const SETTINGS_BACKUP_VERSION = 1;
 

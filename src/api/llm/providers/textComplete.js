@@ -1,6 +1,6 @@
 /* global chrome */
-import { resolveLlmRequestUrl } from "./llmEndpoint";
-import { API_TYPES, getDefaultApiType, normalizeApiType } from "./llm";
+import { resolveLlmRequestUrl } from "../core/endpoint";
+import { API_TYPES, getDefaultApiType, normalizeApiType } from "../core/config";
 
 /**
  * Lightweight non-streaming, no-tools LLM text completion.

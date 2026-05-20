@@ -1,6 +1,6 @@
 /* global chrome */
 import { _resolveControllableTab, _normalizeGroupId, _normalizeSplitViewId, _buildLastAccessed } from "./_shared";
-import { deflateStringToQueryParam } from "../../../utils/playgroundCodec";
+import { deflateStringToQueryParam } from "../../../../utils/playgroundCodec";
 
 export async function _execEvalJs({ jsScript }) {
   const resolved = await _resolveControllableTab(undefined, "run code on");

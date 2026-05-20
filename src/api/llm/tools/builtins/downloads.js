@@ -1,5 +1,5 @@
 /* global chrome */
-import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "../downloadHelper";
+import { triggerBrowserDownload, hasDownloadsPermission, downloadsPermissionRequiredError } from "./downloadHelper";
 
 export async function _execDownload({ fileName, url, content, mimeType } = {}) {
   return await triggerBrowserDownload({ fileName, url, content, mimeType });

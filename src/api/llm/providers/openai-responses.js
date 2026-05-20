@@ -1,10 +1,10 @@
-import { resolveLlmRequestUrl } from "../llmEndpoint";
-import { API_TYPES } from "./config";
-import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
-import { getTools } from "./tools";
+import { resolveLlmRequestUrl } from "../core/endpoint";
+import { API_TYPES } from "../core/config";
+import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "../core/shared";
+import { getTools } from "../tools/definitions";
 import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completions";
-import { isLongToolArgumentName } from "./longToolArgs";
-import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "./reasoning";
+import { isLongToolArgumentName } from "../core/longToolArgs";
+import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "../core/reasoning";
 
 export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onRequestBodySize }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);

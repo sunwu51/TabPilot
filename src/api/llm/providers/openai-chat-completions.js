@@ -1,9 +1,9 @@
-import { resolveLlmRequestUrl } from "../llmEndpoint";
-import { API_TYPES } from "./config";
-import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "./shared";
-import { getTools } from "./tools";
-import { isLongToolArgumentName } from "./longToolArgs";
-import { buildOpenAIChatReasoningFields } from "./reasoning";
+import { resolveLlmRequestUrl } from "../core/endpoint";
+import { API_TYPES } from "../core/config";
+import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmStreamError, getFirstPacketTimeoutMs, isAbortError, mergeUsage } from "../core/shared";
+import { getTools } from "../tools/definitions";
+import { isLongToolArgumentName } from "../core/longToolArgs";
+import { buildOpenAIChatReasoningFields } from "../core/reasoning";
 
 export function buildOpenAICacheFields(options = {}) {
   const cacheKey = String(options?.sessionId || "").trim();

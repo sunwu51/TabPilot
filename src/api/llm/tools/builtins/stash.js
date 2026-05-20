@@ -1,5 +1,5 @@
 /* global chrome */
-import { DEFAULT_STASH_EXPIRE_AT, STASH_STORAGE_KEY } from "../constants";
+import { DEFAULT_STASH_EXPIRE_AT, STASH_STORAGE_KEY } from "../../core/constants";
 
 async function _getStashes() {
   const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });

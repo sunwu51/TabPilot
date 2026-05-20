@@ -2,34 +2,33 @@
 import { Button, Checkbox, Dialog, Input, Select } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { resolveLlmRequestUrl } from "../api/llmEndpoint";
+import { resolveLlmRequestUrl } from "../api/llm/core/endpoint";
 import {
   API_TYPES,
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  IMAGE_API_PROTOCOLS,
   MODEL_CONTEXT_LIMIT_OPTIONS,
+  captureFullPageScreenshotToTab,
   getDefaultApiType,
   normalizeApiType,
-  normalizeModelContextLimitTokens
+  normalizeImageApiProtocol,
+  normalizeModelContextLimitTokens,
+  openHelloWorldPlayground,
+  resolveImageApiRequestUrl
 } from "../api/llm";
-import { captureFullPageScreenshotToTab, openHelloWorldPlayground } from "../api/llm/builtins";
 import {
   downloadSettingsBackup,
   exportSettingsBackup,
   importSettingsBackupFromText
-} from "../api/settingsBackup";
-import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/tabReuse";
+} from "../api/settings/backup";
+import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/browser/tabReuse";
 import {
   DEFAULT_WS_BRIDGE_STATUS,
   formatWsBridgeStatusTime,
   getWsBridgeStateMeta,
   WS_BRIDGE_STATUS_STORAGE_KEY
-} from "../api/wsBridgeShared";
-import {
-  DEFAULT_IMAGE_MODEL,
-  IMAGE_API_PROTOCOLS,
-  normalizeImageApiProtocol,
-  resolveImageApiRequestUrl
-} from "../api/llm/builtins/imageApi";
+} from "../api/bridge/wsBridgeStatus";
 
 const DEFAULT_SETTINGS = {
   llmConfig: {
@@ -478,14 +477,6 @@ function SettingsDialogBody() {
             </Checkbox>
           </div>
           <div className="settings-inline-section-title">Image API 配置</div>
-          <Input
-            label="Image API 地址"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={imageBaseUrl}
-            onChange={setImageBaseUrl}
-            placeholder="https://api.openai.com/v1"
-          />
           <Select
             label="Image API 规范"
             items={imageProtocolOptions.map((item) => item.label)}
@@ -494,6 +485,14 @@ function SettingsDialogBody() {
               const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
               setImageApiProtocol(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
             }}
+          />
+          <Input
+            label="Image API 地址"
+            labelClassName="!text-sm !font-medium !text-gray-500"
+            inputClassName="!min-h-8"
+            defaultValue={imageBaseUrl}
+            onChange={setImageBaseUrl}
+            placeholder="https://api.openai.com/v1"
           />
           <div className="settings-api-url-hint">
             {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS

@@ -1,7 +1,6 @@
 /* global chrome */
-import { TOOLS, executeTool, isImageToolName } from "./llm";
-import { isImageApiConfigured } from "./llm/builtins/imageApi";
-import { DEFAULT_WS_BRIDGE_STATUS, WS_BRIDGE_STATUS_STORAGE_KEY } from "./wsBridgeShared";
+import { TOOLS, executeTool, isImageApiConfigured, isImageToolName } from "../llm";
+import { DEFAULT_WS_BRIDGE_STATUS, WS_BRIDGE_STATUS_STORAGE_KEY } from "./wsBridgeStatus";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;

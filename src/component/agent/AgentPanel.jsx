@@ -3,9 +3,13 @@
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import {
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  IMAGE_API_PROTOCOLS,
   getDefaultApiType,
+  isImageApiConfigured,
   normalizeApiType,
+  normalizeImageApiProtocol,
   normalizeModelContextLimitTokens,
   streamChat,
   executeTool,
@@ -30,7 +34,7 @@ import {
   resetSessionTitle,
   loadDefaultNewSessionSystemPrompt,
   saveDefaultNewSessionSystemPrompt
-} from "../../api/sessions";
+} from "../../api/agent/sessions";
 import {
   EMPTY_AGENT_SKILLS,
   buildSkillsSystemPrompt,
@@ -39,21 +43,15 @@ import {
   mergeBridgeToolDangerous,
   mergeAgentSkillsServerUrl,
   mergeLoadedSkills
-} from "../../api/skills";
+} from "../../api/agent/skills";
 import ChatMessageList from "./ChatMessageList";
 import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
 import toast from "react-hot-toast";
-import { formatProfileForSystemPrompt } from "../../api/userProfile";
-import { refreshSessionKeywords } from "../../api/sessionKeywords";
-import {
-  DEFAULT_IMAGE_MODEL,
-  IMAGE_API_PROTOCOLS,
-  isImageApiConfigured,
-  normalizeImageApiProtocol
-} from "../../api/llm/builtins/imageApi";
+import { formatProfileForSystemPrompt } from "../../api/agent/userProfile";
+import { refreshSessionKeywords } from "../../api/agent/sessionKeywords";
 import {
   IMAGE_REF_PATTERN,
   allocateGeneratedImageRef,

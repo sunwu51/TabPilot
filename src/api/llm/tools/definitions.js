@@ -1,5 +1,5 @@
-import { DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS } from "./constants";
-import { API_TYPES, normalizeApiType } from "./config";
+import { DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS } from "../core/constants";
+import { API_TYPES, normalizeApiType } from "../core/config";
 
 const DOM_LOCATOR_PROPERTIES = {
   tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },

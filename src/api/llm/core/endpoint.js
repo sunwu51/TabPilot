@@ -1,4 +1,4 @@
-import { API_TYPES, normalizeApiType } from "./llm";
+import { API_TYPES, normalizeApiType } from "./config";
 
 const OPENAI_COMPLETIONS_PATH = "/v1/chat/completions";
 const OPENAI_RESPONSES_PATH = "/v1/responses";

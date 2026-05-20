@@ -17,7 +17,7 @@ import {
   saveSessionMeta,
   updateSessionTitle,
 } from "./sessions";
-import { resetChromeMock } from "../../test/setup";
+import { resetChromeMock } from "../../../test/setup";
 
 describe("sessions storage", () => {
   it("generates session IDs with timestamp and random suffix", () => {

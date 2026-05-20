@@ -1,4 +1,4 @@
-import { getLongToolArgumentFields } from "../../../../api/llm/longToolArgs";
+import { getLongToolArgumentFields } from "../../../../api/llm";
 import { escapeRegExp } from "../search/globalSearch";
 export function buildStreamingToolArgsState(event) {
   const name = event?.name || "";

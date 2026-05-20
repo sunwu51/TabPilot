@@ -5,7 +5,7 @@ import {
   analyzeRecentHistory,
   isProfileEnabled,
   setProfileEnabled,
-} from "../../api/userProfile";
+} from "../../api/agent/userProfile";
 import toast from "react-hot-toast";
 
 export default function UserProfilePanel() {

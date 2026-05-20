@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { API_TYPES } from "./config";
-import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getMcpToolCallAliases, getTools, isMcpToolCallName } from "./tools";
+import { API_TYPES } from "../core/config";
+import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getMcpToolCallAliases, getTools, isMcpToolCallName } from "./definitions";
 
 function namesFor(apiType, options) {
   return getTools(apiType, [], options).map(tool => {

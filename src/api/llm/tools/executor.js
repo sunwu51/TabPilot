@@ -1,11 +1,11 @@
 /* global chrome */
-import { callMcpTool } from "../mcp";
-import { isMcpToolCallName, findMcpToolByCallName } from "./tools";
+import { callMcpTool } from "../../mcp";
+import { isMcpToolCallName, findMcpToolByCallName } from "./definitions";
 import {
   DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS,
   DEFAULT_MCP_TOOL_TIMEOUT_SECONDS,
   RUN_MACRO_TOOL_TIMEOUT_SECONDS
-} from "./constants";
+} from "../core/constants";
 import { executeImageEdit, executeImageGeneration } from "./builtins/imageApi";
 
 import { withTimeout } from "./builtins/_shared";

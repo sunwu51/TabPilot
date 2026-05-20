@@ -6,7 +6,9 @@ export {
   getDefaultApiType,
   normalizeApiType,
   normalizeModelContextLimitTokens
-} from "./config";
+} from "./core/config";
+export { getLongToolArgumentFields, isLongToolArgumentName } from "./core/longToolArgs";
+export { STASH_STORAGE_KEY } from "./core/constants";
 export {
   TOOLS,
   BUILTIN_TOOL_COUNT,
@@ -17,7 +19,14 @@ export {
   getTools,
   isImageToolName,
   isMcpToolCallName
-} from "./tools";
-export { executeTool } from "./builtins";
-export { triggerBrowserDownload, hasDownloadsPermission, DOWNLOADS_PERMISSION_REQUIRED } from "./downloadHelper";
-export { streamChat } from "./streamChat";
+} from "./tools/definitions";
+export { executeTool, captureFullPageScreenshotToTab, openHelloWorldPlayground } from "./tools/executor";
+export { triggerBrowserDownload, hasDownloadsPermission, DOWNLOADS_PERMISSION_REQUIRED } from "./tools/builtins/downloadHelper";
+export {
+  DEFAULT_IMAGE_MODEL,
+  IMAGE_API_PROTOCOLS,
+  isImageApiConfigured,
+  normalizeImageApiProtocol,
+  resolveImageApiRequestUrl
+} from "./tools/builtins/imageApi";
+export { streamChat } from "./providers/streamChat";

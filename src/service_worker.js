@@ -7,9 +7,9 @@ import {
     getReuseDomainKey,
     getReuseDomainPolicy,
     setReuseDomainPolicy
-} from "./api/tabReuse";
+} from "./api/browser/tabReuse";
 import { BUILTIN_TOOL_NAMES, executeTool, findMcpToolByCallName } from "./api/llm";
-import { connectWsBridge, disconnectWsBridge, ensureWsBridgeHealthy, getWsBridgeStatus, startWsBridge } from "./api/wsBridge";
+import { connectWsBridge, disconnectWsBridge, ensureWsBridgeHealthy, getWsBridgeStatus, startWsBridge } from "./api/bridge/wsBridge";
 import {
     listMacros,
     saveMacro,

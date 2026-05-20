@@ -1,5 +1,5 @@
 /* global chrome */
-import { textComplete, getLLMConfigForMemory } from "./llmTextComplete";
+import { textComplete, getLLMConfigForMemory } from "../llm/providers/textComplete";
 import { loadSession } from "./sessions";
 
 const MIN_SESSION_KEYWORD_CHARS = 100;

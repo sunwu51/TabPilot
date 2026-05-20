@@ -19,7 +19,7 @@ describe("MCP Streamable HTTP session handling", () => {
   });
 
   it("stores Mcp-Session-Id from initialize and sends it on later requests", async () => {
-    const { connectMcpServer, callMcpTool } = await import("./mcp");
+    const { connectMcpServer, callMcpTool } = await import("./index");
 
     fetch
       .mockResolvedValueOnce(mockJsonResponse({
@@ -51,7 +51,7 @@ describe("MCP Streamable HTTP session handling", () => {
   });
 
   it("re-initializes without sending the previously stored session id", async () => {
-    const { connectMcpServer } = await import("./mcp");
+    const { connectMcpServer } = await import("./index");
 
     fetch
       .mockResolvedValueOnce(mockJsonResponse({
@@ -91,7 +91,7 @@ describe("MCP Streamable HTTP session handling", () => {
   });
 
   it("refreshes the session after a 404 with an existing session and retries once", async () => {
-    const { connectMcpServer, callMcpTool } = await import("./mcp");
+    const { connectMcpServer, callMcpTool } = await import("./index");
 
     fetch
       .mockResolvedValueOnce(mockJsonResponse({
@@ -132,7 +132,7 @@ describe("MCP Streamable HTTP session handling", () => {
   });
 
   it("reports the retried 404 after session refresh instead of looping", async () => {
-    const { connectMcpServer, callMcpTool } = await import("./mcp");
+    const { connectMcpServer, callMcpTool } = await import("./index");
 
     fetch
       .mockResolvedValueOnce(mockJsonResponse({

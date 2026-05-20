@@ -1,5 +1,5 @@
 /* global chrome */
-import { buildMcpToolCallName } from "../tools";
+import { buildMcpToolCallName } from "../definitions";
 import {
   DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS,
   SCHEDULE_CLEANUP_ALARM_PREFIX,
@@ -7,7 +7,7 @@ import {
   SCHEDULE_RETENTION_MS,
   SCHEDULE_STORAGE_KEY,
   TERMINAL_SCHEDULE_STATUSES
-} from "../constants";
+} from "../../core/constants";
 
 function _snapshotScheduleMcpRegistry(mcpRegistry = []) {
   return (mcpRegistry || []).map(tool => ({

@@ -3,7 +3,7 @@ import {
   SETTINGS_BACKUP_KEYS,
   exportSettingsBackup,
   importSettingsBackupFromText
-} from "./settingsBackup";
+} from "./backup";
 
 const getChrome = () => globalThis.chrome;
 

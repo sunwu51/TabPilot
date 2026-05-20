@@ -1,8 +1,8 @@
 /* global chrome */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { executeTool, getBuiltinToolTimeoutSeconds, openHelloWorldPlayground } from "./builtins";
+import { executeTool, getBuiltinToolTimeoutSeconds, openHelloWorldPlayground } from "./executor";
 
-vi.mock("../mcp", () => ({
+vi.mock("../../mcp", () => ({
   callMcpTool: vi.fn(async (url, headers, name, args, timeoutMs) => ({
     url,
     headers,
@@ -12,7 +12,7 @@ vi.mock("../mcp", () => ({
   }))
 }));
 
-vi.mock("./downloadHelper", () => ({
+vi.mock("./builtins/downloadHelper", () => ({
   triggerBrowserDownload: vi.fn(async (args) => ({ success: true, ...args, downloadId: 42 })),
   hasDownloadsPermission: vi.fn(async () => true),
   downloadsPermissionRequiredError: () => ({
@@ -32,7 +32,7 @@ describe("built-in tool execution", () => {
   });
 
   it("routes MCP names to MCP registry tools", async () => {
-    const { callMcpTool } = await import("../mcp");
+    const { callMcpTool } = await import("../../mcp");
     chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
 
     const result = await executeTool("mcp_docs_lookup", { query: "tabs" }, [
@@ -61,7 +61,7 @@ describe("built-in tool execution", () => {
   });
 
   it("rejects namespaced MCP aliases outside the canonical call-name format", async () => {
-    const { callMcpTool } = await import("../mcp");
+    const { callMcpTool } = await import("../../mcp");
     chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
 
     const result = await executeTool("mcp__mcpcenter__tavily_tavily_search", { query: "tabs" }, [
@@ -127,7 +127,7 @@ describe("built-in tool execution", () => {
   });
 
   it("delegates download execution to download helper", async () => {
-    const { triggerBrowserDownload } = await import("./downloadHelper");
+    const { triggerBrowserDownload } = await import("./builtins/downloadHelper");
 
     await expect(executeTool("download", { fileName: "a.txt", content: "hello" }))
       .resolves.toMatchObject({ success: true, fileName: "a.txt", content: "hello", downloadId: 42 });
@@ -135,7 +135,7 @@ describe("built-in tool execution", () => {
   });
 
   it("passes optional mimeType for content downloads", async () => {
-    const { triggerBrowserDownload } = await import("./downloadHelper");
+    const { triggerBrowserDownload } = await import("./builtins/downloadHelper");
 
     await expect(executeTool("download", {
       fileName: "report.md",
