@@ -41,7 +41,8 @@ describe("settings backup", () => {
         imageBaseUrl: "https://api.openai.com/v1",
         imageApiKey: "img-secret",
         imageApiProtocol: "chat_completions",
-        imageModel: "gpt-image-2"
+        imageModel: "gpt-image-2",
+        supportsToolImageInput: false
       }
     });
 
@@ -51,7 +52,8 @@ describe("settings backup", () => {
       imageBaseUrl: "https://api.openai.com/v1",
       imageApiKey: "img-secret",
       imageApiProtocol: "chat_completions",
-      imageModel: "gpt-image-2"
+      imageModel: "gpt-image-2",
+      supportsToolImageInput: false
     });
   });
 
@@ -109,6 +111,31 @@ describe("settings backup", () => {
         imageApiKey: "old",
         imageModel: "gpt-image-2",
         imageApiProtocol: "chat_completions"
+      }
+    });
+  });
+
+  it("imports the tool image input support field", async () => {
+    getChrome().storage.local.get.mockResolvedValueOnce({
+      llmConfig: {
+        supportsImageInput: true,
+        supportsToolImageInput: true
+      }
+    });
+
+    const result = await importSettingsBackupFromText(JSON.stringify({
+      settings: {
+        llmConfig: {
+          supportsToolImageInput: false
+        }
+      }
+    }));
+
+    expect(result.updatedKeys).toEqual(["llmConfig"]);
+    expect(getChrome().storage.local.set).toHaveBeenCalledWith({
+      llmConfig: {
+        supportsImageInput: true,
+        supportsToolImageInput: false
       }
     });
   });

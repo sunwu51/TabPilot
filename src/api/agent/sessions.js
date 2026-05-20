@@ -245,13 +245,31 @@ export async function saveDefaultNewSessionSystemPrompt(value = {}) {
 }
 
 /**
- * Extract a title from messages: first user message content, truncated to 20 chars.
+ * Extract a title from messages: first user-visible text, truncated to 20 chars.
  * @param {Array} messages
  * @returns {string}
  */
 export function extractTitle(messages) {
-  const firstUser = messages.find(m => m.role === "user" && typeof m.content === "string");
+  const firstUser = messages.find(m => m.role === "user" && extractUserTitleText(m));
   if (!firstUser) return "新会话";
-  const text = firstUser.content.trim();
+  const text = extractUserTitleText(firstUser);
   return text.length > 20 ? text.substring(0, 20) + "..." : text;
+}
+
+function extractUserTitleText(message) {
+  const displayContent = String(message?.displayContent || "").trim();
+  if (displayContent) return displayContent;
+
+  if (typeof message?.content === "string") {
+    return message.content.trim();
+  }
+
+  if (!Array.isArray(message?.content)) return "";
+
+  const textBlock = message.content.find(block => block?.type === "text" && String(block.text || "").trim());
+  if (!textBlock) return "";
+
+  return String(textBlock.text || "")
+    .split(/\n{2,}Attached image ref:/)[0]
+    .trim();
 }

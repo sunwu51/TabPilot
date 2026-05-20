@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = {
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
+    supportsToolImageInput: false,
     reasoningEffort: "default",
     omitThinkingFromRequests: false,
     imageBaseUrl: "",
@@ -80,6 +81,7 @@ function SettingsDialogBody() {
   const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
+  const [supportsToolImageInput, setSupportsToolImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsToolImageInput);
   const [reasoningEffort, setReasoningEffort] = useState(DEFAULT_SETTINGS.llmConfig.reasoningEffort);
   const [omitThinkingFromRequests, setOmitThinkingFromRequests] = useState(DEFAULT_SETTINGS.llmConfig.omitThinkingFromRequests);
   const [imageBaseUrl, setImageBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.imageBaseUrl);
@@ -157,6 +159,11 @@ function SettingsDialogBody() {
       setModelContextLimitTokens(normalizeModelContextLimitTokens(nextLlmConfig.modelContextLimitTokens));
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
+      setSupportsToolImageInput(nextLlmConfig.supportsImageInput === true && (
+        Object.prototype.hasOwnProperty.call(nextLlmConfig, "supportsToolImageInput")
+          ? nextLlmConfig.supportsToolImageInput === true
+          : nextLlmConfig.supportsImageInput === true
+      ));
       setReasoningEffort(normalizeReasoningEffort(nextLlmConfig.reasoningEffort));
       setOmitThinkingFromRequests(nextLlmConfig.omitThinkingFromRequests === true);
       setImageBaseUrl(nextLlmConfig.imageBaseUrl || "");
@@ -207,6 +214,7 @@ function SettingsDialogBody() {
           modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
+          supportsToolImageInput: supportsImageInput && supportsToolImageInput,
           reasoningEffort: normalizeReasoningEffort(reasoningEffort),
           omitThinkingFromRequests,
           imageBaseUrl,
@@ -230,6 +238,11 @@ function SettingsDialogBody() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleSupportsImageInputChange(checked) {
+    setSupportsImageInput(checked);
+    if (!checked) setSupportsToolImageInput(false);
   }
 
   function handleCancel() {
@@ -472,9 +485,20 @@ function SettingsDialogBody() {
             }}
           />
           <div className="mt-2">
-            <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
-              <span className="text-sm">模型支持图片输入</span>
+            <Checkbox isSelected={supportsImageInput} onChange={handleSupportsImageInputChange}>
+              <span className="text-sm">模型支持用户图片输入</span>
             </Checkbox>
+          </div>
+          <div className="mt-2">
+            <Checkbox
+              isSelected={supportsImageInput && supportsToolImageInput}
+              onChange={(checked) => setSupportsToolImageInput(checked && supportsImageInput)}
+            >
+              <span className="text-sm">模型支持工具图片输入</span>
+            </Checkbox>
+            {!supportsImageInput && (
+              <div className="text-xs text-gray-500 mt-1">需要先开启用户图片输入。</div>
+            )}
           </div>
           <div className="settings-inline-section-title">Image API 配置</div>
           <Select

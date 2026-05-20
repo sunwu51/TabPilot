@@ -172,7 +172,7 @@ export function normalizeToolSummary(summary) {
 export function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
   const parsedImages = getToolResultParsedImages(msg);
-  if (parsedImages.length === 0 || options.supportsImageInput === false) {
+  if (parsedImages.length === 0 || !supportsToolImageInput(options)) {
     return typeof summary === "string" ? summary : JSON.stringify(summary);
   }
 
@@ -195,7 +195,7 @@ export function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
 export function buildOpenAIToolResultContent(msg, options = {}) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
   const parsedImages = getToolResultParsedImages(msg);
-  if (parsedImages.length === 0 || options.supportsImageInput === false) {
+  if (parsedImages.length === 0 || !supportsToolImageInput(options)) {
     return typeof summary === "string" ? summary : JSON.stringify(summary);
   }
 
@@ -224,6 +224,14 @@ export function getToolResultParsedImages(msg) {
     .map(url => ({ url: normalizeImageRefSource(url), parsed: parseImageDataUrl(normalizeImageRefSource(url)) }))
     .filter(item => item.url && item.parsed)
     .map(item => ({ url: item.url, ...item.parsed }));
+}
+
+export function supportsToolImageInput(options = {}) {
+  if (options.supportsImageInput === false) return false;
+  if (Object.prototype.hasOwnProperty.call(options, "supportsToolImageInput")) {
+    return options.supportsToolImageInput === true;
+  }
+  return true;
 }
 
 // ==================== User Image Input Helpers ====================

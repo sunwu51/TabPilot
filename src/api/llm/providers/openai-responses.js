@@ -298,8 +298,9 @@ function measureUtf8Bytes(text) {
 
 function buildResponsesFunctionCallOutput(msg, options = {}) {
   const supportsImageInput = options.supportsImageInput !== false;
-  const output = normalizeResponsesFunctionCallOutput(msg.content, { supportsImageInput });
-  const images = supportsImageInput ? collectResponsesToolOutputImages(msg) : [];
+  const supportsToolImageInput = getSupportsToolImageInput(options);
+  const output = normalizeResponsesFunctionCallOutput(msg.content, { supportsImageInput, supportsToolImageInput });
+  const images = supportsToolImageInput ? collectResponsesToolOutputImages(msg) : [];
   if (images.length === 0) return output;
 
   const blocks = Array.isArray(output)
@@ -318,6 +319,7 @@ function buildResponsesFunctionCallOutput(msg, options = {}) {
 
 function normalizeResponsesFunctionCallOutput(output, options = {}) {
   const supportsImageInput = options.supportsImageInput !== false;
+  const supportsToolImageInput = getSupportsToolImageInput(options);
   if (typeof output === "string") {
     const parsed = tryParseJson(output);
     if (parsed.ok) {
@@ -327,8 +329,8 @@ function normalizeResponsesFunctionCallOutput(output, options = {}) {
     return output;
   }
   if (Array.isArray(output)) {
-    const blocks = output.flatMap(block => normalizeResponsesFunctionCallOutputBlock(block, { supportsImageInput }));
-    if (supportsImageInput && blocks.some(block => block.type === "input_image" || block.type === "input_file")) {
+    const blocks = output.flatMap(block => normalizeResponsesFunctionCallOutputBlock(block, { supportsImageInput, supportsToolImageInput }));
+    if (supportsToolImageInput && blocks.some(block => block.type === "input_image" || block.type === "input_file")) {
       return blocks;
     }
     const text = blocks
@@ -341,7 +343,7 @@ function normalizeResponsesFunctionCallOutput(output, options = {}) {
 }
 
 function normalizeResponsesFunctionCallOutputBlock(block, options = {}) {
-  const supportsImageInput = options.supportsImageInput !== false;
+  const supportsToolImageInput = getSupportsToolImageInput(options);
   if (typeof block === "string") return [{ type: "input_text", text: block }];
   if (!block || typeof block !== "object") return [];
 
@@ -350,7 +352,7 @@ function normalizeResponsesFunctionCallOutputBlock(block, options = {}) {
   }
 
   if ((block.type === "image_url" || block.type === "input_image" || block.type === "output_image") && typeof (block.image_url?.url || block.image_url) === "string") {
-    if (!supportsImageInput) return [{ type: "input_text", text: "[omitted image from previous tool output]" }];
+    if (!supportsToolImageInput) return [{ type: "input_text", text: "[omitted image from previous tool output]" }];
     return [{
       type: "input_image",
       image_url: block.image_url?.url || block.image_url,
@@ -359,7 +361,7 @@ function normalizeResponsesFunctionCallOutputBlock(block, options = {}) {
   }
 
   if (block.type === "image" && block.source?.type === "base64" && block.source?.media_type && block.source?.data) {
-    if (!supportsImageInput) return [{ type: "input_text", text: "[omitted image from previous tool output]" }];
+    if (!supportsToolImageInput) return [{ type: "input_text", text: "[omitted image from previous tool output]" }];
     return [{
       type: "input_image",
       image_url: `data:${block.source.media_type};base64,${block.source.data}`,
@@ -378,6 +380,14 @@ function normalizeResponsesFunctionCallOutputBlock(block, options = {}) {
   }
 
   return [{ type: "input_text", text: JSON.stringify(block) }];
+}
+
+function getSupportsToolImageInput(options = {}) {
+  if (options.supportsImageInput === false) return false;
+  if (Object.prototype.hasOwnProperty.call(options, "supportsToolImageInput")) {
+    return options.supportsToolImageInput === true;
+  }
+  return true;
 }
 
 function tryParseJson(text) {

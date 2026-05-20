@@ -152,6 +152,15 @@ export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDi
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
+
+function resolveSupportsToolImageInput(llmConfig = {}) {
+  if (llmConfig?.supportsImageInput !== true) return false;
+  if (Object.prototype.hasOwnProperty.call(llmConfig, "supportsToolImageInput")) {
+    return llmConfig.supportsToolImageInput === true;
+  }
+  return true;
+}
+
 export default function AgentPanel() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -175,6 +184,7 @@ export default function AgentPanel() {
     model: "",
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     supportsImageInput: false,
+    supportsToolImageInput: false,
     reasoningEffort: "default",
     omitThinkingFromRequests: false,
     imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
@@ -506,6 +516,7 @@ export default function AgentPanel() {
           model: nextConfig.model || "",
           modelContextLimitTokens: normalizeModelContextLimitTokens(nextConfig.modelContextLimitTokens),
           supportsImageInput: nextConfig.supportsImageInput === true,
+          supportsToolImageInput: resolveSupportsToolImageInput(nextConfig),
           reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
           omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true,
           imageApiProtocol: normalizeImageApiProtocol(nextConfig.imageApiProtocol),
@@ -640,8 +651,10 @@ export default function AgentPanel() {
       model: llmConfig?.model || "",
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
+      supportsToolImageInput: resolveSupportsToolImageInput(llmConfig),
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
   }
@@ -1447,6 +1460,7 @@ export default function AgentPanel() {
         modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false,
+        supportsToolImageInput: false,
         reasoningEffort: "default",
         omitThinkingFromRequests: false,
         imageBaseUrl: "",
@@ -1461,6 +1475,7 @@ export default function AgentPanel() {
       model: llmConfig?.model || "",
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
+      supportsToolImageInput: resolveSupportsToolImageInput(llmConfig),
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
       imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
@@ -1471,6 +1486,7 @@ export default function AgentPanel() {
       apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
+      supportsToolImageInput: resolveSupportsToolImageInput(llmConfig),
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
       imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
@@ -1615,6 +1631,7 @@ export default function AgentPanel() {
     const systemPrompt = await buildSystemPrompt();
     const apiConversationMessages = buildApiMessages(config.apiType, conversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
+      supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true
     });
     const fullMessages = [{ role: "system", content: systemPrompt }, ...apiConversationMessages];
@@ -1843,6 +1860,7 @@ export default function AgentPanel() {
     }, combinedMcpTools, {
       sessionId: targetSessionId,
       supportsImageInput: config.supportsImageInput === true,
+      supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
       imageToolsEnabled: config.imageToolsEnabled === true

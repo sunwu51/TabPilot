@@ -219,6 +219,21 @@ describe("OpenAI responses reasoning helpers", () => {
     ]);
   });
 
+  it("keeps user image support while omitting display images when tool image input is disabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: "done",
+        displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
+      }
+    ], { supportsImageInput: true, supportsToolImageInput: false });
+
+    expect(result.input).toEqual([
+      { type: "function_call_output", call_id: "call_123", output: "done" }
+    ]);
+  });
+
   it("keeps regular JSON tool output textual", () => {
     const result = buildResponsesRequestInput([
       {
@@ -278,6 +293,27 @@ describe("OpenAI responses reasoning helpers", () => {
         ])
       }
     ], { supportsImageInput: false });
+
+    expect(result.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: "done\n[omitted image from previous tool output]"
+      }
+    ]);
+  });
+
+  it("omits structured image blocks when only tool image input is disabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: JSON.stringify([
+          { type: "text", text: "done" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "low" } }
+        ])
+      }
+    ], { supportsImageInput: true, supportsToolImageInput: false });
 
     expect(result.input).toEqual([
       {

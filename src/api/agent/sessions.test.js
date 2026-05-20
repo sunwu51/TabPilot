@@ -176,4 +176,32 @@ describe("sessions storage", () => {
     expect(extractTitle([{ role: "user", content: "  short title  " }])).toBe("short title");
     expect(extractTitle([{ role: "user", content: "1234567890123456789012345" }])).toBe("12345678901234567890...");
   });
+
+  it("extracts title from user-visible text in structured user messages", () => {
+    expect(extractTitle([{
+      role: "user",
+      content: [
+        { type: "text", text: "  structured title  " },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "abc" } }
+      ]
+    }])).toBe("structured title");
+
+    expect(extractTitle([{
+      role: "user",
+      displayContent: "visible title",
+      content: [
+        { type: "text", text: "internal injected context" }
+      ]
+    }])).toBe("visible title");
+
+    expect(extractTitle([{
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "image request\n\nAttached image ref: img_1. For any tool argument that requires this image's base64 data URL, pass exactly \"|deRef:img_1|\"."
+        }
+      ]
+    }])).toBe("image request");
+  });
 });
