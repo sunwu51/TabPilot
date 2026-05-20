@@ -1,0 +1,178 @@
+
+.schedule-dialog {
+  width: min(640px, 82vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.schedule-dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.schedule-dialog-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.schedule-dialog-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.schedule-dialog-error,
+.schedule-dialog-empty {
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.schedule-dialog-error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.schedule-dialog-empty {
+  background: #f9fafb;
+  color: #6b7280;
+  text-align: center;
+}
+
+.system-prompt-dialog {
+  width: min(560px, 82vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.system-prompt-textarea {
+  width: 100%;
+  min-height: 220px;
+  max-height: 50vh;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+.system-prompt-textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.system-prompt-default-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #374151;
+  user-select: none;
+}
+
+.system-prompt-default-toggle input {
+  margin: 0;
+}
+
+.schedule-job-list {
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.schedule-job-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+}
+
+.schedule-job-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.schedule-job-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.schedule-job-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.schedule-job-status-pending {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.schedule-job-status-running {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.schedule-job-status-succeeded {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.schedule-job-status-failed {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.schedule-job-status-cancelled,
+.schedule-job-status-unknown {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.schedule-job-meta {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.schedule-job-key {
+  color: #6b7280;
+}
+
+.schedule-job-value {
+  color: #111827;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.schedule-job-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

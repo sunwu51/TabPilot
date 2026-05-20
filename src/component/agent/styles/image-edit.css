@@ -1,0 +1,161 @@
+
+/* ========== Image edit dialog ========== */
+.image-edit-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.image-edit-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.image-edit-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.image-edit-preview {
+  position: relative;
+  align-self: center;
+  max-width: 100%;
+  max-height: 46vh;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f9fafb;
+  line-height: 0;
+}
+
+.image-edit-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 46vh;
+  object-fit: contain;
+}
+
+.image-edit-mask-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.image-edit-mask-canvas-active {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.image-edit-mask-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.image-edit-mask-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.image-edit-mask-clear {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.image-edit-mask-clear:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.image-edit-prompt {
+  width: 100%;
+  min-height: 72px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px;
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.45;
+  background: white;
+}
+
+.image-edit-prompt:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #bfdbfe;
+}
+
+.image-edit-prompt-error {
+  border-color: #ef4444;
+}
+
+.image-edit-reference-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.image-edit-reference-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.image-edit-reference-add {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.image-edit-reference-add:hover {
+  background: #f3f4f6;
+}
+
+.image-edit-reference-input {
+  display: none;
+}
+
+.image-edit-reference-images {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.image-edit-reference-item {
+  width: 64px;
+  height: 64px;
+}
+
+.image-edit-error {
+  margin-top: -4px;
+  color: #dc2626;
+  font-size: 12px;
+}
+
+.image-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+

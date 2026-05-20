@@ -1,0 +1,200 @@
+
+/* ========== Session plan ========== */
+.session-plan-panel {
+  flex-shrink: 0;
+  margin: 6px 8px 0;
+  padding: 8px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1f2937;
+  font-size: 12px;
+}
+
+.session-plan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.session-plan-collapsed .session-plan-header {
+  margin-bottom: 0;
+}
+
+.session-plan-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.session-plan-status {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.session-plan-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6b7280;
+  font-size: 11px;
+  text-align: right;
+}
+
+.session-plan-toggle {
+  flex-shrink: 0;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.session-plan-header:hover .session-plan-toggle {
+  text-decoration: underline;
+}
+
+.session-plan-blocked {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.session-plan-completed {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.session-plan-steps,
+.plan-approval-steps {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-plan-step-icon {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.session-plan-step-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.session-plan-step-title {
+  color: #374151;
+  line-height: 1.35;
+}
+
+.session-plan-step-completed .session-plan-step-title,
+.session-plan-step-skipped .session-plan-step-title {
+  color: #6b7280;
+}
+
+.session-plan-step-note {
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.plan-approval-card {
+  border-color: #93c5fd !important;
+  background: #eff6ff !important;
+}
+
+.plan-approval-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1d4ed8;
+  margin-bottom: 4px;
+}
+
+.plan-approval-plan-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 6px;
+}
+
+.plan-approval-steps {
+  margin-bottom: 8px;
+  counter-reset: plan-step;
+}
+
+.plan-approval-steps li {
+  counter-increment: plan-step;
+  padding: 6px 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: white;
+  font-size: 12px;
+}
+
+.plan-approval-steps li::before {
+  content: counter(plan-step) ". ";
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.plan-approval-step-title {
+  font-weight: 600;
+  color: #374151;
+}
+
+.plan-approval-step-desc {
+  display: block;
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.plan-approval-feedback {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 2px 0 8px;
+  resize: vertical;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: inherit;
+  background: white;
+}
+
+.plan-approval-feedback:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+

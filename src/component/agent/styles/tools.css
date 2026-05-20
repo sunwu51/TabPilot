@@ -1,0 +1,172 @@
+/* ========== Tool result (collapsible) ========== */
+.tool-result-msg {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: default;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.tool-result-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  color: #6b7280;
+  user-select: none;
+  cursor: pointer;
+}
+
+.tool-result-arrow {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.tool-result-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-result-pending-hint {
+  padding: 0 8px 6px 22px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tool-result-content {
+  padding: 6px 8px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #374151;
+  max-height: 200px;
+  overflow: auto;
+  margin: 0;
+}
+
+.tool-json-content {
+  max-height: 320px;
+  white-space: pre;
+  word-break: normal;
+  tab-size: 2;
+}
+
+.tool-merged-section-label {
+  padding: 6px 8px 2px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tool-merged-section-label + .tool-result-content {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.tool-result-error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.tool-result-error .tool-result-header {
+  color: #991b1b;
+}
+
+.thinking-result-msg {
+  border-color: #e5e7eb;
+  background: #f3f4f6;
+}
+
+.thinking-result-msg .tool-result-header {
+  color: #6b7280;
+}
+
+.thinking-result-content {
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.thinking-markdown-content {
+  padding: 8px 10px;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.thinking-markdown-content p {
+  margin: 0 0 6px;
+}
+
+.thinking-markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.thinking-markdown-content pre {
+  margin: 6px 0;
+}
+
+.thinking-signature-block {
+  border-top: 1px solid #e5e7eb;
+  background: #f3f4f6;
+}
+
+.thinking-signature-block summary {
+  padding: 5px 8px;
+  color: #6b7280;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-signature-block .tool-result-content {
+  max-height: 120px;
+}
+
+.streaming-tool-args-bubble {
+  max-width: 100%;
+  background: #f3f4f6;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #374151;
+  overflow: hidden;
+}
+
+.streaming-tool-args-title {
+  margin-bottom: 6px;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.streaming-tool-args-content {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+
+.tool-media-block {
+  padding: 6px 0;
+  max-width: 100%;
+}

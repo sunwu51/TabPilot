@@ -1,0 +1,233 @@
+
+/* ========== Session header / toolbar ========== */
+.chat-header {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+  transition: border-color 600ms ease;
+}
+
+.chat-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 4px 8px;
+  background: #fafafa;
+}
+
+.chat-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 12px;
+  min-width: 24px;
+  height: 24px;
+  padding: 2px 5px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  white-space: nowrap;
+  color: #374151;
+  transition:
+    min-width 600ms ease,
+    padding 600ms ease,
+    background 300ms ease;
+}
+
+.chat-toolbar-btn:hover {
+  background: #f3f4f6;
+}
+
+.chat-toolbar-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.chat-toolbar-icon {
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.chat-toolbar-full-text {
+  display: none;
+}
+
+.chat-toolbar-caret {
+  display: none;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.chat-header:hover .chat-toolbar-btn,
+.chat-header-expanded .chat-toolbar-btn {
+  min-width: auto;
+  padding: 2px 8px;
+  transition:
+    min-width 300ms ease,
+    padding 300ms ease,
+    background 150ms ease;
+}
+
+.chat-header:hover .chat-toolbar-full-text,
+.chat-header:hover .chat-toolbar-caret,
+.chat-header-expanded .chat-toolbar-full-text,
+.chat-header-expanded .chat-toolbar-caret {
+  display: inline;
+}
+
+.chat-header:hover .chat-toolbar-icon,
+.chat-header-expanded .chat-toolbar-icon {
+  display: none;
+}
+
+.chat-session-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-title-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  opacity: 1;
+  transition:
+    flex-basis 600ms ease,
+    max-width 600ms ease,
+    padding 600ms ease,
+    opacity 300ms ease;
+}
+
+.chat-toolbar-expanded-spacer {
+  flex: 0 1 0;
+  min-width: 8px;
+  max-width: 0;
+  overflow: hidden;
+  transition:
+    flex-basis 600ms ease,
+    max-width 600ms ease;
+}
+
+.chat-header:hover .chat-title-inline,
+.chat-header-expanded .chat-title-inline {
+  flex: 0 1 0;
+  max-width: 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    flex-basis 300ms ease,
+    max-width 300ms ease,
+    padding 300ms ease,
+    opacity 150ms ease;
+}
+
+.chat-header:hover .chat-toolbar-expanded-spacer,
+.chat-header-expanded .chat-toolbar-expanded-spacer {
+  flex: 1 1 auto;
+  max-width: 100%;
+  transition:
+    flex-basis 300ms ease,
+    max-width 300ms ease;
+}
+
+.chat-title-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  max-height: 0;
+  padding: 0 10px;
+  background: #fafafa;
+  opacity: 0;
+  transform: translateY(-4px);
+  overflow: hidden;
+  transition:
+    max-height 600ms ease,
+    min-height 600ms ease,
+    padding 600ms ease,
+    opacity 300ms ease,
+    transform 600ms ease;
+}
+
+.chat-header:hover .chat-title-row,
+.chat-header-expanded .chat-title-row {
+  min-height: 28px;
+  max-height: 36px;
+  padding: 0 10px 5px;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 300ms ease,
+    min-height 300ms ease,
+    padding 300ms ease,
+    opacity 150ms ease,
+    transform 300ms ease;
+}
+
+.chat-session-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-session-title-edit {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.chat-session-title-edit:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.chat-session-title-input {
+  width: min(520px, 100%);
+  height: 22px;
+  box-sizing: border-box;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-weight: 600;
+  color: #374151;
+  text-align: center;
+  background: #fff;
+}
+
+.chat-session-title-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #bfdbfe;
+}
