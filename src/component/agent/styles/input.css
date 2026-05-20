@@ -149,20 +149,14 @@
 
 .chat-input-area textarea:read-only {
   background: #fff;
-  border-color: #f59e0b;
-  border-left-width: 4px;
+  border-color: #d1d5db;
+  border-style: dashed;
   color: #4b5563;
   cursor: not-allowed;
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.16);
 }
 
 .chat-input-area textarea:read-only:focus {
-  border-color: #f59e0b;
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.24), 0 0 0 2px rgba(245, 158, 11, 0.14);
-}
-
-.chat-input-area textarea:read-only::placeholder {
-  color: #92400e;
+  border-color: #d1d5db;
 }
 
 .chat-input-command-menu {

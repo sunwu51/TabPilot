@@ -91,6 +91,47 @@
   margin: 0;
 }
 
+.session-export-dialog {
+  width: min(560px, 82vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.session-export-dialog-row {
+  display: flex;
+  align-items: center;
+}
+
+.session-export-dialog-share-row {
+  gap: 8px;
+}
+
+.session-export-dialog-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 36px;
+  box-sizing: border-box;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: #111827;
+  background: #fff;
+}
+
+.session-export-dialog-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 1px #bfdbfe;
+}
+
+.session-export-dialog-input:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
 .schedule-job-list {
   overflow-y: auto;
   padding-right: 4px;

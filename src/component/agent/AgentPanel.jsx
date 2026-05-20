@@ -102,8 +102,7 @@ import {
 } from "./panel/input/tabMention";
 import { buildGlobalSessionSearchResult } from "./panel/search/globalSearch";
 import {
-  buildSessionExportMarkdown,
-  downloadMarkdownFile
+  buildSessionExportMarkdown
 } from "./panel/export/sessionExport";
 import {
   buildFinalAssistantMessage,
@@ -145,6 +144,7 @@ import { SessionPlanPanel, PlanApprovalCard } from "./panel/components/SessionPl
 import { ImageEditDialog } from "./panel/components/ImageEditDialog";
 import { SessionSystemPromptDialogBody } from "./panel/components/SessionSystemPromptDialog";
 import { ScheduleJobsDialogBody } from "./panel/components/ScheduleJobsDialog";
+import { SessionExportDialogBody } from "./panel/components/SessionExportDialog";
 
 // Re-export for tests (AgentPanel.{export,imageEdit}.test.jsx import these from this file)
 export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDialog };
@@ -2086,32 +2086,6 @@ export default function AgentPanel() {
     setSessions(await listSessions());
   }
 
-  async function handleExportCurrentSession() {
-    const currentSessionId = activeSessionIdRef.current;
-    if (!currentSessionId) return;
-
-    const currentMessages = getSessionMessages(currentSessionId);
-    if (!Array.isArray(currentMessages) || currentMessages.length === 0) {
-      toast("当前会话还没有可导出的内容", { duration: 2500 });
-      return;
-    }
-
-    const markdown = buildSessionExportMarkdown({
-      title: sessionTitle || "新会话",
-      sessionId: currentSessionId,
-      messages: currentMessages
-    });
-
-    try {
-      const result = await downloadMarkdownFile(`${currentSessionId}.md`, markdown);
-      if (result?.error) throw new Error(result.error);
-      toast.success(`已导出 ${currentSessionId}.md`);
-    } catch (error) {
-      console.error("Failed to export session:", error);
-      toast.error(`导出失败: ${error.message || String(error)}`);
-    }
-  }
-
   async function handleSaveSessionSystemPrompt(systemPrompt, applyToNewSessions = false) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
@@ -2658,10 +2632,18 @@ export default function AgentPanel() {
               </div>
             </div>
           )}
-          <button className="chat-toolbar-btn" onClick={handleExportCurrentSession} title="导出">
-            <span className="chat-toolbar-icon">⬇️</span>
-            <span className="chat-toolbar-full-text">导出</span>
-          </button>
+          <Dialog trigger={
+            <button className="chat-toolbar-btn" title="导出">
+              <span className="chat-toolbar-icon">⬇️</span>
+              <span className="chat-toolbar-full-text">导出</span>
+            </button>
+          }>
+            <SessionExportDialogBody
+              sessionId={sessionId || ""}
+              title={sessionTitle || "新会话"}
+              messages={messages}
+            />
+          </Dialog>
           <Dialog trigger={
             <button className="chat-toolbar-btn" title="调度">
               <span className="chat-toolbar-icon">⏱️</span>
