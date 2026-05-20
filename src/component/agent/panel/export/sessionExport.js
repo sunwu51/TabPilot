@@ -36,7 +36,7 @@ export function serializeExportMessage(msg, imageRefMap = new Map(), options = {
     return [
       `## 工具结果${msg.tool_name ? ` · ${msg.tool_name}` : ""}`,
       "",
-      formatToolResultForMarkdown(msg),
+      formatToolResultForMarkdown(msg, options),
       ""
     ];
   }
@@ -177,7 +177,7 @@ export function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map
   });
 }
 
-export function formatToolResultForMarkdown(msg) {
+export function formatToolResultForMarkdown(msg, options = {}) {
   const parsed = parseToolMessageContent(msg.content);
   const contentBlock = typeof parsed === "string"
     ? formatTextFence(parsed)
@@ -188,6 +188,14 @@ export function formatToolResultForMarkdown(msg) {
 
   if (displayImages.length === 0) {
     return contentBlock;
+  }
+
+  if (options.includeImages === false) {
+    return [
+      contentBlock,
+      "",
+      `[工具图片已省略 · ${displayImages.length} 张]`
+    ].join("\n");
   }
 
   return [

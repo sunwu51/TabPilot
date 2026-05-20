@@ -76,6 +76,9 @@ describe("AgentPanel session export", () => {
           imageRefs: [
             { ref: "img_2", dataUrl: "data:image/png;base64,aGVsbG8=" }
           ],
+          displayImages: [
+            { url: "data:image/png;base64,d29ybGQ=", mediaType: "image/png" }
+          ],
           content: "{}"
         },
         {
@@ -87,6 +90,7 @@ describe("AgentPanel session export", () => {
 
     expect(markdown).toContain("[用户图片已省略 · image/png]");
     expect(markdown).toContain("![输出图](about:blank \"img_2 图片已省略\")");
+    expect(markdown).toContain("[工具图片已省略 · 1 张]");
     expect(markdown).not.toContain("data:image/png;base64");
     expect(markdown).not.toContain("|deRef:img_2|");
   });
