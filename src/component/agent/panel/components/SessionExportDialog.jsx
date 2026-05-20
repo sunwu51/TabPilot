@@ -47,8 +47,14 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
 
     setSharing(true);
     try {
+      const shareMarkdownContent = buildSessionExportMarkdown({
+        title: title || "新会话",
+        sessionId,
+        messages,
+        includeImages: false
+      });
       const result = await shareMarkdown({
-        markdown,
+        markdown: shareMarkdownContent,
         password
       });
       const viewerUrl = String(result?.viewerUrl || result?.url || "").trim();

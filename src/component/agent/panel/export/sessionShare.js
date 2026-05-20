@@ -110,8 +110,14 @@ export async function shareMarkdown({ endpoint = SESSION_SHARE_ENDPOINT, markdow
 
 export async function copyTextToClipboard(text) {
   if (navigator?.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return true;
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      if (!isClipboardFocusError(error)) {
+        throw error;
+      }
+    }
   }
 
   const textarea = document.createElement("textarea");
@@ -120,8 +126,12 @@ export async function copyTextToClipboard(text) {
   textarea.style.position = "fixed";
   textarea.style.opacity = "0";
   textarea.style.pointerEvents = "none";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
   document.body.appendChild(textarea);
+  textarea.focus();
   textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
 
   try {
     if (document.execCommand("copy")) return true;
@@ -130,4 +140,9 @@ export async function copyTextToClipboard(text) {
   }
 
   return false;
+}
+
+function isClipboardFocusError(error) {
+  return error?.name === "NotAllowedError"
+    || /document is not focused/i.test(String(error?.message || ""));
 }

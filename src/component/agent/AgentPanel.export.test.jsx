@@ -54,4 +54,40 @@ describe("AgentPanel session export", () => {
     expect(markdown).toContain("![Codex vs Claude Code](data:image/png;base64,aGVsbG8=)");
     expect(markdown).not.toContain("|deRef:img_2|");
   });
+
+  it("can omit base64 images for lightweight share markdown", () => {
+    const markdown = buildSessionExportMarkdown({
+      title: "图片会话",
+      sessionId: "session_1",
+      includeImages: false,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "请看图片" },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" }
+            }
+          ]
+        },
+        {
+          role: "tool",
+          imageRefs: [
+            { ref: "img_2", dataUrl: "data:image/png;base64,aGVsbG8=" }
+          ],
+          content: "{}"
+        },
+        {
+          role: "assistant",
+          content: "![输出图](|deRef:img_2|)"
+        }
+      ]
+    });
+
+    expect(markdown).toContain("[用户图片已省略 · image/png]");
+    expect(markdown).toContain("![输出图](about:blank \"img_2 图片已省略\")");
+    expect(markdown).not.toContain("data:image/png;base64");
+    expect(markdown).not.toContain("|deRef:img_2|");
+  });
 });

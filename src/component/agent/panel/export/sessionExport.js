@@ -3,8 +3,9 @@ import { formatJsonFence, formatTextFence } from "../utils/scheduleStatus";
 import { parseImageDataUrl, parseToolMessageContent } from "../messages/toolResults";
 import { imageBlockToDataUrl } from "../messages/userMessage";
 
-export function buildSessionExportMarkdown({ title, sessionId, messages }) {
+export function buildSessionExportMarkdown({ title, sessionId, messages, includeImages = true }) {
   const imageRefMap = buildExportImageRefMap(messages);
+  const exportOptions = { includeImages };
   const sections = [
     `# ${title || "新会话"}`,
     "",
@@ -14,21 +15,21 @@ export function buildSessionExportMarkdown({ title, sessionId, messages }) {
   ];
 
   for (const msg of messages || []) {
-    sections.push(...serializeExportMessage(msg, imageRefMap));
+    sections.push(...serializeExportMessage(msg, imageRefMap, exportOptions));
   }
 
   return sections.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function serializeExportMessage(msg, imageRefMap = new Map()) {
+export function serializeExportMessage(msg, imageRefMap = new Map(), options = {}) {
   if (!msg || !msg.role) return [];
 
   if (msg.role === "user") {
-    return serializeUserExportMessage(msg);
+    return serializeUserExportMessage(msg, options);
   }
 
   if (msg.role === "assistant") {
-    return serializeAssistantExportMessage(msg, imageRefMap);
+    return serializeAssistantExportMessage(msg, imageRefMap, options);
   }
 
   if (msg.role === "tool") {
@@ -57,29 +58,29 @@ export function serializeExportMessage(msg, imageRefMap = new Map()) {
   ];
 }
 
-export function serializeUserExportMessage(msg) {
+export function serializeUserExportMessage(msg, options = {}) {
   return [
     "---",
     "",
     "## 用户",
     "",
-    formatUserContentForMarkdown(msg.content),
+    formatUserContentForMarkdown(msg.content, options),
     ""
   ];
 }
 
-export function formatUserContentForMarkdown(content) {
+export function formatUserContentForMarkdown(content, options = {}) {
   if (typeof content === "string") return content.trim() || "_空内容_";
   if (!Array.isArray(content)) return formatUnknownContentForMarkdown(content);
 
   const parts = content
-    .map(formatUserContentBlockForMarkdown)
+    .map(block => formatUserContentBlockForMarkdown(block, options))
     .filter(part => typeof part === "string" && part.trim().length > 0);
 
   return parts.length > 0 ? parts.join("\n\n") : "_空内容_";
 }
 
-export function formatUserContentBlockForMarkdown(block) {
+export function formatUserContentBlockForMarkdown(block, options = {}) {
   if (!block || typeof block !== "object") return "";
 
   if (block.type === "text") {
@@ -94,24 +95,27 @@ export function formatUserContentBlockForMarkdown(block) {
   const dataUrl = imageBlockToDataUrl(block);
   if (dataUrl) {
     const mediaType = parseImageDataUrl(dataUrl)?.mediaType || "image";
+    if (options.includeImages === false) {
+      return `[用户图片已省略 · ${mediaType}]`;
+    }
     return `![用户图片 · ${mediaType}](${dataUrl})`;
   }
 
   return formatJsonFence(block);
 }
 
-export function serializeAssistantExportMessage(msg, imageRefMap = new Map()) {
+export function serializeAssistantExportMessage(msg, imageRefMap = new Map(), options = {}) {
   const sections = [];
 
   if (typeof msg.content === "string" && msg.content.trim()) {
-    sections.push("## 助手", "", replaceMarkdownImageDerefSources(msg.content.trim(), imageRefMap), "");
+    sections.push("## 助手", "", replaceMarkdownImageDerefSources(msg.content.trim(), imageRefMap, options), "");
   }
 
   if (Array.isArray(msg.content)) {
     for (const block of msg.content) {
       if (!block) continue;
       if (block.type === "text" && block.text) {
-        sections.push("## 助手", "", replaceMarkdownImageDerefSources(String(block.text).trim(), imageRefMap), "");
+        sections.push("## 助手", "", replaceMarkdownImageDerefSources(String(block.text).trim(), imageRefMap, options), "");
       } else if (block.type === "tool_use") {
         sections.push(
           `## 工具调用${block.name ? ` · ${block.name}` : ""}`,
@@ -162,9 +166,12 @@ export function buildExportImageRefMap(messages = []) {
   return refs;
 }
 
-export function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map()) {
+export function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map(), options = {}) {
   if (typeof markdown !== "string" || !markdown.includes("|deRef:")) return markdown;
   return markdown.replace(/(!\[[^\]\n]*\]\()\|deRef:(img_[A-Za-z0-9_-]+)\|(\))/g, (match, prefix, ref, suffix) => {
+    if (options.includeImages === false) {
+      return `${prefix}about:blank "${ref} 图片已省略"${suffix}`;
+    }
     const dataUrl = imageRefMap.get(ref);
     return isBase64DataUrl(dataUrl) ? `${prefix}${dataUrl}${suffix}` : match;
   });
