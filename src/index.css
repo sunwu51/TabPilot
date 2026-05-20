@@ -79,6 +79,15 @@ html, body, #root {
   word-break: break-all;
 }
 
+.dialog-dialog .settings-inline-section-title {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid #e5e7eb;
+  color: #374151;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
 .dialog-dialog .settings-secret-field label {
   margin: 3px 0 !important;
 }

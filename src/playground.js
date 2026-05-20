@@ -33,7 +33,7 @@ jsInput.spellcheck = false;
 jsInput.value = inflateStringFromQueryParam(params.get("js") || "");
 
 iframe.id = "preview";
-iframe.setAttribute("sandbox", "allow-forms allow-modals allow-popups allow-presentation allow-scripts");
+iframe.setAttribute("sandbox", "allow-downloads allow-forms allow-modals allow-popups allow-presentation allow-scripts");
 
 editorPanel.className = "editor-panel";
 editorPanel.append(htmlInput, cssInput, jsInput);
@@ -92,15 +92,23 @@ function applyExpandedState() {
 }
 
 function downloadHtml() {
-  const blob = new Blob([buildDocument()], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "playground.html";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  let url = "";
+  try {
+    const blob = new Blob([buildDocument()], { type: "text/html;charset=utf-8" });
+    url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "playground.html";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    flashExportButton("已导出");
+  } catch (error) {
+    console.error("Failed to export playground HTML:", error);
+    flashExportButton("失败");
+  } finally {
+    if (url) setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 
 function serializeQueryString({ forceCollapsed = false } = {}) {
@@ -146,6 +154,14 @@ function flashShareButton(text) {
   shareButton.textContent = text;
   setTimeout(() => {
     shareButton.textContent = originalText;
+  }, 1200);
+}
+
+function flashExportButton(text) {
+  const originalText = exportButton.textContent;
+  exportButton.textContent = text;
+  setTimeout(() => {
+    exportButton.textContent = originalText;
   }, 1200);
 }
 

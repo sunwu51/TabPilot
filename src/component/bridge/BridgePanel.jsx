@@ -6,7 +6,7 @@ import {
   formatWsBridgeStatusTime,
   getWsBridgeStateMeta,
   WS_BRIDGE_STATUS_STORAGE_KEY
-} from "../../api/wsBridgeShared";
+} from "../../api/bridge/wsBridgeStatus";
 
 const MAX_RECORDS = 100;
 

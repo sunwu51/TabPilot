@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { installWarnFilter } from "./warnFilter";
-import { STASH_STORAGE_KEY } from "./api/llm/constants";
+import { STASH_STORAGE_KEY } from "./api/llm";
 import "./index.css";
 import "./stash.css";
 import "highlight.js/styles/github.css";

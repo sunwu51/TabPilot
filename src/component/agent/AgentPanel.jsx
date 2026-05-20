@@ -1,12 +1,15 @@
+/* eslint-disable react-refresh/only-export-components */
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import {
-  API_TYPES,
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
-  MODEL_CONTEXT_WARNING_THRESHOLD_RATIO,
+  IMAGE_API_PROTOCOLS,
   getDefaultApiType,
+  isImageApiConfigured,
   normalizeApiType,
+  normalizeImageApiProtocol,
   normalizeModelContextLimitTokens,
   streamChat,
   executeTool,
@@ -14,7 +17,6 @@ import {
   hasDownloadsPermission,
   isMcpToolCallName
 } from "../../api/llm";
-import { connectMcpServer, listMcpResources, readMcpResource } from "../../api/mcp";
 import {
   generateSessionId,
   listSessions,
@@ -32,7 +34,7 @@ import {
   resetSessionTitle,
   loadDefaultNewSessionSystemPrompt,
   saveDefaultNewSessionSystemPrompt
-} from "../../api/sessions";
+} from "../../api/agent/sessions";
 import {
   EMPTY_AGENT_SKILLS,
   buildSkillsSystemPrompt,
@@ -41,50 +43,115 @@ import {
   mergeBridgeToolDangerous,
   mergeAgentSkillsServerUrl,
   mergeLoadedSkills
-} from "../../api/skills";
+} from "../../api/agent/skills";
 import ChatMessageList from "./ChatMessageList";
 import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
 import toast from "react-hot-toast";
-import { formatProfileForSystemPrompt } from "../../api/userProfile";
-import { refreshSessionKeywords } from "../../api/sessionKeywords";
-import { getLongToolArgumentFields } from "../../api/llm/longToolArgs";
+import { formatProfileForSystemPrompt } from "../../api/agent/userProfile";
+import { refreshSessionKeywords } from "../../api/agent/sessionKeywords";
+import {
+  IMAGE_REF_PATTERN,
+  allocateGeneratedImageRef,
+  collectReservedImageRefsFromMessages,
+  extractPreferredImageRefFromToolMessage,
+  isBase64DataUrl,
+  mergeKnownImageRefsIntoMessages,
+  normalizeImageRefSource,
+  normalizeMessageImageRefs
+} from "./imageRefs";
 import "./chat.css";
 
-const SYSTEM_PROMPT_PLACEHOLDER =
-  "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
+// === Extracted helper modules (see ./panel/) ===
+import {
+  normalizeSessionPlans,
+  getLatestPlan,
+  normalizePlanSteps,
+  derivePlanStatus
+} from "./panel/utils/sessionPlans";
+import { buildStreamingToolArgsState } from "./panel/utils/streamingArgs";
+import {
+  buildContextUsage,
+  getLatestContextUsageFromMessages,
+  formatModelName,
+  normalizeReasoningEffort,
+  isContextUsageWarning,
+  formatContextLimitK,
+  formatContextUsageK,
+  normalizeRequestBodySize,
+  shouldShowRequestBodySize,
+  isRequestBodySizeWarning,
+  formatRequestBodySizeM
+} from "./panel/utils/llmStats";
+import {
+  SLASH_COMMANDS,
+  shouldOpenSlashCommand,
+  filterSlashCommands,
+  buildMemoryCommandPrompt,
+  buildRecallMemoryCommandPrompt
+} from "./panel/input/slashCommand";
+import {
+  getActiveTabMentionState,
+  serializeMentionSkill,
+  filterMentionTabs,
+  queryHttpTabsForMention,
+  buildUserInjectionMeta,
+  buildInjectedUserText
+} from "./panel/input/tabMention";
+import { buildGlobalSessionSearchResult } from "./panel/search/globalSearch";
+import {
+  buildSessionExportMarkdown
+} from "./panel/export/sessionExport";
+import {
+  buildFinalAssistantMessage,
+  buildAssistantToolCallMessage
+} from "./panel/messages/assistantMessages";
+import {
+  buildToolResultMessages,
+  buildLlmErrorDisplayMessage,
+  stampLastUserDuration,
+  buildDisplayToolResultMessage,
+  collectToolResultDisplayImages
+} from "./panel/messages/toolResults";
+import {
+  findImageEditMcpTool,
+  getMcpToolCallName,
+  buildImageEditUserPrompt,
+  buildImageEditMessageRefs
+} from "./panel/messages/imageEditTool";
+import {
+  imageBlockToDataUrl,
+  isImageFile,
+  imageFileToAttachmentItem,
+  resolveImageRefsInValue,
+  normalizeImageRefToken,
+  summarizeImageRefCache,
+  buildUserMessageContent
+} from "./panel/messages/userMessage";
+import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
+import {
+  mergeMcpToolLists,
+  loadSkillsIndexFromSkillStation,
+  loadSkillStationTools
+} from "./panel/skills/skillsAdapter";
+
+// === Extracted JSX subcomponents (see ./panel/components/) ===
+import { InputCommandMenu } from "./panel/components/InputCommandMenu";
+import { StreamingToolArgsBubble } from "./panel/components/StreamingToolArgsBubble";
+import { SessionPlanPanel, PlanApprovalCard } from "./panel/components/SessionPlanPanel";
+import { ImageEditDialog } from "./panel/components/ImageEditDialog";
+import { SessionSystemPromptDialogBody } from "./panel/components/SessionSystemPromptDialog";
+import { ScheduleJobsDialogBody } from "./panel/components/ScheduleJobsDialog";
+import { SessionExportDialogBody } from "./panel/components/SessionExportDialog";
+
+// Re-export for tests (AgentPanel.{export,imageEdit}.test.jsx import these from this file)
+export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDialog };
+
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
-const IMAGE_DEREF_PATTERN = /^\|deRef:(img_[A-Za-z0-9_-]+)\|$/;
-const SLASH_COMMANDS = [
-  {
-    id: "mem",
-    name: "/mem",
-    title: "总结到记忆",
-    description: "提炼本次对话中对未来有用的信息，并在有记忆工具时保存。"
-  },
-  {
-    id: "recall_mem",
-    name: "/recall_mem",
-    title: "召回相关记忆",
-    description: "根据当前对话检索长期记忆，并把相关信息拉取到当前上下文。"
-  },
-  {
-    id: "clear",
-    name: "/clear",
-    title: "清空当前会话",
-    description: "与工具栏清空按钮相同，会清空消息、计划和关键词。"
-  }
-];
-
-/**
- * Main Agent chat panel with session management.
- * - Auto-saves conversation to chrome.storage.local
- * - Toolbar at top: new session / title / history dropdown
- * - Restores last session on mount
- */
+const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 export default function AgentPanel() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -109,9 +176,12 @@ export default function AgentPanel() {
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     supportsImageInput: false,
     reasoningEffort: "default",
-    omitThinkingFromRequests: false
+    omitThinkingFromRequests: false,
+    imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
+    imageToolsEnabled: false
   });
   const [contextUsage, setContextUsage] = useState(null);
+  const [requestBodySize, setRequestBodySize] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
   const [streamingContent, setStreamingContent] = useState(null);
@@ -146,6 +216,7 @@ export default function AgentPanel() {
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
   const sessionImageRefsRef = useRef(new Map());
+  const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
@@ -157,6 +228,7 @@ export default function AgentPanel() {
   const latestPlanStatusRef = useRef(null);
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [imageEditRequest, setImageEditRequest] = useState(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   // eslint-disable-next-line no-unused-vars
   const [_inputFocused, setInputFocused] = useState(false);
@@ -364,8 +436,11 @@ export default function AgentPanel() {
         applyLatestPlanFromPlans(meta.plans);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
-        setContextUsage(getSessionRuntime(restored.id).contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+        const restoredRuntime = getSessionRuntime(restored.id);
+        setContextUsage(restoredRuntime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+        setRequestBodySize(restoredRuntime.requestBodySize || null);
         setMessages(msgs);
+        setImageEditRequest(null);
         setLoading(false);
       } else {
         // Create a fresh session
@@ -381,10 +456,12 @@ export default function AgentPanel() {
         setSessionId(id);
         setSessionTitle("新会话");
         setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
+        setImageEditRequest(null);
         applyLatestPlanFromPlans([]);
         shouldAutoFollowBottomRef.current = true;
         setShowJumpToBottom(false);
         setContextUsage(null);
+        setRequestBodySize(null);
         setMessages([]);
         setLoading(false);
         setSessions(await listSessions());
@@ -430,7 +507,9 @@ export default function AgentPanel() {
           modelContextLimitTokens: normalizeModelContextLimitTokens(nextConfig.modelContextLimitTokens),
           supportsImageInput: nextConfig.supportsImageInput === true,
           reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
-          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true
+          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true,
+          imageApiProtocol: normalizeImageApiProtocol(nextConfig.imageApiProtocol),
+          imageToolsEnabled: isImageApiConfigured(nextConfig)
         });
       }
     }
@@ -473,6 +552,41 @@ export default function AgentPanel() {
   }, [messages.length]);
 
   const combinedMcpTools = mergeMcpToolLists(mcpTools, skillStationTools);
+  const externalImageEditTool = findImageEditMcpTool(combinedMcpTools);
+  const builtinImageEditTool = llmConfigInfo.imageToolsEnabled ? { name: "image_edit", _toolCallName: "image_edit" } : null;
+  const imageEditTool = externalImageEditTool || builtinImageEditTool;
+  const imageEditingEnabled = !!imageEditTool;
+  const imageEditMaskSupported = !!externalImageEditTool || llmConfigInfo.imageApiProtocol !== IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS;
+
+  function openImageEditDialog(image) {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    if (!imageEditTool) {
+      toast.error("未找到 image_edit 工具，请先配置 Image API 或连接 image_edit MCP 工具");
+      return;
+    }
+
+    const source = normalizeImageRefSource(image?.src);
+    if (!source) {
+      toast.error("无法识别这张图片的来源");
+      return;
+    }
+
+    const ref = registerSessionImageDataUrl(currentSessionId, source, image?.ref);
+    if (!ref) {
+      toast.error("无法为这张图片创建 ref");
+      return;
+    }
+
+    const request = {
+      src: source,
+      alt: image?.alt || "图片",
+      ref,
+      toolCallName: getMcpToolCallName(imageEditTool),
+      maskSupported: imageEditMaskSupported
+    };
+    setImageEditRequest(request);
+  }
 
   /**
    * The chat should feel pinned to the bottom only while the user is reading the
@@ -527,7 +641,8 @@ export default function AgentPanel() {
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
   }
 
@@ -537,13 +652,29 @@ export default function AgentPanel() {
    */
   async function autoSave(targetSessionId, msgs) {
     if (!targetSessionId) return;
-    const title = extractTitle(msgs);
-    await saveSession(targetSessionId, msgs, title);
-    const latestSessions = await listSessions();
-    setSessions(latestSessions);
-    if (activeSessionIdRef.current === targetSessionId) {
-      setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
-    }
+    const messagesToSave = attachKnownImageRefsToMessages(targetSessionId, msgs);
+    const title = extractTitle(messagesToSave);
+    const state = sessionSaveStateRef.current.get(targetSessionId) || {
+      version: 0,
+      chain: Promise.resolve()
+    };
+    const version = state.version + 1;
+    state.version = version;
+
+    const saveTask = state.chain.catch(() => undefined).then(async () => {
+      const latestState = sessionSaveStateRef.current.get(targetSessionId);
+      if (!latestState || latestState.version !== version) return;
+      await saveSession(targetSessionId, messagesToSave, title);
+      const latestSessions = await listSessions();
+      setSessions(latestSessions);
+      if (activeSessionIdRef.current === targetSessionId) {
+        setSessionTitle(latestSessions.find(s => s.id === targetSessionId)?.title || title);
+      }
+    });
+
+    state.chain = saveTask;
+    sessionSaveStateRef.current.set(targetSessionId, state);
+    await saveTask;
   }
 
 
@@ -563,7 +694,8 @@ export default function AgentPanel() {
       abort: null,
       runId: 0,
       pendingApproval: null,
-      contextUsage: null
+      contextUsage: null,
+      requestBodySize: null
     };
   }
 
@@ -574,6 +706,7 @@ export default function AgentPanel() {
       setLoading(!!next.loading);
       setPendingApproval(next.pendingApproval || null);
       setContextUsage(next.contextUsage || null);
+      setRequestBodySize(next.requestBodySize || null);
       if (!next.loading && !next.pendingApproval && shouldFocusInputWhenReadyRef.current) {
         requestAnimationFrame(() => {
           if (!activeSessionIdRef.current || activeSessionIdRef.current !== targetSessionId) return;
@@ -593,15 +726,23 @@ export default function AgentPanel() {
     return sessionMessagesRef.current.get(targetSessionId) || [];
   }
 
+  function attachKnownImageRefsToMessages(targetSessionId, msgs) {
+    if (!targetSessionId || !Array.isArray(msgs)) return msgs;
+    const cache = sessionImageRefsRef.current.get(targetSessionId);
+    if (!cache?.refs || cache.refs.size === 0) return msgs;
+    return mergeKnownImageRefsIntoMessages(msgs, cache);
+  }
+
   function setSessionMessages(targetSessionId, msgs) {
-    sessionMessagesRef.current.set(targetSessionId, msgs);
-    if (sessionHasImageRefs(msgs)) {
-      rebuildSessionImageRefs(targetSessionId, msgs);
+    const nextMessages = attachKnownImageRefsToMessages(targetSessionId, msgs);
+    sessionMessagesRef.current.set(targetSessionId, nextMessages);
+    if (Array.isArray(nextMessages) && nextMessages.length > 0) {
+      rebuildSessionImageRefs(targetSessionId, nextMessages);
     } else {
       sessionImageRefsRef.current.delete(targetSessionId);
     }
     if (activeSessionIdRef.current === targetSessionId) {
-      setMessages(msgs);
+      setMessages(nextMessages);
     }
   }
 
@@ -611,6 +752,7 @@ export default function AgentPanel() {
       cache = {
         refs: new Map(),
         byDataUrl: new Map(),
+        reservedRefs: new Set(),
         nextIndex: 1
       };
       sessionImageRefsRef.current.set(targetSessionId, cache);
@@ -619,38 +761,40 @@ export default function AgentPanel() {
   }
 
   function registerSessionImageDataUrl(targetSessionId, dataUrl, preferredRef) {
-    if (!targetSessionId || !isBase64DataUrl(dataUrl)) return null;
+    const source = normalizeImageRefSource(dataUrl);
+    if (!targetSessionId || !source) return null;
     const cache = getSessionImageRefCache(targetSessionId);
-    const existing = cache.byDataUrl.get(dataUrl);
+    const existing = cache.byDataUrl.get(source);
     if (existing) return existing;
 
-    let ref = typeof preferredRef === "string" && /^img_[A-Za-z0-9_-]+$/.test(preferredRef)
-      ? preferredRef
-      : `img_${cache.nextIndex}`;
-    while (cache.refs.has(ref) && cache.refs.get(ref) !== dataUrl) {
-      ref = `img_${cache.nextIndex}`;
-      cache.nextIndex += 1;
+    let ref = IMAGE_REF_PATTERN.test(String(preferredRef || "").trim())
+      ? String(preferredRef).trim()
+      : allocateGeneratedImageRef(cache);
+    while (cache.refs.has(ref) && cache.refs.get(ref) !== source) {
+      ref = allocateGeneratedImageRef(cache);
     }
 
-    cache.refs.set(ref, dataUrl);
-    cache.byDataUrl.set(dataUrl, ref);
+    cache.refs.set(ref, source);
+    cache.byDataUrl.set(source, ref);
     const numericSuffix = Number(ref.match(/^img_(\d+)$/)?.[1]);
     if (Number.isFinite(numericSuffix)) {
       cache.nextIndex = Math.max(cache.nextIndex, numericSuffix + 1);
-    } else {
-      cache.nextIndex += 1;
     }
     return ref;
   }
 
-  function rebuildSessionImageRefs(targetSessionId, msgs) {
+  function rebuildSessionImageRefs(targetSessionId, msgs, options = {}) {
     if (!targetSessionId || !Array.isArray(msgs)) return;
-    sessionImageRefsRef.current.delete(targetSessionId);
+    if (!options.preserveExisting) {
+      sessionImageRefsRef.current.delete(targetSessionId);
+    }
+    const cache = getSessionImageRefCache(targetSessionId);
+    cache.reservedRefs = collectReservedImageRefsFromMessages(msgs);
     for (const msg of msgs) {
       if (!msg || typeof msg !== "object") continue;
       if (Array.isArray(msg.imageRefs)) {
         for (const item of msg.imageRefs) {
-          registerSessionImageDataUrl(targetSessionId, item?.dataUrl, item?.ref);
+          registerSessionImageDataUrl(targetSessionId, item?.dataUrl || item?.source || item?.url, item?.ref);
         }
       }
       if (Array.isArray(msg.content)) {
@@ -659,25 +803,70 @@ export default function AgentPanel() {
           if (dataUrl) registerSessionImageDataUrl(targetSessionId, dataUrl);
         }
       }
-      if (isBase64DataUrl(msg.displayImageUrl)) {
-        registerSessionImageDataUrl(targetSessionId, msg.displayImageUrl);
+      const displayImageSources = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
+        ? msg.displayImages.map(image => image?.url)
+        : [msg.displayImageUrl];
+      const preferredRef = extractPreferredImageRefFromToolMessage(msg);
+      for (const source of displayImageSources) {
+        const displayImageSource = normalizeImageRefSource(source);
+        if (isBase64DataUrl(displayImageSource)) {
+          registerSessionImageDataUrl(targetSessionId, displayImageSource, preferredRef);
+        }
       }
     }
-  }
-
-  function sessionHasImageRefs(msgs) {
-    if (!Array.isArray(msgs)) return false;
-    return msgs.some(msg => {
-      if (!msg || typeof msg !== "object") return false;
-      if (Array.isArray(msg.imageRefs) && msg.imageRefs.length > 0) return true;
-      if (isBase64DataUrl(msg.displayImageUrl)) return true;
-      return Array.isArray(msg.content) && msg.content.some(block => !!imageBlockToDataUrl(block));
-    });
   }
 
   function resolveToolImageRefs(targetSessionId, args) {
     const cache = getSessionImageRefCache(targetSessionId);
     return resolveImageRefsInValue(args, cache.refs);
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const debugApi = {
+      list: () => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        return summarizeImageRefCache(currentSessionId, sessionImageRefsRef.current.get(currentSessionId));
+      },
+      listAll: () => Object.fromEntries(
+        Array.from(sessionImageRefsRef.current.entries()).map(([id, cache]) => [
+          id,
+          summarizeImageRefCache(id, cache)
+        ])
+      ),
+      has: (ref) => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        const cache = sessionImageRefsRef.current.get(currentSessionId);
+        const imageRef = normalizeImageRefToken(ref);
+        return !!(imageRef && cache?.refs?.has(imageRef));
+      },
+      get: (ref) => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        const cache = sessionImageRefsRef.current.get(currentSessionId);
+        const imageRef = normalizeImageRefToken(ref);
+        return imageRef ? (cache?.refs?.get(imageRef) || "") : "";
+      },
+      resolveArgs: (args) => {
+        const currentSessionId = activeSessionIdRef.current || "";
+        const cache = sessionImageRefsRef.current.get(currentSessionId);
+        return resolveImageRefsInValue(args, cache?.refs || new Map());
+      }
+    };
+    window[IMAGE_REFS_DEBUG_GLOBAL] = debugApi;
+    return () => {
+      if (window[IMAGE_REFS_DEBUG_GLOBAL] === debugApi) {
+        delete window[IMAGE_REFS_DEBUG_GLOBAL];
+      }
+    };
+  }, []);
+
+  function resolveSessionImageSrc(ref) {
+    const imageRef = String(ref || "").trim();
+    if (!IMAGE_REF_PATTERN.test(imageRef)) return "";
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return "";
+    const cache = sessionImageRefsRef.current.get(currentSessionId);
+    return cache?.refs?.get(imageRef) || "";
   }
 
   async function openSession(id, options = {}) {
@@ -715,8 +904,10 @@ export default function AgentPanel() {
     setMessages(msgs);
     const runtime = getSessionRuntime(id);
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+    setRequestBodySize(runtime.requestBodySize || null);
     setLoading(!!runtime.loading);
     setPendingApproval(runtime.pendingApproval || null);
+    setImageEditRequest(null);
     setShowHistory(false);
   }
 
@@ -1078,7 +1269,7 @@ export default function AgentPanel() {
     }
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
-    setSessionRuntime(id, { loading: false, abort: null, runId: 0 });
+    setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
     void saveLastActiveSessionId(id);
     setSessionId(id);
@@ -1088,12 +1279,14 @@ export default function AgentPanel() {
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
+    setRequestBodySize(null);
     setMessages([]);
     setStreamingContent(null);
     setStreamingThinking(null);
     setStreamingToolArgs(null);
     setInput("");
     setPendingAttachments([]);
+    setImageEditRequest(null);
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
     closeInputCompletions();
@@ -1121,6 +1314,7 @@ export default function AgentPanel() {
     stopSessionGeneration(id);
 
     sessionMessagesRef.current.delete(id);
+    sessionImageRefsRef.current.delete(id);
     sessionPlansRef.current.delete(id);
     sessionRuntimeRef.current.delete(id);
     await deleteSession(id);
@@ -1234,7 +1428,8 @@ export default function AgentPanel() {
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
       `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
-      `- If an image-generation tool returns an image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
+      `- To show an image ref to the user, render it with Markdown image syntax as ![image](|deRef:img_1|). Do not paste or copy base64 into your message. The host system will resolve the ref only for the visual preview.\n` +
+      `- If an image-generation tool returns only a public image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
       `- Respond in the same language as the user.` +
       currentSessionSystemPrompt +
       buildSkillsSystemPrompt(agentSkills) +
@@ -1253,7 +1448,11 @@ export default function AgentPanel() {
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false,
         reasoningEffort: "default",
-        omitThinkingFromRequests: false
+        omitThinkingFromRequests: false,
+        imageBaseUrl: "",
+        imageApiKey: "",
+        imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
+        imageModel: DEFAULT_IMAGE_MODEL
       },
       betaFeaturesEnabled: true
     });
@@ -1263,7 +1462,9 @@ export default function AgentPanel() {
       modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true
+      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
+      imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
     return {
       ...llmConfig,
@@ -1272,6 +1473,8 @@ export default function AgentPanel() {
       supportsImageInput: llmConfig?.supportsImageInput === true,
       reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
       omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
+      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
+      imageToolsEnabled: isImageApiConfigured(llmConfig),
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
   }
@@ -1351,6 +1554,10 @@ export default function AgentPanel() {
         return ref ? { ref, dataUrl: att.dataUrl } : null;
       })
       .filter(Boolean);
+    const localImageRefs = normalizeMessageImageRefs([
+      ...imageRefs,
+      ...(Array.isArray(options.imageRefs) ? options.imageRefs : [])
+    ]);
 
     const hasAnyAttachment = imageAtts.length > 0 || textAtts.length > 0;
     const userMsg = {
@@ -1360,7 +1567,9 @@ export default function AgentPanel() {
         ? buildUserMessageContent(finalText, imageAtts, textAtts, imageRefs)
         : finalText
     };
-    if (imageRefs.length > 0) userMsg.imageRefs = imageRefs;
+    if (localImageRefs.length > 0) {
+      userMsg.imageRefs = localImageRefs;
+    }
     if (injectionMeta) {
       userMsg.displayContent = text || "请根据我指定的上下文回答。";
       userMsg.injectedUserContext = injectionMeta;
@@ -1457,6 +1666,12 @@ export default function AgentPanel() {
         if (activeSessionIdRef.current === targetSessionId) {
           setStreamingToolArgs(null);
         }
+      },
+
+      onRequestBodySize: (size) => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        const nextRequestBodySize = normalizeRequestBodySize(size);
+        setSessionRuntime(targetSessionId, { requestBodySize: nextRequestBodySize });
       },
 
       onRetry: ({ nextAttempt, maxAttempts, error }) => {
@@ -1583,6 +1798,7 @@ export default function AgentPanel() {
             const currentMsgs = getSessionMessages(targetSessionId);
             const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
             setSessionMessages(targetSessionId, updatedMsgs);
+            void autoSave(targetSessionId, updatedMsgs);
           }
 
           if (!isCurrentRun(targetSessionId, runId)) return;
@@ -1628,7 +1844,8 @@ export default function AgentPanel() {
       sessionId: targetSessionId,
       supportsImageInput: config.supportsImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
-      enableBetaFeatures: config.enableBetaFeatures !== false
+      enableBetaFeatures: config.enableBetaFeatures !== false,
+      imageToolsEnabled: config.imageToolsEnabled === true
     });
 
     if (!isCurrentRun(targetSessionId, runId)) {
@@ -1648,7 +1865,6 @@ export default function AgentPanel() {
 
   async function handlePaste(e) {
     const items = Array.from(e.clipboardData?.items || []);
-    const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
     const canImage = llmConfigInfo.supportsImageInput;
 
     let imageFiles = [];
@@ -1656,16 +1872,16 @@ export default function AgentPanel() {
       imageFiles = items
         .filter(it => it.kind === "file" && (it.type.startsWith("image/") || it.type === ""))
         .map(it => it.getAsFile())
-        .filter(f => f && (f.type.startsWith("image/") || IMAGE_EXT.test(f.name)));
+        .filter(isImageFile);
 
       const allFiles = Array.from(e.clipboardData?.files || []);
       if (imageFiles.length === 0) {
-        imageFiles = allFiles.filter(f => f.type.startsWith("image/") || IMAGE_EXT.test(f.name));
+        imageFiles = allFiles.filter(isImageFile);
       }
     }
 
     const allFiles = Array.from(e.clipboardData?.files || []);
-    const textFiles = allFiles.filter(f => isTextFile(f) && !f.type.startsWith("image/") && !IMAGE_EXT.test(f.name));
+    const textFiles = allFiles.filter(f => isTextFile(f) && !isImageFile(f));
 
     if (imageFiles.length > 0 || textFiles.length > 0) {
       e.preventDefault();
@@ -1684,8 +1900,8 @@ export default function AgentPanel() {
     e.stopPropagation();
 
     const files = Array.from(e.dataTransfer?.files || []);
-    const imgs = files.filter(f => f.type.startsWith("image/"));
-    const texts = files.filter(f => isTextFile(f) && !f.type.startsWith("image/"));
+    const imgs = files.filter(isImageFile);
+    const texts = files.filter(f => isTextFile(f) && !isImageFile(f));
 
     if (imgs.length > 0) await handleImageFiles(imgs);
     if (texts.length > 0) await handleTextFiles(texts);
@@ -1707,17 +1923,8 @@ export default function AgentPanel() {
     const newItems = [];
     for (const file of files) {
       try {
-        const rawDataUrl = await blobToDataUrl(file);
-        const optimizedDataUrl = await optimizeImageDataUrl(rawDataUrl);
-        const parsed = parseImageDataUrl(optimizedDataUrl);
-        if (!parsed) continue;
-        newItems.push({
-          id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: "image",
-          dataUrl: optimizedDataUrl,
-          mediaType: parsed.mediaType,
-          fileName: file.name
-        });
+        const item = await imageFileToAttachmentItem(file);
+        if (item) newItems.push(item);
       } catch (error) {
         console.error("Failed to process image:", error);
         toast.error(`图片处理失败: ${file.name}`);
@@ -1755,6 +1962,66 @@ export default function AgentPanel() {
     setPendingAttachments(prev => prev.filter(a => a.id !== id));
   }
 
+  function closeImageEditDialog() {
+    setImageEditRequest(null);
+  }
+
+  async function handleConfirmImageEdit({ suggestion, maskDataUrl, referenceImages }) {
+    const request = imageEditRequest;
+    const currentSessionId = activeSessionIdRef.current;
+    if (!request || !currentSessionId) return;
+    if (loading || pendingApproval) {
+      toast.error("当前会话正在处理其他请求");
+      return;
+    }
+
+    const source = normalizeImageRefSource(request.src);
+    const imageRef = registerSessionImageDataUrl(currentSessionId, source, request.ref);
+    if (!imageRef) {
+      toast.error("无法为这张图片创建 ref");
+      return;
+    }
+
+    let maskRef = "";
+    const normalizedMask = normalizeImageRefSource(maskDataUrl);
+    if (normalizedMask) {
+      maskRef = registerSessionImageDataUrl(currentSessionId, normalizedMask);
+    }
+
+    const referenceSources = (Array.isArray(referenceImages) ? referenceImages : [])
+      .map(item => normalizeImageRefSource(item?.dataUrl || item?.source || item?.url))
+      .filter(Boolean);
+    const additionalImageRefs = referenceSources
+      .map(source => registerSessionImageDataUrl(currentSessionId, source))
+      .filter(Boolean);
+
+    const toolCallName = request.toolCallName || getMcpToolCallName(imageEditTool);
+    const text = buildImageEditUserPrompt({
+      toolCallName,
+      imageRef,
+      maskRef,
+      additionalImageRefs,
+      suggestion
+    });
+    const imageEditRefs = buildImageEditMessageRefs({
+      imageRef,
+      imageSource: source,
+      maskRef,
+      maskSource: normalizedMask,
+      referenceRefs: additionalImageRefs,
+      referenceSources
+    });
+
+    setImageEditRequest(null);
+    await sendMessage({
+      text,
+      attachments: [],
+      selectedTabs: [],
+      selectedSkills: [],
+      imageRefs: imageEditRefs
+    });
+  }
+
 
   function stopGeneration() {
     const currentSessionId = activeSessionIdRef.current;
@@ -1785,6 +2052,7 @@ export default function AgentPanel() {
       (Array.isArray(currentMessages) && currentMessages.length > 0) ||
       String(input || "").trim() ||
       pendingAttachments.length > 0 ||
+      imageEditRequest ||
       getSessionPlans(currentSessionId).length > 0;
     if (hasContent && shouldConfirm) {
       const ok = await requestClearCurrentSessionConfirm();
@@ -1792,12 +2060,13 @@ export default function AgentPanel() {
     }
     stopSessionGeneration(currentSessionId);
     enableAutoFollowBottom("auto");
-    setSessionRuntime(currentSessionId, { contextUsage: null });
+    setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
     setSessionMessages(currentSessionId, []);
     sessionPlansRef.current.set(currentSessionId, []);
     applyLatestPlanFromPlans([]);
     setInput("");
     setPendingAttachments([]);
+    setImageEditRequest(null);
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
     closeInputCompletions();
@@ -1815,32 +2084,6 @@ export default function AgentPanel() {
       await clearSessionKeywords(currentSessionId);
     }
     setSessions(await listSessions());
-  }
-
-  async function handleExportCurrentSession() {
-    const currentSessionId = activeSessionIdRef.current;
-    if (!currentSessionId) return;
-
-    const currentMessages = getSessionMessages(currentSessionId);
-    if (!Array.isArray(currentMessages) || currentMessages.length === 0) {
-      toast("当前会话还没有可导出的内容", { duration: 2500 });
-      return;
-    }
-
-    const markdown = buildSessionExportMarkdown({
-      title: sessionTitle || "新会话",
-      sessionId: currentSessionId,
-      messages: currentMessages
-    });
-
-    try {
-      const result = await downloadMarkdownFile(`${currentSessionId}.md`, markdown);
-      if (result?.error) throw new Error(result.error);
-      toast.success(`已导出 ${currentSessionId}.md`);
-    } catch (error) {
-      console.error("Failed to export session:", error);
-      toast.error(`导出失败: ${error.message || String(error)}`);
-    }
   }
 
   async function handleSaveSessionSystemPrompt(systemPrompt, applyToNewSessions = false) {
@@ -2292,7 +2535,7 @@ export default function AgentPanel() {
 
     const truncated = msgs.slice(0, index);
     enableAutoFollowBottom("auto");
-    setSessionRuntime(currentSessionId, { contextUsage: null });
+    setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
     setSessionMessages(currentSessionId, truncated);
     setInput(text);
     setPendingAttachments(restoredAttachments);
@@ -2321,6 +2564,9 @@ export default function AgentPanel() {
   const filteredMentionTabs = getFilteredMentionTabs();
   const contextUsageWarning = isContextUsageWarning(contextUsage, llmConfigInfo.modelContextLimitTokens);
   const contextStatusTitle = `上下文：${formatContextUsageK(contextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
+  const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
+  const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
+  const requestBodySizeTitle = `请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`;
   const inputResizeDisabled = loading || !!pendingApproval;
 
   return (
@@ -2386,10 +2632,18 @@ export default function AgentPanel() {
               </div>
             </div>
           )}
-          <button className="chat-toolbar-btn" onClick={handleExportCurrentSession} title="导出">
-            <span className="chat-toolbar-icon">⬇️</span>
-            <span className="chat-toolbar-full-text">导出</span>
-          </button>
+          <Dialog trigger={
+            <button className="chat-toolbar-btn" title="导出">
+              <span className="chat-toolbar-icon">⬇️</span>
+              <span className="chat-toolbar-full-text">导出</span>
+            </button>
+          }>
+            <SessionExportDialogBody
+              sessionId={sessionId || ""}
+              title={sessionTitle || "新会话"}
+              messages={messages}
+            />
+          </Dialog>
           <Dialog trigger={
             <button className="chat-toolbar-btn" title="调度">
               <span className="chat-toolbar-icon">⏱️</span>
@@ -2511,6 +2765,15 @@ export default function AgentPanel() {
         />
       )}
 
+      {imageEditRequest && (
+        <ImageEditDialog
+          request={imageEditRequest}
+          disabled={loading || !!pendingApproval}
+          onCancel={closeImageEditDialog}
+          onConfirm={handleConfirmImageEdit}
+        />
+      )}
+
       <div
         className="chat-messages"
         ref={messagesScrollerRef}
@@ -2531,12 +2794,20 @@ export default function AgentPanel() {
                 messages={messages}
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={openImageEditDialog}
+                imageSrcResolver={resolveSessionImageSrc}
               />
               {streamingThinking !== null && streamingThinking.length > 0 && (
                 <AssistantThinkingBubble text={streamingThinking} />
               )}
               {streamingContent !== null && streamingContent.length > 0 && (
-                <AssistantTextBubble text={streamingContent} />
+                <AssistantTextBubble
+                  text={streamingContent}
+                  imageEditingEnabled={imageEditingEnabled}
+                  onImageEditRequest={openImageEditDialog}
+                  imageSrcResolver={resolveSessionImageSrc}
+                />
               )}
               {streamingToolArgs && (
                 <StreamingToolArgsBubble state={streamingToolArgs} />
@@ -2757,7 +3028,7 @@ export default function AgentPanel() {
               onPaste={handlePaste}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              placeholder={`输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
+              placeholder={loading ? "模型正在输出，暂时不能输入..." : `输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
               rows={3}
               readOnly={loading}
               disabled={!!pendingApproval}
@@ -2766,6 +3037,14 @@ export default function AgentPanel() {
               <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
                 模型：{formatModelName(llmConfigInfo.model)}
               </span>
+              {showRequestBodySize && (
+                <span
+                  className={`chat-input-status-request-body${requestBodySizeWarning ? " chat-input-status-request-body-warning" : ""}`}
+                  title={requestBodySizeTitle}
+                >
+                  请求体：{formatRequestBodySizeM(requestBodySize)}
+                </span>
+              )}
               <span
                 className={`chat-input-status-context${contextUsageWarning ? " chat-input-status-context-warning" : ""}`}
                 title={contextStatusTitle}
@@ -2812,2014 +3091,4 @@ export default function AgentPanel() {
       </div>
     </div>
   );
-}
-
-// ==================== Helper functions ====================
-
-
-function normalizeSessionPlans(plans) {
-  return Array.isArray(plans) ? plans.filter(Boolean) : [];
-}
-
-function useAutoScrollMenuOnPointerEdge(active) {
-  const ref = useRef(null);
-  const frameRef = useRef(null);
-  const directionRef = useRef(0);
-
-  useEffect(() => {
-    if (!active) {
-      directionRef.current = 0;
-      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-      return;
-    }
-
-    function step() {
-      const el = ref.current;
-      if (el && directionRef.current !== 0) {
-        el.scrollTop += directionRef.current * 8;
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        frameRef.current = null;
-      }
-    }
-
-    function onMouseMove(event) {
-      const el = ref.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const edge = 28;
-      const previous = directionRef.current;
-      if (event.clientY > rect.bottom - edge) {
-        directionRef.current = 1;
-      } else if (event.clientY < rect.top + edge) {
-        directionRef.current = -1;
-      } else {
-        directionRef.current = 0;
-      }
-      if (directionRef.current !== 0 && previous === 0 && frameRef.current == null) {
-        frameRef.current = requestAnimationFrame(step);
-      }
-      if (directionRef.current === 0 && frameRef.current != null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-    }
-
-    function onMouseLeave() {
-      directionRef.current = 0;
-      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-    }
-
-    const el = ref.current;
-    el?.addEventListener("mousemove", onMouseMove);
-    el?.addEventListener("mouseleave", onMouseLeave);
-    return () => {
-      el?.removeEventListener("mousemove", onMouseMove);
-      el?.removeEventListener("mouseleave", onMouseLeave);
-      if (frameRef.current != null) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-      directionRef.current = 0;
-    };
-  }, [active]);
-
-  return ref;
-}
-
-/* eslint-disable react/prop-types */
-function InputCommandMenu({
-  slashOpen,
-  slashCommands,
-  slashIndex,
-  onSlashHover,
-  onSlashSelect,
-  tabOpen,
-  tabs,
-  tabIndex,
-  onTabHover,
-  onTabSelect
-}) {
-  const menuRef = useAutoScrollMenuOnPointerEdge(slashOpen || tabOpen);
-  useEffect(() => {
-    const activeItem = menuRef.current?.querySelector(".chat-input-command-item-active");
-    activeItem?.scrollIntoView({ block: "nearest" });
-  }, [menuRef, slashIndex, tabIndex, slashOpen, tabOpen]);
-
-  if (slashOpen) {
-    return (
-      <div ref={menuRef} className="chat-input-command-menu" role="listbox" aria-label="内置指令">
-        {slashCommands.length === 0 ? (
-          <div className="chat-input-command-empty">没有匹配的内置指令</div>
-        ) : slashCommands.map((command, index) => (
-          <button
-            key={command.id}
-            type="button"
-            className={`chat-input-command-item ${index === slashIndex ? "chat-input-command-item-active" : ""}`}
-            onMouseMove={() => onSlashHover(index)}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onSlashSelect(command)}
-          >
-            <span className="chat-input-command-name">{command.name}</span>
-            <span className="chat-input-command-copy">
-              <span className="chat-input-command-title-row">
-                <span className="chat-input-command-title">{command.title}</span>
-                {command.type !== "skill" && (
-                  <span className="chat-input-command-badge">内置指令</span>
-                )}
-              </span>
-              <span className="chat-input-command-desc">{command.description}</span>
-            </span>
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  if (tabOpen) {
-    return (
-      <div ref={menuRef} className="chat-input-command-menu chat-input-tab-menu" role="listbox" aria-label="选择标签页">
-        {tabs.length === 0 ? (
-          <div className="chat-input-command-empty">没有匹配的 http/https 标签页</div>
-        ) : tabs.map((tab, index) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`chat-input-command-item ${index === tabIndex ? "chat-input-command-item-active" : ""}`}
-            onMouseMove={() => onTabHover(index)}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onTabSelect(tab)}
-          >
-            <span className="chat-input-tab-favicon">
-              {tab.favIconUrl ? <img src={tab.favIconUrl} alt="" /> : "@"}
-            </span>
-            <span className="chat-input-command-copy">
-              <span className="chat-input-command-title">{tab.title || "未命名标签页"}</span>
-              <span className="chat-input-command-desc">{tab.url}</span>
-            </span>
-            <span className="chat-input-tab-id">#{tab.id}</span>
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  return null;
-}
-/* eslint-enable react/prop-types */
-
-function shouldOpenSlashCommand(input) {
-  return /^\/[a-zA-Z0-9_-]*$/.test(String(input || "").trimStart());
-}
-
-function filterSlashCommands(commands, skills, selectedSkills, input) {
-  const query = String(input || "").trimStart().replace(/^\//, "").toLowerCase();
-  const selectedSkillPaths = new Set((selectedSkills || []).map(skill => skill.path));
-  const builtins = (commands || [])
-    .filter(command => {
-      if (!query) return true;
-      return command.id.includes(query) || command.name.toLowerCase().includes(query) || command.title.toLowerCase().includes(query);
-    });
-  const skillCommands = (skills || [])
-    .map(serializeMentionSkill)
-    .filter(skill => skill.path && !selectedSkillPaths.has(skill.path))
-    .filter(skill => {
-      if (!query) return true;
-      return `${skill.name || ""} ${skill.path || ""} ${skill.description || ""}`.toLowerCase().includes(query);
-    })
-    .slice(0, 20)
-    .map(skill => ({
-      id: `skill:${skill.path}`,
-      type: "skill",
-      skill,
-      name: `/${skill.name || skill.path}`,
-      title: skill.name || skill.path,
-      description: skill.description || `使用 skill: ${skill.path}`
-    }));
-  return [...builtins, ...skillCommands];
-}
-
-function getActiveTabMentionState(input) {
-  const text = String(input || "");
-  const match = text.match(/(^|\s)@([^\s@]*)$/);
-  if (!match) return null;
-  const atOffset = match[0].lastIndexOf("@");
-  const start = match.index + atOffset;
-  return {
-    start,
-    end: text.length,
-    query: match[2] || ""
-  };
-}
-
-function isHttpTab(tab) {
-  return typeof tab?.id === "number" && /^https?:\/\//i.test(tab?.url || "");
-}
-
-function serializeMentionTab(tab) {
-  return {
-    id: tab.id,
-    url: tab.url || "",
-    title: tab.title || "",
-    windowId: tab.windowId,
-    favIconUrl: tab.favIconUrl || ""
-  };
-}
-
-function serializeMentionSkill(skill) {
-  return {
-    path: String(skill?.path || "").trim(),
-    name: String(skill?.name || "").trim(),
-    description: String(skill?.description || "").trim()
-  };
-}
-
-function filterMentionTabs(tabs, query, selectedTabs) {
-  const selectedIds = new Set((selectedTabs || []).map(tab => tab.id));
-  const normalizedQuery = String(query || "").trim().toLowerCase();
-  return (tabs || [])
-    .filter(tab => !selectedIds.has(tab.id))
-    .filter(tab => {
-      if (!normalizedQuery) return true;
-      return `${tab.title || ""} ${tab.url || ""} ${tab.id}`.toLowerCase().includes(normalizedQuery);
-    })
-    .slice(0, 12);
-}
-
-async function queryHttpTabsForMention() {
-  if (!chrome?.tabs?.query) return [];
-  const tabs = await chrome.tabs.query({});
-  return (Array.isArray(tabs) ? tabs : []).filter(isHttpTab).map(serializeMentionTab);
-}
-
-function buildUserInjectionMeta(tabs, skills) {
-  const normalizedTabs = (tabs || []).map(serializeMentionTab).filter(tab => tab.id);
-  const normalizedSkills = (skills || []).map(serializeMentionSkill).filter(skill => skill.path);
-  if (normalizedTabs.length === 0 && normalizedSkills.length === 0) return null;
-  return {
-    tabs: normalizedTabs,
-    skills: normalizedSkills
-  };
-}
-
-function buildInjectedUserText(text, injectionMeta) {
-  const body = String(text || "").trim() || "请根据我指定的上下文回答。";
-  const tabLines = (injectionMeta?.tabs || []).map(tab =>
-    `- tabId: ${tab.id}; title: ${tab.title || "未命名标签页"}; url: ${tab.url}`
-  );
-  const skillLines = (injectionMeta?.skills || []).map(skill =>
-    `- directoryName: ${skill.path}; name: ${skill.name || skill.path}; description: ${skill.description || ""}`
-  );
-  const parts = [body];
-  if (tabLines.length > 0) {
-    parts.push(
-      "",
-      "用户在输入框中明确 @ 选择了以下已打开的浏览器标签页。回答时应优先把这些 tabId 视为用户指定目标；如需读取页面内容，请直接对对应 tabId 使用 tab_extract 等浏览器工具：",
-      ...tabLines
-    );
-  }
-  if (skillLines.length > 0) {
-    parts.push(
-      "",
-      "用户在输入框中明确选择了以下 skill。请优先使用这些 skill 来回答接下来的问题或完成任务；需要完整 workflow 时，使用 skill-bridge 的 get_skill_detail 读取对应 directoryName：",
-      ...skillLines
-    );
-  }
-  return parts.join("\n");
-}
-
-function buildMemoryCommandPrompt() {
-  return [
-    "请总结本次对话中对未来有用、稳定、值得长期保存的信息。",
-    "如果当前可用工具中存在长期记忆/保存记忆能力，请使用相应工具保存这些信息；工具名称可能被 MCP 或系统加前缀，请根据工具描述判断。",
-    "只保存用户偏好、长期项目背景、稳定决策、反复会用到的上下文或纠错后的规则。不要保存临时状态、一次性问题、明显过期的信息或敏感凭据。",
-    "完成后请简要告诉我保存了什么；如果没有可用的记忆保存工具，或者没有值得保存的信息，也请明确说明。"
-  ].join("\n");
-}
-
-function buildRecallMemoryCommandPrompt() {
-  return [
-    "请根据当前对话、当前任务、用户最近的问题和已知项目上下文，检索可能相关的长期记忆。",
-    "如果当前可用工具中存在长期记忆检索/召回/搜索能力，请使用相应工具拉取相关记忆；工具名称可能被 MCP 或系统加前缀，请根据工具名称和描述判断。",
-    "检索查询应简洁，包含当前任务里的关键项目名、模块、功能、用户偏好、决策或约束。不要为临时网页状态、一次性事实或最新信息使用记忆召回。",
-    "完成后请把召回到的相关记忆简要整理到当前上下文，并说明哪些内容会影响接下来的回答或执行；如果没有可用的记忆检索工具或没有相关记忆，也请明确说明。"
-  ].join("\n");
-}
-
-function buildGlobalSessionSearchResult(sessionEntry, messages, query) {
-  const normalizedQuery = String(query || "").trim().toLowerCase();
-  if (!sessionEntry || !normalizedQuery) return null;
-  let hitCount = 0;
-  let firstSnippet = "";
-  let lastMessageTime = null;
-  for (const message of messages || []) {
-    if (!isGlobalSearchableMessage(message)) continue;
-    const timestamp = message.sentAt || message.completedAt || message.updatedAt || null;
-    if (timestamp && (!lastMessageTime || timestamp > lastMessageTime)) lastMessageTime = timestamp;
-    const text = getGlobalSearchableMessageText(message);
-    if (!text) continue;
-    const lowerText = text.toLowerCase();
-    let fromIndex = 0;
-    while (fromIndex < lowerText.length) {
-      const foundAt = lowerText.indexOf(normalizedQuery, fromIndex);
-      if (foundAt < 0) break;
-      hitCount += 1;
-      if (!firstSnippet) firstSnippet = buildSearchSnippet(text, foundAt, normalizedQuery.length);
-      fromIndex = foundAt + Math.max(1, normalizedQuery.length);
-    }
-  }
-  if (hitCount === 0) return null;
-  return {
-    sessionId: sessionEntry.id,
-    title: sessionEntry.title || "新会话",
-    startedAt: sessionEntry.startedAt || 0,
-    updatedAt: sessionEntry.updatedAt || 0,
-    lastMessageTime,
-    hitCount,
-    snippet: firstSnippet || "命中当前关键词"
-  };
-}
-
-function buildStreamingToolArgsState(event) {
-  const name = event?.name || "";
-  const rawArgs = typeof event?.arguments === "string" ? event.arguments : "";
-  const fields = getLongToolArgumentFields(name);
-  if (!name || fields.length === 0) return null;
-  const preview = buildStreamingToolArgumentPreview(name, rawArgs, fields);
-  return {
-    id: event?.id || event?.responseItemId || `${name}-${event?.index ?? 0}`,
-    name,
-    preview
-  };
-}
-
-function buildStreamingToolArgumentPreview(toolName, rawArgs, fields) {
-  const parsed = tryParseJson(rawArgs);
-  if (parsed && typeof parsed === "object") {
-    const parts = [];
-    for (const field of fields) {
-      if (typeof parsed[field] === "string" && parsed[field]) {
-        parts.push(`${field}=${parsed[field]}`);
-      }
-    }
-    if (parts.length > 0) return parts.join("\n");
-  }
-
-  const extracted = [];
-  for (const field of fields) {
-    const value = extractPartialJsonStringValue(rawArgs, field);
-    if (value) extracted.push(`${field}=${value}`);
-  }
-  if (extracted.length > 0) return extracted.join("\n");
-  return rawArgs || `${toolName} 参数生成中`;
-}
-
-function tryParseJson(text) {
-  try {
-    return JSON.parse(text || "{}");
-  } catch {
-    return null;
-  }
-}
-
-function extractPartialJsonStringValue(jsonText, fieldName) {
-  const text = String(jsonText || "");
-  const fieldPattern = new RegExp(`"${escapeRegExp(fieldName)}"\\s*:\\s*"`, "g");
-  const match = fieldPattern.exec(text);
-  if (!match) return "";
-  let result = "";
-  let escaped = false;
-  for (let i = match.index + match[0].length; i < text.length; i++) {
-    const ch = text[i];
-    if (escaped) {
-      result += decodeJsonEscapeChar(ch);
-      escaped = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === "\"") break;
-    result += ch;
-  }
-  return result;
-}
-
-function decodeJsonEscapeChar(ch) {
-  switch (ch) {
-    case "n": return "\n";
-    case "r": return "\r";
-    case "t": return "\t";
-    case "b": return "\b";
-    case "f": return "\f";
-    case "\"": return "\"";
-    case "\\": return "\\";
-    case "/": return "/";
-    default: return ch;
-  }
-}
-
-function escapeRegExp(text) {
-  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/* eslint-disable react/prop-types */
-function StreamingToolArgsBubble({ state }) {
-  return (
-    <div className="chat-msg chat-msg-assistant">
-      <div className="streaming-tool-args-bubble">
-        <div className="streaming-tool-args-title loading-dots">正在生成函数参数：{state.name}</div>
-        <pre className="streaming-tool-args-content">{state.preview}</pre>
-      </div>
-    </div>
-  );
-}
-
-function isGlobalSearchableMessage(message) {
-  if (!message) return false;
-  if (message.role !== "user" && message.role !== "assistant") return false;
-  if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return false;
-  if (Array.isArray(message.content) && message.content.some(block => block?.type === "tool_use" || block?.type === "tool_result")) {
-    return false;
-  }
-  return true;
-}
-
-function getGlobalSearchableMessageText(message) {
-  const { content } = message || {};
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map(block => {
-      if (typeof block === "string") return block;
-      if (block?.type === "text" && typeof block.text === "string") return block.text;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-function buildSearchSnippet(text, hitStart, queryLength) {
-  const source = String(text || "").replace(/\s+/g, " ").trim();
-  if (!source) return "";
-  const safeStart = Math.max(0, Math.min(source.length, hitStart));
-  const start = Math.max(0, safeStart - 36);
-  const end = Math.min(source.length, safeStart + queryLength + 56);
-  return `${start > 0 ? "…" : ""}${source.slice(start, end)}${end < source.length ? "…" : ""}`;
-}
-
-function getLatestPlan(plans) {
-  const normalized = normalizeSessionPlans(plans);
-  return normalized.length > 0 ? normalized[normalized.length - 1] : null;
-}
-
-function normalizePlanSteps(steps) {
-  if (!Array.isArray(steps)) return [];
-  return steps
-    .map((step, index) => ({
-      id: step?.id || `step_${index + 1}`,
-      title: String(step?.title || "").trim(),
-      description: String(step?.description || "").trim(),
-      status: normalizePlanStepStatus(step?.status || "pending"),
-      note: String(step?.note || "").trim(),
-      updatedAt: step?.updatedAt || null
-    }))
-    .filter(step => step.title);
-}
-
-function normalizePlanStepStatus(status) {
-  const value = String(status || "pending");
-  return ["pending", "in_progress", "completed", "blocked", "skipped"].includes(value) ? value : "pending";
-}
-
-function derivePlanStatus(steps) {
-  const list = Array.isArray(steps) ? steps : [];
-  if (list.length === 0) return "draft";
-  if (list.some(step => step.status === "blocked")) return "blocked";
-  if (list.every(step => step.status === "completed" || step.status === "skipped")) return "completed";
-  if (list.some(step => step.status === "in_progress" || step.status === "completed" || step.status === "skipped")) return "in_progress";
-  return "approved";
-}
-
-function formatPlanStatus(status) {
-  switch (status) {
-    case "draft": return "待确认";
-    case "approved": return "已确认";
-    case "in_progress": return "执行中";
-    case "completed": return "已完成";
-    case "blocked": return "受阻";
-    case "cancelled": return "已取消";
-    default: return status || "计划";
-  }
-}
-
-function getPlanStepIcon(status) {
-  switch (status) {
-    case "completed": return "✅";
-    case "in_progress": return "🔄";
-    case "blocked": return "⛔";
-    case "skipped": return "⏭️";
-    default: return "⬜";
-  }
-}
-
-/* eslint-disable react/prop-types */
-function SessionPlanPanel({ plan, collapsed = false, onToggleCollapsed }) {
-  if (!plan) return null;
-  const steps = plan.steps || [];
-  const completedCount = steps.filter(step => step.status === "completed" || step.status === "skipped").length;
-  const currentStep = steps.find(step => step.status === "in_progress") || steps.find(step => step.status === "blocked");
-  return (
-    <div className={`session-plan-panel session-plan-${plan.status || "draft"} ${collapsed ? "session-plan-collapsed" : ""}`}>
-      <button
-        type="button"
-        className="session-plan-header"
-        onClick={onToggleCollapsed}
-        aria-expanded={!collapsed}
-        title={collapsed ? "展开计划" : "收起计划"}
-      >
-        <span className="session-plan-title">📋 {plan.title || "执行计划"}</span>
-        <span className="session-plan-summary">
-          {completedCount}/{steps.length}
-          {currentStep ? ` · ${currentStep.title}` : ""}
-        </span>
-        <span className="session-plan-status">{formatPlanStatus(plan.status)}</span>
-        <span className="session-plan-toggle">{collapsed ? "展开" : "收起"}</span>
-      </button>
-      {!collapsed && (
-        <ol className="session-plan-steps">
-          {steps.map((step, index) => (
-            <li key={step.id || index} className={`session-plan-step session-plan-step-${step.status || "pending"}`}>
-              <span className="session-plan-step-icon">{getPlanStepIcon(step.status)}</span>
-              <span className="session-plan-step-body">
-                <span className="session-plan-step-title">{step.title}</span>
-                {step.note && <span className="session-plan-step-note">{step.note}</span>}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
-/* eslint-disable react/prop-types */
-function PlanApprovalCard({ plan, onResolve }) {
-  const [showFeedback, setShowFeedback] = useState(false);
-  const [feedback, setFeedback] = useState("");
-  return (
-    <Card className="!p-2 !mb-1 plan-approval-card">
-      <div className="plan-approval-title">执行计划待确认</div>
-      <div className="plan-approval-plan-title">{plan?.title || "执行计划"}</div>
-      <ol className="plan-approval-steps">
-        {(plan?.steps || []).map((step, index) => (
-          <li key={step.id || index}>
-            <span className="plan-approval-step-title">{step.title}</span>
-            {step.description && <span className="plan-approval-step-desc">{step.description}</span>}
-          </li>
-        ))}
-      </ol>
-      {showFeedback && (
-        <textarea
-          className="plan-approval-feedback"
-          value={feedback}
-          onChange={(event) => setFeedback(event.target.value)}
-          placeholder="你希望怎么修改这个计划？"
-          rows={2}
-          autoFocus
-        />
-      )}
-      <div className="chat-input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
-        {showFeedback ? (
-          <>
-            <Button className="!text-xs" onPress={() => setShowFeedback(false)}>返回</Button>
-            <Button className="!text-xs" onPress={() => onResolve(false, feedback)}>提交修改意见</Button>
-          </>
-        ) : (
-          <>
-            <Button className="!text-xs" onPress={() => setShowFeedback(true)}>不 OK，补充要求</Button>
-            <Button className="!text-xs" onPress={() => onResolve(true)}>OK，开始实施</Button>
-          </>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function buildContextUsage(apiType, model, usage) {
-  if (!usage || typeof usage !== "object") return null;
-  const tokens = calculateContextTokens(apiType, usage);
-  return {
-    apiType: normalizeApiType(apiType || getDefaultApiType()),
-    model: model || "",
-    tokens: Number.isFinite(tokens) ? tokens : null,
-    usageStatus: Number.isFinite(tokens) ? "ok" : "unrecognized",
-    usage
-  };
-}
-
-function getLatestContextUsageFromMessages(messages, fallbackConfig = {}) {
-  for (let index = (messages || []).length - 1; index >= 0; index--) {
-    const msg = messages[index];
-    if (!msg?.usage) continue;
-    const usageInfo = buildContextUsage(
-      normalizeApiType(msg._usageApiType || fallbackConfig.apiType || getDefaultApiType()),
-      msg._usageModel || fallbackConfig.model || "",
-      msg.usage
-    );
-    if (usageInfo) return usageInfo;
-  }
-  return null;
-}
-
-function calculateContextTokens(apiType, usage) {
-  if (!usage || typeof usage !== "object") return null;
-  const anthropicFields = [
-    "input_tokens",
-    "output_tokens",
-    "cache_read_input_tokens",
-    "cache_creation_input_tokens"
-  ];
-  const openAiFields = ["prompt_tokens", "completion_tokens"];
-
-  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
-    return firstFiniteNumber(
-      sumTokenFields(usage, anthropicFields),
-      sumTokenFields(usage, openAiFields),
-      getFirstUsageNumber(usage, ["total_tokens", "totalTokens", "total"])
-    );
-  }
-  return firstFiniteNumber(
-    sumTokenFields(usage, openAiFields),
-    sumTokenFields(usage, anthropicFields),
-    getFirstUsageNumber(usage, ["total_tokens", "totalTokens", "total"])
-  );
-}
-
-function sumTokenFields(source, fields) {
-  let total = 0;
-  let hasValue = false;
-  for (const field of fields) {
-    const value = Number(source?.[field]);
-    if (!Number.isFinite(value)) continue;
-    total += value;
-    hasValue = true;
-  }
-  return hasValue ? total : null;
-}
-
-function firstFiniteNumber(...values) {
-  for (const value of values) {
-    if (Number.isFinite(value)) return value;
-  }
-  return null;
-}
-
-function getFirstUsageNumber(source, fields) {
-  for (const field of fields) {
-    const value = Number(source?.[field]);
-    if (Number.isFinite(value)) return value;
-  }
-  return null;
-}
-
-function formatModelName(model) {
-  return String(model || "").trim() || "未配置";
-}
-
-function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
-}
-
-function isContextUsageWarning(contextUsage, limitTokens) {
-  const tokens = Number(contextUsage?.tokens);
-  const normalizedLimit = normalizeModelContextLimitTokens(limitTokens);
-  return Number.isFinite(tokens) && tokens >= normalizedLimit * MODEL_CONTEXT_WARNING_THRESHOLD_RATIO;
-}
-
-function formatContextLimitK(limitTokens) {
-  const normalizedLimit = normalizeModelContextLimitTokens(limitTokens);
-  if (normalizedLimit >= 1000000) return `${normalizedLimit / 1000000}M`;
-  return `${Math.round(normalizedLimit / 1000)}K`;
-}
-
-function formatContextUsageK(contextUsage) {
-  const tokens = Number(contextUsage?.tokens);
-  if (contextUsage?.usageStatus === "unrecognized") return "未识别";
-  if (!Number.isFinite(tokens)) return "未返回";
-  const value = tokens / 1000;
-  if (value >= 100) return `${Math.round(value)}K`;
-  if (value >= 10) return `${value.toFixed(1)}K`;
-  return `${value.toFixed(2)}K`;
-}
-
-/* eslint-disable react/prop-types */
-function SessionSystemPromptDialogBody({ initialValue = "", initiallyApplyToNewSessions = false, onSave }) {
-  const [draft, setDraft] = useState(initialValue || "");
-  const [applyToNewSessions, setApplyToNewSessions] = useState(!!initiallyApplyToNewSessions);
-  const [saving, setSaving] = useState(false);
-  const rootRef = useRef(null);
-
-  function closeDialog() {
-    const closeButton = rootRef.current?.closest(".dialog-backdrop")?.querySelector(".dialog-close-button");
-    closeButton?.click();
-  }
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      const saved = await onSave?.(draft, applyToNewSessions);
-      if (saved !== false) closeDialog();
-    } catch (error) {
-      toast.error(`保存失败: ${error?.message || String(error)}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div ref={rootRef} className="system-prompt-dialog">
-      <div>
-        <div className="schedule-dialog-title">当前会话系统提示</div>
-        <div className="schedule-dialog-subtitle">默认只影响当前会话，会作为额外 system prompt 注入。</div>
-      </div>
-      <textarea
-        className="system-prompt-textarea"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        placeholder={SYSTEM_PROMPT_PLACEHOLDER}
-      />
-      <label className="system-prompt-default-toggle">
-        <input
-          type="checkbox"
-          checked={applyToNewSessions}
-          onChange={(e) => setApplyToNewSessions(e.target.checked)}
-        />
-        <span>同时作为新会话的系统提示（最多只能有一个）</span>
-      </label>
-      <div className="schedule-dialog-actions">
-        <Button
-          className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
-          onPress={closeDialog}
-          isDisabled={saving}
-        >
-          取消
-        </Button>
-        <Button
-          className="!min-h-8 !px-3 !text-xs !whitespace-nowrap"
-          onPress={handleSave}
-          isDisabled={saving}
-        >
-          {saving ? "保存中..." : "保存"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function ScheduleJobsDialogBody() {
-  const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [clearingCompleted, setClearingCompleted] = useState(false);
-  const [error, setError] = useState("");
-  const [now, setNow] = useState(Date.now());
-
-  useEffect(() => {
-    let disposed = false;
-
-    async function loadJobs(showSpinner = false) {
-      if (showSpinner) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
-      try {
-        const result = await executeTool("list_scheduled", {});
-        if (disposed) return;
-        if (result?.error) {
-          throw new Error(result.error);
-        }
-        setJobs(Array.isArray(result?.scheduled) ? result.scheduled : []);
-        setError("");
-      } catch (err) {
-        if (disposed) return;
-        setError(err?.message || String(err));
-      } finally {
-        if (!disposed) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      }
-    }
-
-    loadJobs(true);
-    const refreshIntervalId = setInterval(() => {
-      loadJobs(false);
-    }, 5000);
-    const clockIntervalId = setInterval(() => {
-      if (!disposed) setNow(Date.now());
-    }, 1000);
-
-    return () => {
-      disposed = true;
-      clearInterval(refreshIntervalId);
-      clearInterval(clockIntervalId);
-    };
-  }, []);
-
-  const hasCompletedJobs = jobs.some((job) => isTerminalScheduleStatus(job?.status));
-
-  async function handleRefresh() {
-    setRefreshing(true);
-    try {
-      const result = await executeTool("list_scheduled", {});
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-      setJobs(Array.isArray(result?.scheduled) ? result.scheduled : []);
-      setError("");
-    } catch (err) {
-      setError(err?.message || String(err));
-      toast.error(`刷新调度列表失败: ${err?.message || String(err)}`);
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  async function handleClearCompleted() {
-    setClearingCompleted(true);
-    try {
-      const result = await executeTool("clear_completed_scheduled", {});
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-      const removedCount = Number(result?.removedCount) || 0;
-      setJobs((currentJobs) => currentJobs.filter((job) => !isTerminalScheduleStatus(job?.status)));
-      setError("");
-      toast.success(removedCount > 0 ? `已清理 ${removedCount} 个完成的 job` : "没有可清理的已完成 job");
-    } catch (err) {
-      setError(err?.message || String(err));
-      toast.error(`清理完成 job 失败: ${err?.message || String(err)}`);
-    } finally {
-      setClearingCompleted(false);
-    }
-  }
-
-  return (
-    <div className="schedule-dialog">
-      <div className="schedule-dialog-header">
-        <div>
-          <div className="schedule-dialog-title">Schedule Jobs</div>
-          <div className="schedule-dialog-subtitle">显示待执行任务和最近 24 小时内的执行记录</div>
-        </div>
-        <div className="schedule-dialog-actions">
-          <Button
-            className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
-            onPress={handleRefresh}
-            isDisabled={loading || refreshing || clearingCompleted}
-          >
-            {refreshing ? "刷新中..." : "刷新"}
-          </Button>
-          <Button
-            className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-red-50 !text-red-700 !border !border-red-200 hover:!bg-red-100"
-            onPress={handleClearCompleted}
-            isDisabled={loading || refreshing || clearingCompleted || !hasCompletedJobs}
-          >
-            {clearingCompleted ? "删除中..." : "删除结束项"}
-          </Button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="schedule-dialog-error">加载失败: {error}</div>
-      )}
-
-      {loading && jobs.length === 0 ? (
-        <div className="schedule-dialog-empty">正在加载任务…</div>
-      ) : jobs.length === 0 ? (
-        <div className="schedule-dialog-empty">当前没有可显示的 schedule job</div>
-      ) : (
-        <div className="schedule-job-list">
-          {jobs.map((job) => (
-            <Card key={job.id || job.scheduleId} className="schedule-job-card !p-3 !mb-2">
-              <div className="schedule-job-row">
-                <span className="schedule-job-label">{job.label || job.toolName || "未命名任务"}</span>
-                <span className={`schedule-job-status schedule-job-status-${normalizeScheduleStatusClass(job.status)}`}>
-                  {formatScheduleStatus(job.status)}
-                </span>
-              </div>
-              <div className="schedule-job-meta">
-                <span className="schedule-job-key">ID</span>
-                <code className="schedule-job-value">{job.id || job.scheduleId}</code>
-              </div>
-              <div className="schedule-job-meta">
-                <span className="schedule-job-key">预计执行时间</span>
-                <span className="schedule-job-value">{job.fireAt || "-"}</span>
-              </div>
-              {job.status === "pending" && typeof job.remainingSeconds === "number" && (
-                <div className="schedule-job-meta">
-                  <span className="schedule-job-key">剩余时间</span>
-                  <span className="schedule-job-value">
-                    {formatRemainingSeconds(getLiveRemainingSeconds(job, now))}
-                  </span>
-                </div>
-              )}
-              {job.status === "failed" && job.error && (
-                <div className="schedule-job-error">{job.error}</div>
-              )}
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function isTerminalScheduleStatus(status) {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
-}
-
-function buildSessionExportMarkdown({ title, sessionId, messages }) {
-  const sections = [
-    `# ${title || "新会话"}`,
-    "",
-    `- 导出时间: ${new Date().toLocaleString()}`,
-    `- 会话 ID: ${sessionId || ""}`,
-    ""
-  ];
-
-  for (const msg of messages || []) {
-    sections.push(...serializeExportMessage(msg));
-  }
-
-  return sections.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
-function serializeExportMessage(msg) {
-  if (!msg || !msg.role) return [];
-
-  if (msg.role === "user") {
-    return serializeUserExportMessage(msg);
-  }
-
-  if (msg.role === "assistant") {
-    return serializeAssistantExportMessage(msg);
-  }
-
-  if (msg.role === "tool") {
-    return [
-      `## 工具结果${msg.tool_name ? ` · ${msg.tool_name}` : ""}`,
-      "",
-      formatToolResultForMarkdown(msg),
-      ""
-    ];
-  }
-
-  if (msg.role === "error") {
-    return [
-      "## 错误",
-      "",
-      formatJsonFence(msg.content ?? {}),
-      ""
-    ];
-  }
-
-  return [
-    `## ${msg.role}`,
-    "",
-    formatUnknownContentForMarkdown(msg.content),
-    ""
-  ];
-}
-
-function serializeUserExportMessage(msg) {
-  return [
-    "---",
-    "",
-    "## 用户",
-    "",
-    formatUserContentForMarkdown(msg.content),
-    ""
-  ];
-}
-
-function formatUserContentForMarkdown(content) {
-  if (typeof content === "string") return content.trim() || "_空内容_";
-  if (!Array.isArray(content)) return formatUnknownContentForMarkdown(content);
-
-  const parts = content
-    .map(formatUserContentBlockForMarkdown)
-    .filter(part => typeof part === "string" && part.trim().length > 0);
-
-  return parts.length > 0 ? parts.join("\n\n") : "_空内容_";
-}
-
-function formatUserContentBlockForMarkdown(block) {
-  if (!block || typeof block !== "object") return "";
-
-  if (block.type === "text") {
-    return String(block.text ?? "").trim();
-  }
-
-  if (block.type === "file") {
-    const fileName = String(block.fileName || block.name || "attachment.txt").trim();
-    return [`### 附件 · ${fileName}`, "", formatTextFence(block.text ?? "")].join("\n");
-  }
-
-  const dataUrl = imageBlockToDataUrl(block);
-  if (dataUrl) {
-    const mediaType = parseImageDataUrl(dataUrl)?.mediaType || "image";
-    return `![用户图片 · ${mediaType}](${dataUrl})`;
-  }
-
-  return formatJsonFence(block);
-}
-
-function serializeAssistantExportMessage(msg) {
-  const sections = [];
-
-  if (typeof msg.content === "string" && msg.content.trim()) {
-    sections.push("## 助手", "", msg.content.trim(), "");
-  }
-
-  if (Array.isArray(msg.content)) {
-    for (const block of msg.content) {
-      if (!block) continue;
-      if (block.type === "text" && block.text) {
-        sections.push("## 助手", "", String(block.text).trim(), "");
-      } else if (block.type === "tool_use") {
-        sections.push(
-          `## 工具调用${block.name ? ` · ${block.name}` : ""}`,
-          "",
-          formatJsonFence(block.input ?? {}),
-          ""
-        );
-      }
-    }
-  }
-
-  if (Array.isArray(msg.tool_calls)) {
-    for (const toolCall of msg.tool_calls) {
-      const toolName = toolCall?.function?.name || toolCall?.name || "tool";
-      let toolArgs = toolCall?.function?.arguments ?? toolCall?.arguments ?? toolCall?.args ?? {};
-      if (typeof toolArgs === "string") {
-        try {
-          toolArgs = JSON.parse(toolArgs);
-        } catch (error) {
-          toolArgs = { raw: toolArgs };
-        }
-      }
-      sections.push(
-        `## 工具调用 · ${toolName}`,
-        "",
-        formatJsonFence(toolArgs),
-        ""
-      );
-    }
-  }
-
-  if (sections.length === 0) {
-    sections.push("## 助手", "", "_空内容_", "");
-  }
-
-  return sections;
-}
-
-function formatToolResultForMarkdown(msg) {
-  const parsed = parseToolMessageContent(msg.content);
-  const contentBlock = typeof parsed === "string"
-    ? formatTextFence(parsed)
-    : formatJsonFence(parsed ?? {});
-
-  if (!msg.displayImageUrl) {
-    return contentBlock;
-  }
-
-  return [
-    contentBlock,
-    "",
-    `![工具截图](${msg.displayImageUrl})`
-  ].join("\n");
-}
-
-function formatUnknownContentForMarkdown(content) {
-  if (typeof content === "string") return content.trim() || "_空内容_";
-  if (Array.isArray(content)) return formatJsonFence(content);
-  if (content && typeof content === "object") return formatJsonFence(content);
-  return "_空内容_";
-}
-
-function formatScheduleStatus(status) {
-  switch (status) {
-    case "pending": return "待执行";
-    case "running": return "执行中";
-    case "succeeded": return "已成功";
-    case "failed": return "已失败";
-    case "cancelled": return "已取消";
-    default: return status || "未知";
-  }
-}
-
-function normalizeScheduleStatusClass(status) {
-  switch (status) {
-    case "pending":
-    case "running":
-    case "succeeded":
-    case "failed":
-    case "cancelled":
-      return status;
-    default:
-      return "unknown";
-  }
-}
-
-function formatRemainingSeconds(seconds) {
-  const total = Math.max(0, Number(seconds) || 0);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  if (hours > 0) return `${hours}小时 ${minutes}分`;
-  if (minutes > 0) return `${minutes}分 ${secs}秒`;
-  return `${secs}秒`;
-}
-
-function getLiveRemainingSeconds(job, now = Date.now()) {
-  if (!job || job.status !== "pending") return 0;
-  const fireAtMs = job.fireAt ? new Date(job.fireAt).getTime() : NaN;
-  if (Number.isFinite(fireAtMs)) {
-    return Math.max(0, Math.round((fireAtMs - now) / 1000));
-  }
-  return Math.max(0, Number(job.remainingSeconds) || 0);
-}
-
-function formatJsonFence(value) {
-  let text = "";
-  try {
-    text = JSON.stringify(value, null, 2);
-  } catch (error) {
-    text = String(value ?? "");
-  }
-  return `\`\`\`json\n${text}\n\`\`\``;
-}
-
-function formatTextFence(value) {
-  return `\`\`\`text\n${String(value ?? "")}\n\`\`\``;
-}
-
-function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
-  if (apiType === "anthropic" && Array.isArray(doneMsg.content)) {
-    return copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
-  }
-
-  const message = {
-    role: "assistant",
-    content: textContent || doneMsg.content || ""
-  };
-  if (doneMsg?.response_id) {
-    message._responsesResponseId = doneMsg.response_id;
-  }
-  if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
-    message._responsesContent = doneMsg.response_content;
-  }
-  if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
-    message._responsesReasoningItems = doneMsg.response_reasoning_items;
-  }
-  return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
-}
-
-function downloadMarkdownFile(filename, markdown) {
-  const safeFilename = String(filename || "session.md").trim() || "session.md";
-  const blob = new Blob([String(markdown ?? "")], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = safeFilename;
-  anchor.style.display = "none";
-  document.body.appendChild(anchor);
-  try {
-    anchor.click();
-    return { success: true, fileName: safeFilename, size: blob.size, source: "side-panel-blob" };
-  } finally {
-    anchor.remove();
-    // Keep the blob URL alive long enough for Chromium to start consuming it.
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-}
-
-function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
-  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
-    return copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
-  }
-
-  const message = {
-    role: "assistant",
-    content: textContent || null,
-    tool_calls: doneMsg._openaiToolCalls
-  };
-  if (doneMsg?.response_id) {
-    message._responsesResponseId = doneMsg.response_id;
-  }
-  if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
-    message._responsesContent = doneMsg.response_content;
-  }
-  if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
-    message._responsesReasoningItems = doneMsg.response_reasoning_items;
-  }
-  return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
-}
-
-function copyAssistantUsageFields(apiType, model, source, target) {
-  if (source?.usage && typeof source.usage === "object") {
-    target.usage = source.usage;
-    target._usageApiType = apiType || "";
-    target._usageModel = model || "";
-  }
-  return target;
-}
-
-function copyAnthropicThinkingFields(source, target) {
-  for (const field of ["thinking_blocks", "provider_specific_fields"]) {
-    const value = source?.[field];
-    if (value == null) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    target[field] = value;
-  }
-  return target;
-}
-
-function copyAssistantReasoningFields(source, target) {
-  for (const field of ["reasoning_content", "reasoning", "reasoning_details", "thinking"]) {
-    const value = source?.[field];
-    if (value == null) continue;
-    if (typeof value === "string" && value.length === 0) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    target[field] = value;
-  }
-  return target;
-}
-
-function buildToolResultMessages(toolResults, targetSessionId, registerImageDataUrl) {
-  return toolResults.map(tr => buildDisplayToolResultMessage(tr, targetSessionId, registerImageDataUrl));
-}
-
-function buildLlmErrorDisplayMessage(error) {
-  const code = error?.code || "LLM_ERROR";
-  const message = error?.message || "LLM 请求失败";
-  const failures = Array.isArray(error?.failures) ? error.failures : [];
-  return {
-    role: "error",
-    content: {
-      code,
-      message,
-      status: error?.status || null,
-      attempts: Number(error?.attempts) || failures.length || 1,
-      maxAttempts: Number(error?.maxAttempts) || failures.length || 1,
-      apiType: error?.apiType || "",
-      failures,
-      detail: error?.detail || null
-    }
-  };
-}
-
-function stampLastUserDuration(messages) {
-  const now = Date.now();
-  const updated = [...messages];
-  for (let i = updated.length - 1; i >= 0; i--) {
-    if (updated[i].role === "user" && typeof updated[i].sentAt === "number") {
-      updated[i] = { ...updated[i], durationMs: now - updated[i].sentAt };
-      break;
-    }
-  }
-  return updated;
-}
-
-function buildDisplayToolResultMessage(toolResult, targetSessionId, registerImageDataUrl) {
-  const parsedImage = parseImageDataUrl(toolResult?.result?.dataUrl);
-  const imageRefs = [];
-  if (parsedImage && targetSessionId && typeof registerImageDataUrl === "function") {
-    const ref = registerImageDataUrl(targetSessionId, toolResult.result.dataUrl);
-    if (ref) imageRefs.push({ ref, dataUrl: toolResult.result.dataUrl });
-  }
-  const summary = summarizeToolResult(toolResult.result, imageRefs);
-  const serializedContent = serializeToolResult(summary);
-  const message = {
-    role: "tool",
-    tool_call_id: toolResult.id,
-    tool_name: toolResult.name,
-    content: serializedContent,
-    displayImageUrl: parsedImage ? toolResult.result.dataUrl : undefined,
-    displayImageMediaType: parsedImage?.mediaType,
-    durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
-  };
-  if (imageRefs.length > 0) message.imageRefs = imageRefs;
-  return message;
-}
-
-function serializeToolResult(summary) {
-  const json = JSON.stringify(summary);
-  if (typeof json === "string") return json;
-  return JSON.stringify(normalizeToolSummary(summary));
-}
-
-function summarizeToolResult(result, imageRefs = []) {
-  if (!result || typeof result !== "object") return result;
-
-  const summary = { ...result };
-  if (typeof summary.dataUrl === "string" && summary.dataUrl.startsWith("data:")) {
-    delete summary.dataUrl;
-    summary.imageOmittedFromTextContext = true;
-  }
-  if (imageRefs.length > 0) {
-    summary.imageRefs = imageRefs.map(({ ref }) => ref);
-    summary.imageRefInstruction = imageRefs
-      .map(({ ref }) => `Tool returned an image ref: ${ref}. For later tool calls requiring this image's base64 data URL, pass exactly "|deRef:${ref}|". Do not copy or rewrite the data URL.`)
-      .join("\n");
-  }
-
-  return summary;
-}
-
-function isBase64DataUrl(dataUrl) {
-  return typeof dataUrl === "string" && /^data:[^;]+;base64,/.test(dataUrl);
-}
-
-function imageBlockToDataUrl(block) {
-  if (!block || typeof block !== "object") return null;
-  if (block.type === "image" && block.source?.type === "base64" && block.source.media_type && block.source.data) {
-    return `data:${block.source.media_type};base64,${block.source.data}`;
-  }
-  if (block.type === "image_url" && isBase64DataUrl(block.image_url?.url)) {
-    return block.image_url.url;
-  }
-  return null;
-}
-
-function resolveImageRefsInValue(value, refs) {
-  if (typeof value === "string") {
-    const match = value.match(IMAGE_DEREF_PATTERN);
-    if (!match) return value;
-    return refs.get(match[1]) || value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(item => resolveImageRefsInValue(item, refs));
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, resolveImageRefsInValue(child, refs)])
-    );
-  }
-
-  return value;
-}
-
-function parseImageDataUrl(dataUrl) {
-  if (typeof dataUrl !== "string") return null;
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-  return { mediaType: match[1], data: match[2] };
-}
-
-function parseToolMessageContent(content) {
-  if (typeof content !== "string") return content;
-  try {
-    return JSON.parse(content);
-  } catch (e) {
-    return content;
-  }
-}
-
-function normalizeToolSummary(summary) {
-  if (summary && typeof summary === "object") return summary;
-  return { result: summary == null ? "" : String(summary) };
-}
-
-function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
-  const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
-  const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false) {
-    return typeof summary === "string" ? summary : JSON.stringify(summary);
-  }
-
-  return [
-    {
-      type: "text",
-      text: JSON.stringify({ ...summary, imageAttachedToToolResult: true })
-    },
-    {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: parsedImage.mediaType,
-        data: parsedImage.data
-      }
-    }
-  ];
-}
-
-function buildOpenAIToolResultContent(msg, options = {}) {
-  const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
-  const parsedImage = parseImageDataUrl(msg.displayImageUrl);
-  if (!parsedImage || options.supportsImageInput === false) {
-    return typeof summary === "string" ? summary : JSON.stringify(summary);
-  }
-
-  return [
-    {
-      type: "text",
-      text:
-        `Tool result for ${msg.tool_name || "unknown tool"}: ` +
-        JSON.stringify({ ...summary, imageAttachedToToolResult: true })
-    },
-    {
-      type: "image_url",
-      image_url: {
-        url: msg.displayImageUrl,
-        detail: "low"
-      }
-    }
-  ];
-}
-
-// ==================== User Image Input Helpers ====================
-
-function buildUserMessageContent(text, images, textFiles = [], imageRefs = []) {
-  const content = [];
-
-  const textParts = [];
-  if (text && text.trim()) textParts.push(text.trim());
-  for (const item of imageRefs) {
-    if (!item?.ref) continue;
-    textParts.push(`Attached image ref: ${item.ref}. For any tool argument that requires this image's base64 data URL, pass exactly "|deRef:${item.ref}|". Do not copy or rewrite the data URL.`);
-  }
-  if (textParts.length > 0) {
-    content.push({ type: "text", text: textParts.join("\n\n") });
-  }
-
-  for (const f of textFiles) {
-    console.log(`[DEBUG] 构建消息内容 - 文件: ${f.fileName}, 文本长度: ${f.text.length}, 前100字符:`, f.text.substring(0, 100));
-    content.push({ type: "file", fileName: f.fileName, text: f.text });
-  }
-
-  for (const img of images) {
-    const parsed = parseImageDataUrl(img.dataUrl);
-    if (parsed) {
-      content.push({
-        type: "image",
-        source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
-      });
-    }
-  }
-
-  return content;
-}
-
-async function optimizeImageDataUrl(dataUrl) {
-  try {
-    const img = await new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = reject;
-      image.src = dataUrl;
-    });
-
-    const maxDimension = 1600;
-    const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
-    const width = Math.round(img.width * scale);
-    const height = Math.round(img.height * scale);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d", { alpha: false });
-    ctx.drawImage(img, 0, 0, width, height);
-
-    return canvas.toDataURL("image/jpeg", 0.7);
-  } catch (e) {
-    console.error("Image optimization failed:", e);
-    return dataUrl;
-  }
-}
-
-async function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function buildAnthropicAssistantContentFromMessage(msg, options = {}) {
-  const omitThinking = shouldOmitThinkingFromRequests(options);
-
-  if (Array.isArray(msg.content)) {
-    const contentBlocks = omitThinking ? msg.content.filter(block => !isAnthropicThinkingBlock(block)) : msg.content;
-    const hasThinkingBlocks = contentBlocks.some(isAnthropicThinkingBlock);
-    const prependedThinkingBlocks = omitThinking || hasThinkingBlocks ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
-    return normalizeAnthropicAssistantContentBlocks([...prependedThinkingBlocks, ...contentBlocks]);
-  }
-
-  const blocks = omitThinking ? [] : extractAnthropicThinkingBlocksFromMessage(msg);
-  if (msg.content && typeof msg.content === "string" && msg.content.length > 0) {
-    blocks.push({ type: "text", text: msg.content });
-  }
-
-  if (Array.isArray(msg.tool_calls)) {
-    for (const tc of msg.tool_calls) {
-      const toolName = tc.function?.name || tc.name;
-      let input = tc.function?.arguments ?? tc.arguments ?? tc.args ?? {};
-      if (typeof input === "string") {
-        try { input = JSON.parse(input); } catch (e) { input = { raw: input }; }
-      }
-      if (toolName) {
-        blocks.push({
-          type: "tool_use",
-          id: tc.id || `tooluse_${toolName}_${Date.now()}`,
-          name: toolName,
-          input
-        });
-      }
-    }
-  }
-
-  return normalizeAnthropicAssistantContentBlocks(blocks);
-}
-
-function normalizeAnthropicAssistantContentBlocks(blocks) {
-  return (blocks || []).map(normalizeAnthropicAssistantContentBlock).filter(Boolean);
-}
-
-function normalizeAnthropicAssistantContentBlock(block) {
-  if (!block || typeof block !== "object") return null;
-
-  if (block.type === "text") {
-    return typeof block.text === "string" && block.text.length > 0 ? { ...block } : null;
-  }
-
-  if (block.type === "tool_use") {
-    if (!block.name) return null;
-    return {
-      ...block,
-      input: normalizeAnthropicToolUseInput(block.input)
-    };
-  }
-
-  if (block.type === "thinking") {
-    const signature = typeof block.signature === "string" ? block.signature : "";
-    if (!signature) return null;
-    return {
-      ...block,
-      thinking: typeof block.thinking === "string" ? block.thinking : ""
-    };
-  }
-
-  if (block.type === "redacted_thinking") {
-    return block.data ? { ...block } : null;
-  }
-
-  return { ...block };
-}
-
-function normalizeAnthropicToolUseInput(input) {
-  if (input && typeof input === "object" && !Array.isArray(input)) return input;
-  if (typeof input === "string") {
-    try { return JSON.parse(input); } catch (error) { return { raw: input }; }
-  }
-  return input ?? {};
-}
-
-function extractAnthropicThinkingBlocksFromMessage(msg) {
-  const blocks = [];
-
-  if (Array.isArray(msg?.thinking_blocks)) {
-    blocks.push(...msg.thinking_blocks);
-  }
-
-  const providerReasoningBlocks = msg?.provider_specific_fields?.reasoningContentBlocks;
-  if (Array.isArray(providerReasoningBlocks)) {
-    for (const block of providerReasoningBlocks) {
-      const reasoningText = block?.reasoningText;
-      if (reasoningText?.signature) {
-        blocks.push({
-          type: "thinking",
-          thinking: reasoningText.text || reasoningText.thinking || "",
-          signature: reasoningText.signature
-        });
-        continue;
-      }
-
-      const redacted = block?.redactedContent || block?.redactedThinking || block?.redacted_thinking;
-      if (redacted?.data) {
-        blocks.push({ type: "redacted_thinking", data: redacted.data });
-      }
-    }
-  }
-
-  return normalizeAnthropicAssistantContentBlocks(blocks).filter(isAnthropicThinkingBlock);
-}
-
-function isAnthropicThinkingBlock(block) {
-  return block?.type === "thinking" || block?.type === "redacted_thinking";
-}
-
-function buildOpenAIAssistantMessageFromAnthropic(msg, options = {}) {
-  if (!Array.isArray(msg.content)) return buildOpenAIAssistantMessageForApi(msg, options);
-
-  const omitThinking = shouldOmitThinkingFromRequests(options);
-  const textParts = [];
-  const reasoningParts = [];
-  const toolCalls = [];
-
-  for (const block of msg.content) {
-    if (!block) continue;
-    if (block.type === "text" && block.text) {
-      textParts.push(block.text);
-    } else if (!omitThinking && block.type === "thinking" && block.thinking) {
-      reasoningParts.push(block.thinking);
-    } else if (block.type === "tool_use" && block.name) {
-      toolCalls.push({
-        id: block.id || `toolcall_${block.name}_${Date.now()}`,
-        type: "function",
-        function: {
-          name: block.name,
-          arguments: JSON.stringify(block.input || {})
-        }
-      });
-    }
-  }
-
-  const apiMessage = {
-    role: "assistant",
-    content: textParts.length > 0 ? textParts.join("") : null,
-    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
-  };
-  if (reasoningParts.length > 0) {
-    apiMessage.reasoning_content = reasoningParts.join("");
-  }
-  return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
-}
-
-function buildOpenAIAssistantMessageForApi(msg, options = {}) {
-  if (Array.isArray(msg.content)) {
-    return buildOpenAIAssistantMessageFromAnthropic(msg, options);
-  }
-
-  const apiMessage = {
-    role: "assistant",
-    content: msg.content ?? null
-  };
-  if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-    apiMessage.tool_calls = msg.tool_calls;
-  }
-  return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
-}
-
-function copyOpenAIReasoningFieldsForApi(source, target, options = {}) {
-  if (shouldOmitThinkingFromRequests(options)) return target;
-
-  const reasoningContent = getOpenAIReasoningContentForApi(source);
-  if (reasoningContent != null) {
-    target.reasoning_content = reasoningContent;
-  }
-
-  for (const field of ["reasoning", "reasoning_details", "thinking"]) {
-    const value = source?.[field];
-    if (value == null) continue;
-    if (typeof value === "string" && value.length === 0) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    target[field] = value;
-  }
-  return target;
-}
-
-function getOpenAIReasoningContentForApi(msg) {
-  for (const field of ["reasoning_content", "reasoning", "thinking"]) {
-    const value = msg?.[field];
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return null;
-}
-
-function copyOpenAIProviderMetadataForApi(source, target, options = {}) {
-  if (shouldOmitThinkingFromRequests(options)) return target;
-  if (normalizeApiType(options.apiType) !== API_TYPES.OPENAI_RESPONSES) return target;
-  if (Array.isArray(source?._responsesReasoningItems) && source._responsesReasoningItems.length > 0) {
-    target._responsesReasoningItems = source._responsesReasoningItems;
-  }
-  return target;
-}
-
-function buildOpenAIApiMessages(messages, options = {}) {
-  const apiMessages = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-
-    if (msg.role === "error") continue;
-
-    if (msg.role === "assistant" && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-      const followingToolMessages = [];
-      let j = i + 1;
-      while (j < messages.length && messages[j]?.role === "tool") {
-        followingToolMessages.push(messages[j]);
-        j += 1;
-      }
-
-      apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
-      apiMessages.push(...followingToolMessages.map(toolMsg => ({
-        role: "tool",
-        tool_call_id: toolMsg.tool_call_id,
-        content: buildOpenAIToolResultContent(toolMsg, options)
-      })));
-
-      i = j - 1;
-      continue;
-    }
-
-    if (msg.role === "assistant") {
-      apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
-      continue;
-    }
-
-    if (msg.role === "user") {
-      if (Array.isArray(msg.content)) {
-        const openaiContent = [];
-        for (const block of msg.content) {
-          if (block.type === "text") {
-            openaiContent.push({ type: "text", text: block.text });
-          } else if (block.type === "file") {
-            openaiContent.push({ type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` });
-          } else if (block.type === "image" && block.source && options.supportsImageInput !== false) {
-            const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
-            openaiContent.push({ type: "image_url", image_url: { url: dataUrl, detail: "low" } });
-          }
-        }
-        apiMessages.push({ role: "user", content: openaiContent });
-        continue;
-      }
-    }
-
-    if (msg.role === "tool") {
-      apiMessages.push({
-        role: "tool",
-        tool_call_id: msg.tool_call_id,
-        content: buildOpenAIToolResultContent(msg, options)
-      });
-      continue;
-    }
-
-    apiMessages.push(buildPlainApiMessage(msg, options));
-  }
-
-  return apiMessages;
-}
-
-function buildAnthropicApiMessages(messages, options = {}) {
-  const apiMessages = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-
-    if (msg.role === "error") continue;
-
-    if (msg.role === "tool") {
-      const blocks = [];
-      while (i < messages.length && messages[i]?.role === "tool") {
-        const toolMsg = messages[i];
-        blocks.push({
-          type: "tool_result",
-          tool_use_id: toolMsg.tool_call_id,
-          content: buildAnthropicToolResultContentFromMessage(toolMsg, options)
-        });
-        i += 1;
-      }
-      i -= 1;
-      if (blocks.length > 0) {
-        apiMessages.push({ role: "user", content: blocks });
-      }
-      continue;
-    }
-
-    if (msg.role === "assistant") {
-      const content = buildAnthropicAssistantContentFromMessage(msg, options);
-      if (content.length === 0) continue;
-      apiMessages.push({ role: "assistant", content });
-      continue;
-    }
-
-    if (msg.role === "user" && Array.isArray(msg.content)) {
-      const anthropicContent = msg.content
-        .filter(block => !(block.type === "image" && options.supportsImageInput === false))
-        .map(block => {
-          if (block.type === "file") {
-            const result = { type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` };
-            console.log(`[DEBUG] Anthropic API - 文件转换: ${block.fileName}, 原始长度: ${block.text.length}, 转换后长度: ${result.text.length}`);
-            return result;
-          }
-          return block;
-        });
-      apiMessages.push({ role: "user", content: anthropicContent });
-      continue;
-    }
-
-    apiMessages.push(buildPlainApiMessage(msg, options));
-  }
-
-  return apiMessages;
-}
-
-function buildPlainApiMessage(msg, options = {}) {
-  if (!msg || typeof msg !== "object") return msg;
-
-  const apiMessage = { ...msg };
-  for (const field of [
-    "sentAt",
-    "durationMs",
-    "displayImageUrl",
-    "displayImageMediaType",
-    "_usageApiType",
-    "_usageModel",
-    "displayContent",
-    "injectedUserContext"
-  ]) {
-    delete apiMessage[field];
-  }
-  if (shouldOmitThinkingFromRequests(options)) {
-    for (const field of [
-      "thinking_blocks",
-      "provider_specific_fields",
-      "reasoning_content",
-      "reasoning",
-      "reasoning_details",
-      "thinking",
-      "_responsesReasoningItems"
-    ]) {
-      delete apiMessage[field];
-    }
-  }
-  return apiMessage;
-}
-
-function shouldOmitThinkingFromRequests(options = {}) {
-  return options.omitThinkingFromRequests === true;
-}
-
-function buildApiMessages(apiType, messages, options = {}) {
-  const normalizedApiType = normalizeApiType(apiType);
-  if (normalizedApiType === API_TYPES.ANTHROPIC) {
-    return buildAnthropicApiMessages(messages, options);
-  }
-  return buildOpenAIApiMessages(messages, { ...options, apiType: normalizedApiType });
-}
-
-function buildPlatformSystemPrompt(platformInfo) {
-  if (!platformInfo?.os) {
-    return "";
-  }
-
-  const parts = [`Current operating system: ${platformInfo.os}`];
-  if (platformInfo.arch) parts.push(`architecture: ${platformInfo.arch}`);
-  if (platformInfo.nacl_arch) parts.push(`nacl_arch: ${platformInfo.nacl_arch}`);
-
-  return `Environment:\n- ${parts.join("; ")}.\n\n`;
-}
-
-async function loadSkillsIndexFromSkillStation(serverUrl) {
-  const normalizedServerUrl = normalizeSkillStationUrl(serverUrl);
-  const connection = await connectMcpServer(normalizedServerUrl, {});
-  if (connection.error) {
-    throw new Error(connection.error);
-  }
-  const resources = await listMcpResources(normalizedServerUrl);
-  const skillsIndex = resources.find(resource => resource?.uri === "skills://index");
-  if (!skillsIndex) {
-    throw new Error("skill-bridge 未暴露 skills://index 资源");
-  }
-
-  const resourceResult = await readMcpResource(normalizedServerUrl, {}, "skills://index");
-  return parseLoadedSkillsResponse(extractResourceText(resourceResult));
-}
-
-function parseLoadedSkillsResponse(text) {
-  const payloadText = extractJsonPayload(text);
-  let payload;
-
-  try {
-    payload = JSON.parse(payloadText);
-  } catch (error) {
-    throw new Error("Skills 索引返回的不是合法 JSON");
-  }
-
-  if (payload?.error) {
-    throw new Error(String(payload.error));
-  }
-
-  const rawSkills = Array.isArray(payload)
-    ? payload
-    : (Array.isArray(payload?.skills) ? payload.skills : null);
-
-  if (!rawSkills) {
-    throw new Error("Skills 索引缺少 skills 数组");
-  }
-
-  return rawSkills
-    .map(skill => ({
-      path: String(skill?.directoryName || skill?.path || "").trim().replace(/\\/g, "/").replace(/^\.?\//, ""),
-      name: String(skill?.name || "").trim(),
-      description: String(skill?.description || "").trim(),
-      header: {
-        ...(skill?.metadata && typeof skill.metadata === "object" ? skill.metadata : {}),
-        ...(skill?.header && typeof skill.header === "object" ? skill.header : {})
-      }
-    }))
-    .filter(skill => !!skill.path);
-}
-
-async function loadSkillStationTools(serverUrl, bridgeToolSettings = {}) {
-  const normalizedServerUrl = normalizeSkillStationUrl(serverUrl);
-  const result = await connectMcpServer(normalizedServerUrl, {});
-  if (result.error) {
-    throw new Error(result.error);
-  }
-
-  const tools = Array.isArray(result.tools) ? result.tools : [];
-  const hasGetSkillDetail = tools.some(tool => tool?.name === "get_skill_detail");
-  if (!hasGetSkillDetail) {
-    throw new Error("skill-bridge 缺少 get_skill_detail 工具");
-  }
-
-  return tools.map(tool => ({
-    ...tool,
-    _serverId: "skill_bridge",
-    _serverName: "skill_bridge",
-    _serverUrl: normalizedServerUrl,
-    _serverHeaders: {},
-    _dangerous: resolveSkillBridgeToolDangerous(tool.name, bridgeToolSettings),
-    _toolCallName: `mcp_skill_bridge_${tool.name}`
-  }));
-}
-
-function resolveSkillBridgeToolDangerous(toolName, bridgeToolSettings = {}) {
-  const normalizedToolName = String(toolName || "").trim();
-  const explicitDangerous = bridgeToolSettings?.[normalizedToolName]?.dangerous;
-  if (explicitDangerous != null) {
-    return !!explicitDangerous;
-  }
-  return normalizedToolName === "shell";
-}
-
-function normalizeSkillStationUrl(serverUrl) {
-  return String(serverUrl || "").trim();
-}
-
-function extractResourceText(resourceResult) {
-  const contents = Array.isArray(resourceResult?.contents) ? resourceResult.contents : [];
-  const texts = contents
-    .map(item => item?.text)
-    .filter(text => typeof text === "string" && text.trim().length > 0);
-
-  if (texts.length === 0) {
-    throw new Error("skills://index 返回为空");
-  }
-
-  return texts.join("\n");
-}
-
-function mergeMcpToolLists(primaryTools, secondaryTools) {
-  const map = new Map();
-  for (const tool of [...(primaryTools || []), ...(secondaryTools || [])]) {
-    if (!tool?._toolCallName) continue;
-    map.set(tool._toolCallName, tool);
-  }
-  return [...map.values()];
-}
-
-function extractJsonPayload(text) {
-  const raw = String(text || "").trim();
-  if (!raw) {
-    throw new Error("Skills 索引返回为空");
-  }
-
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-
-  if (raw.startsWith("{") || raw.startsWith("[")) return raw;
-
-  const firstArrayStart = raw.indexOf("[");
-  const lastArrayEnd = raw.lastIndexOf("]");
-  if (firstArrayStart >= 0 && lastArrayEnd > firstArrayStart) {
-    return raw.slice(firstArrayStart, lastArrayEnd + 1);
-  }
-
-  const firstObjectStart = raw.indexOf("{");
-  const lastObjectEnd = raw.lastIndexOf("}");
-  if (firstObjectStart >= 0 && lastObjectEnd > firstObjectStart) {
-    return raw.slice(firstObjectStart, lastObjectEnd + 1);
-  }
-
-  throw new Error("未找到可解析的 JSON 输出");
 }

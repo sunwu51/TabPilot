@@ -2,28 +2,33 @@
 import { Button, Checkbox, Dialog, Input, Select } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import { resolveLlmRequestUrl } from "../api/llmEndpoint";
+import { resolveLlmRequestUrl } from "../api/llm/core/endpoint";
 import {
   API_TYPES,
+  DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  IMAGE_API_PROTOCOLS,
   MODEL_CONTEXT_LIMIT_OPTIONS,
+  captureFullPageScreenshotToTab,
   getDefaultApiType,
   normalizeApiType,
-  normalizeModelContextLimitTokens
+  normalizeImageApiProtocol,
+  normalizeModelContextLimitTokens,
+  openHelloWorldPlayground,
+  resolveImageApiRequestUrl
 } from "../api/llm";
-import { captureFullPageScreenshotToTab, openHelloWorldPlayground } from "../api/llm/builtins";
 import {
   downloadSettingsBackup,
   exportSettingsBackup,
   importSettingsBackupFromText
-} from "../api/settingsBackup";
-import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/tabReuse";
+} from "../api/settings/backup";
+import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/browser/tabReuse";
 import {
   DEFAULT_WS_BRIDGE_STATUS,
   formatWsBridgeStatusTime,
   getWsBridgeStateMeta,
   WS_BRIDGE_STATUS_STORAGE_KEY
-} from "../api/wsBridgeShared";
+} from "../api/bridge/wsBridgeStatus";
 
 const DEFAULT_SETTINGS = {
   llmConfig: {
@@ -35,7 +40,11 @@ const DEFAULT_SETTINGS = {
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
     reasoningEffort: "default",
-    omitThinkingFromRequests: false
+    omitThinkingFromRequests: false,
+    imageBaseUrl: "",
+    imageApiKey: "",
+    imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
+    imageModel: DEFAULT_IMAGE_MODEL
   },
   mcpToolTimeoutSeconds: 60,
   reuse: false,
@@ -66,12 +75,17 @@ function SettingsDialogBody() {
   const [baseUrl, setBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.baseUrl);
   const [apiKey, setApiKey] = useState(DEFAULT_SETTINGS.llmConfig.apiKey);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
   const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
   const [reasoningEffort, setReasoningEffort] = useState(DEFAULT_SETTINGS.llmConfig.reasoningEffort);
   const [omitThinkingFromRequests, setOmitThinkingFromRequests] = useState(DEFAULT_SETTINGS.llmConfig.omitThinkingFromRequests);
+  const [imageBaseUrl, setImageBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.imageBaseUrl);
+  const [imageApiKey, setImageApiKey] = useState(DEFAULT_SETTINGS.llmConfig.imageApiKey);
+  const [imageApiProtocol, setImageApiProtocol] = useState(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+  const [imageModel, setImageModel] = useState(DEFAULT_SETTINGS.llmConfig.imageModel);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
@@ -101,6 +115,13 @@ function SettingsDialogBody() {
     { label: "超高 xhigh", value: "xhigh" }
   ];
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
+  const resolvedImageGenUrl = resolveImageApiRequestUrl(imageBaseUrl, "generations");
+  const resolvedImageEditUrl = resolveImageApiRequestUrl(imageBaseUrl, "edits");
+  const resolvedImageChatUrl = resolveImageApiRequestUrl(imageBaseUrl, "chat_completions");
+  const imageProtocolOptions = [
+    { label: "Generate / Edit API", value: IMAGE_API_PROTOCOLS.GENERATE },
+    { label: "Chat Completions", value: IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS }
+  ];
 
   useEffect(() => {
     void loadDraft();
@@ -138,6 +159,10 @@ function SettingsDialogBody() {
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
       setReasoningEffort(normalizeReasoningEffort(nextLlmConfig.reasoningEffort));
       setOmitThinkingFromRequests(nextLlmConfig.omitThinkingFromRequests === true);
+      setImageBaseUrl(nextLlmConfig.imageBaseUrl || "");
+      setImageApiKey(nextLlmConfig.imageApiKey || "");
+      setImageApiProtocol(normalizeImageApiProtocol(nextLlmConfig.imageApiProtocol));
+      setImageModel(nextLlmConfig.imageModel || DEFAULT_IMAGE_MODEL);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
@@ -183,7 +208,11 @@ function SettingsDialogBody() {
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
           reasoningEffort: normalizeReasoningEffort(reasoningEffort),
-          omitThinkingFromRequests
+          omitThinkingFromRequests,
+          imageBaseUrl,
+          imageApiKey,
+          imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
+          imageModel: imageModel || DEFAULT_IMAGE_MODEL
         },
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
@@ -446,6 +475,94 @@ function SettingsDialogBody() {
             <Checkbox isSelected={supportsImageInput} onChange={setSupportsImageInput}>
               <span className="text-sm">模型支持图片输入</span>
             </Checkbox>
+          </div>
+          <div className="settings-inline-section-title">Image API 配置</div>
+          <Select
+            label="Image API 规范"
+            items={imageProtocolOptions.map((item) => item.label)}
+            defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
+            onSelectedItemChange={(changes) => {
+              const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
+              setImageApiProtocol(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+            }}
+          />
+          <Input
+            label="Image API 地址"
+            labelClassName="!text-sm !font-medium !text-gray-500"
+            inputClassName="!min-h-8"
+            defaultValue={imageBaseUrl}
+            onChange={setImageBaseUrl}
+            placeholder="https://api.openai.com/v1"
+          />
+          <div className="settings-api-url-hint">
+            {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
+              ? `Chat Completions ${resolvedImageChatUrl || "—"}`
+              : `生成 ${resolvedImageGenUrl || "—"}；编辑 ${resolvedImageEditUrl || "—"}`}
+          </div>
+          <div className="settings-secret-field">
+            <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-image-api-key">Image API Token</label>
+            <div className="settings-secret-input-wrapper">
+              <input
+                id="settings-image-api-key"
+                className="settings-secret-input !min-h-8"
+                type={showImageApiKey ? "text" : "password"}
+                value={imageApiKey}
+                onChange={(e) => setImageApiKey(e.target.value)}
+                placeholder="sk-..."
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="settings-secret-toggle"
+                onClick={() => setShowImageApiKey((prev) => !prev)}
+                aria-label={showImageApiKey ? "隐藏 Image API Token" : "显示 Image API Token"}
+                title={showImageApiKey ? "隐藏" : "显示"}
+              >
+                {showImageApiKey ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                    />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+          <Input
+            label="Image 模型"
+            labelClassName="!text-sm !font-medium !text-gray-500"
+            inputClassName="!min-h-8"
+            defaultValue={imageModel}
+            onChange={setImageModel}
+            placeholder={DEFAULT_IMAGE_MODEL}
+          />
+          <div className="settings-api-url-hint">
+            配置完整后会向模型开放 image_gen 和 image_edit 内置工具；Chat Completions 规范不支持 mask；工具结果只在本地预览/缓存图片。
           </div>
           <div className="mt-2">
             <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
