@@ -21,6 +21,7 @@ const LLM_CONFIG_KEYS = [
   "modelContextLimitTokens",
   "firstPacketTimeoutSeconds",
   "supportsImageInput",
+  "supportsToolImageInput",
   "reasoningEffort",
   "omitThinkingFromRequests",
   "imageBaseUrl",
@@ -117,6 +118,7 @@ function normalizeLlmConfigPatch(value) {
   }
   addNumberPatch(patch, source, "firstPacketTimeoutSeconds", { min: 1, integer: true });
   addBooleanPatch(patch, source, "supportsImageInput");
+  addBooleanPatch(patch, source, "supportsToolImageInput");
   if (Object.prototype.hasOwnProperty.call(source, "reasoningEffort")) {
     patch.reasoningEffort = normalizeReasoningEffort(source.reasoningEffort);
   }

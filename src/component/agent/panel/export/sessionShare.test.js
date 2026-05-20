@@ -73,4 +73,20 @@ describe("sessionShare", () => {
     await expect(copyTextToClipboard("https://example.com")).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledWith("https://example.com");
   });
+
+  it("falls back when navigator.clipboard rejects because the document is not focused", async () => {
+    const writeText = vi.fn().mockRejectedValue(new DOMException(
+      "Failed to execute 'writeText' on 'Clipboard': Document is not focused.",
+      "NotAllowedError"
+    ));
+    document.execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(globalThis.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+
+    await expect(copyTextToClipboard("https://example.com")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("https://example.com");
+    expect(document.execCommand).toHaveBeenCalledWith("copy");
+  });
 });

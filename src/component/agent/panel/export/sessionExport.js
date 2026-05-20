@@ -1,10 +1,11 @@
-import { normalizeMessageImageRefs, isBase64DataUrl } from "../../imageRefs";
+import { normalizeMessageImageRefs, isBase64DataUrl, IMAGE_REF_PATTERN } from "../../imageRefs";
 import { formatJsonFence, formatTextFence } from "../utils/scheduleStatus";
 import { parseImageDataUrl, parseToolMessageContent } from "../messages/toolResults";
 import { imageBlockToDataUrl } from "../messages/userMessage";
 
-export function buildSessionExportMarkdown({ title, sessionId, messages }) {
-  const imageRefMap = buildExportImageRefMap(messages);
+export function buildSessionExportMarkdown({ title, sessionId, messages, includeImages = true, imageStore = null }) {
+  const imageRefMap = buildExportImageRefMap(messages, imageStore);
+  const exportOptions = { includeImages, imageRefMap };
   const sections = [
     `# ${title || "新会话"}`,
     "",
@@ -14,28 +15,28 @@ export function buildSessionExportMarkdown({ title, sessionId, messages }) {
   ];
 
   for (const msg of messages || []) {
-    sections.push(...serializeExportMessage(msg, imageRefMap));
+    sections.push(...serializeExportMessage(msg, imageRefMap, exportOptions));
   }
 
   return sections.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function serializeExportMessage(msg, imageRefMap = new Map()) {
+export function serializeExportMessage(msg, imageRefMap = new Map(), options = {}) {
   if (!msg || !msg.role) return [];
 
   if (msg.role === "user") {
-    return serializeUserExportMessage(msg);
+    return serializeUserExportMessage(msg, options);
   }
 
   if (msg.role === "assistant") {
-    return serializeAssistantExportMessage(msg, imageRefMap);
+    return serializeAssistantExportMessage(msg, imageRefMap, options);
   }
 
   if (msg.role === "tool") {
     return [
       `## 工具结果${msg.tool_name ? ` · ${msg.tool_name}` : ""}`,
       "",
-      formatToolResultForMarkdown(msg),
+      formatToolResultForMarkdown(msg, options),
       ""
     ];
   }
@@ -57,29 +58,29 @@ export function serializeExportMessage(msg, imageRefMap = new Map()) {
   ];
 }
 
-export function serializeUserExportMessage(msg) {
+export function serializeUserExportMessage(msg, options = {}) {
   return [
     "---",
     "",
     "## 用户",
     "",
-    formatUserContentForMarkdown(msg.content),
+    formatUserContentForMarkdown(msg.content, options),
     ""
   ];
 }
 
-export function formatUserContentForMarkdown(content) {
+export function formatUserContentForMarkdown(content, options = {}) {
   if (typeof content === "string") return content.trim() || "_空内容_";
   if (!Array.isArray(content)) return formatUnknownContentForMarkdown(content);
 
   const parts = content
-    .map(formatUserContentBlockForMarkdown)
+    .map(block => formatUserContentBlockForMarkdown(block, options))
     .filter(part => typeof part === "string" && part.trim().length > 0);
 
   return parts.length > 0 ? parts.join("\n\n") : "_空内容_";
 }
 
-export function formatUserContentBlockForMarkdown(block) {
+export function formatUserContentBlockForMarkdown(block, options = {}) {
   if (!block || typeof block !== "object") return "";
 
   if (block.type === "text") {
@@ -91,27 +92,30 @@ export function formatUserContentBlockForMarkdown(block) {
     return [`### 附件 · ${fileName}`, "", formatTextFence(block.text ?? "")].join("\n");
   }
 
-  const dataUrl = imageBlockToDataUrl(block);
+  const dataUrl = imageBlockToExportDataUrl(block, options.imageRefMap);
   if (dataUrl) {
     const mediaType = parseImageDataUrl(dataUrl)?.mediaType || "image";
+    if (options.includeImages === false) {
+      return `[用户图片已省略 · ${mediaType}]`;
+    }
     return `![用户图片 · ${mediaType}](${dataUrl})`;
   }
 
   return formatJsonFence(block);
 }
 
-export function serializeAssistantExportMessage(msg, imageRefMap = new Map()) {
+export function serializeAssistantExportMessage(msg, imageRefMap = new Map(), options = {}) {
   const sections = [];
 
   if (typeof msg.content === "string" && msg.content.trim()) {
-    sections.push("## 助手", "", replaceMarkdownImageDerefSources(msg.content.trim(), imageRefMap), "");
+    sections.push("## 助手", "", replaceMarkdownImageDerefSources(msg.content.trim(), imageRefMap, options), "");
   }
 
   if (Array.isArray(msg.content)) {
     for (const block of msg.content) {
       if (!block) continue;
       if (block.type === "text" && block.text) {
-        sections.push("## 助手", "", replaceMarkdownImageDerefSources(String(block.text).trim(), imageRefMap), "");
+        sections.push("## 助手", "", replaceMarkdownImageDerefSources(String(block.text).trim(), imageRefMap, options), "");
       } else if (block.type === "tool_use") {
         sections.push(
           `## 工具调用${block.name ? ` · ${block.name}` : ""}`,
@@ -150,8 +154,15 @@ export function serializeAssistantExportMessage(msg, imageRefMap = new Map()) {
   return sections;
 }
 
-export function buildExportImageRefMap(messages = []) {
+export function buildExportImageRefMap(messages = [], imageStore = null) {
   const refs = new Map();
+  if (imageStore && typeof imageStore === "object") {
+    for (const [ref, dataUrl] of Object.entries(imageStore)) {
+      if (IMAGE_REF_PATTERN.test(ref) && isBase64DataUrl(dataUrl) && !refs.has(ref)) {
+        refs.set(ref, dataUrl);
+      }
+    }
+  }
   for (const msg of messages || []) {
     for (const item of normalizeMessageImageRefs(msg?.imageRefs)) {
       if (isBase64DataUrl(item.dataUrl) && !refs.has(item.ref)) {
@@ -162,15 +173,26 @@ export function buildExportImageRefMap(messages = []) {
   return refs;
 }
 
-export function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map()) {
+function imageBlockToExportDataUrl(block, imageRefMap = new Map()) {
+  const dataUrl = imageBlockToDataUrl(block);
+  if (dataUrl) return dataUrl;
+  if (block?.type !== "image" || block.source?.type !== "session_image") return "";
+  const ref = String(block.source.ref || "").trim();
+  return IMAGE_REF_PATTERN.test(ref) ? (imageRefMap.get(ref) || "") : "";
+}
+
+export function replaceMarkdownImageDerefSources(markdown, imageRefMap = new Map(), options = {}) {
   if (typeof markdown !== "string" || !markdown.includes("|deRef:")) return markdown;
   return markdown.replace(/(!\[[^\]\n]*\]\()\|deRef:(img_[A-Za-z0-9_-]+)\|(\))/g, (match, prefix, ref, suffix) => {
+    if (options.includeImages === false) {
+      return `${prefix}about:blank "${ref} 图片已省略"${suffix}`;
+    }
     const dataUrl = imageRefMap.get(ref);
     return isBase64DataUrl(dataUrl) ? `${prefix}${dataUrl}${suffix}` : match;
   });
 }
 
-export function formatToolResultForMarkdown(msg) {
+export function formatToolResultForMarkdown(msg, options = {}) {
   const parsed = parseToolMessageContent(msg.content);
   const contentBlock = typeof parsed === "string"
     ? formatTextFence(parsed)
@@ -181,6 +203,14 @@ export function formatToolResultForMarkdown(msg) {
 
   if (displayImages.length === 0) {
     return contentBlock;
+  }
+
+  if (options.includeImages === false) {
+    return [
+      contentBlock,
+      "",
+      `[工具图片已省略 · ${displayImages.length} 张]`
+    ].join("\n");
   }
 
   return [

@@ -131,8 +131,8 @@ export function buildOpenAIApiMessages(messages, options = {}) {
           } else if (block.type === "file") {
             openaiContent.push({ type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` });
           } else if (block.type === "image" && block.source && options.supportsImageInput !== false) {
-            const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
-            openaiContent.push({ type: "image_url", image_url: { url: dataUrl, detail: "low" } });
+            const dataUrl = buildImageBlockDataUrlForApi(block);
+            if (dataUrl) openaiContent.push({ type: "image_url", image_url: { url: dataUrl, detail: "low" } });
           }
         }
         apiMessages.push({ role: "user", content: openaiContent });
@@ -153,4 +153,10 @@ export function buildOpenAIApiMessages(messages, options = {}) {
   }
 
   return apiMessages;
+}
+
+function buildImageBlockDataUrlForApi(block) {
+  if (block?.source?.type !== "base64") return "";
+  if (!block.source.media_type || !block.source.data) return "";
+  return `data:${block.source.media_type};base64,${block.source.data}`;
 }

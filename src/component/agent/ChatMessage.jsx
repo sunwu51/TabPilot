@@ -287,7 +287,9 @@ function UserMultimodalContent({
           );
         }
         if (block.type === "image" && block.source) {
-          const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+          const dataUrl = block.source.type === "session_image"
+            ? `session-image:${block.source.ref}`
+            : `data:${block.source.media_type};base64,${block.source.data}`;
           const ref = findImageRefForSource(imageRefs, dataUrl);
           return (
             <div key={index} style={{ marginTop: index > 0 ? "8px" : "0" }}>
@@ -815,6 +817,8 @@ function EditableChatImage({
   imageClassName = "",
   ...imgProps
 }) {
+  const isPendingSessionImage = typeof src === "string" && src.startsWith("session-image:");
+
   function handleEditClick(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -824,13 +828,21 @@ function EditableChatImage({
 
   return (
     <span className={`chat-editable-image-wrap ${wrapperClassName}`.trim()}>
-      <img
-        {...imgProps}
-        src={src}
-        alt={alt}
-        className={imageClassName}
-      />
-      {editable && (
+      {isPendingSessionImage ? (
+        <span className={`${imageClassName} chat-image-placeholder`}>
+          图片加载中...
+        </span>
+      ) : (
+        <img
+          {...imgProps}
+          src={src}
+          alt={alt}
+          className={imageClassName}
+          loading="lazy"
+          decoding="async"
+        />
+      )}
+      {editable && !isPendingSessionImage && (
         <button
           type="button"
           className="chat-image-edit-btn"

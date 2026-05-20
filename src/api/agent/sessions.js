@@ -77,6 +77,32 @@ export async function loadSession(id) {
 }
 
 /**
+ * Load the image store for a session. Kept separate from messages so large base64
+ * images do not block session switching.
+ * @param {string} id - session ID
+ * @returns {Promise<object>} image store keyed by image ref
+ */
+export async function loadSessionImageStore(id) {
+  const key = getSessionImageStoreKey(id);
+  const result = await chrome.storage.local.get({ [key]: {} });
+  return result[key] && typeof result[key] === "object" ? result[key] : {};
+}
+
+/**
+ * Load messages and hydrate out-of-band image refs. Use only when the caller
+ * explicitly needs base64 image payloads synchronously.
+ * @param {string} id - session ID
+ * @returns {Promise<Array>} hydrated messages array
+ */
+export async function loadHydratedSession(id) {
+  const [messages, imageStore] = await Promise.all([
+    loadSession(id),
+    loadSessionImageStore(id)
+  ]);
+  return hydrateSessionMessages(messages, imageStore);
+}
+
+/**
  * Load optional metadata for a specific session.
  * @param {string} id - session ID
  * @returns {Promise<{systemPrompt: string, plans: Array}>}
@@ -99,7 +125,12 @@ export async function loadSessionMeta(id) {
 export async function saveSession(id, messages, title) {
   const key = `session_${id}`;
   const result = await chrome.storage.local.get({ [key]: {} });
-  await chrome.storage.local.set({ [key]: { ...result[key], messages } });
+  const { messages: compactMessages, imageStore } = compactSessionMessages(messages);
+  const imageStoreKey = getSessionImageStoreKey(id);
+  await chrome.storage.local.set({
+    [key]: { ...result[key], messages: compactMessages },
+    [imageStoreKey]: imageStore || {}
+  });
 
   // Update index entry
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
@@ -110,6 +141,129 @@ export async function saveSession(id, messages, title) {
     entry.updatedAt = Date.now();
   }
   await chrome.storage.local.set({ sessions_index });
+}
+
+const SESSION_IMAGE_STORE_REF_PREFIX = "session-image:";
+
+function getSessionImageStoreKey(id) {
+  return `session_${id}_images`;
+}
+
+export function compactSessionMessages(messages) {
+  if (!Array.isArray(messages)) return { messages, imageStore: undefined };
+  const imageStore = {};
+  const byValue = new Map();
+  let nextIndex = 1;
+
+  function storeDataUrl(dataUrl, preferredKey = "") {
+    const raw = String(dataUrl || "");
+    if (!isBase64DataUrl(raw)) return raw;
+    const existing = byValue.get(raw);
+    if (existing) return `${SESSION_IMAGE_STORE_REF_PREFIX}${existing}`;
+
+    let key = normalizeImageStoreKey(preferredKey);
+    while (!key || Object.prototype.hasOwnProperty.call(imageStore, key)) {
+      key = `img_${nextIndex}`;
+      nextIndex += 1;
+    }
+    imageStore[key] = raw;
+    byValue.set(raw, key);
+    return `${SESSION_IMAGE_STORE_REF_PREFIX}${key}`;
+  }
+
+  function storeImageBlockSource(source, preferredKey = "") {
+    if (!source || typeof source !== "object") return source;
+    if (source.type !== "base64" || !source.media_type || !source.data) return compactValue(source, preferredKey);
+    const ref = storeDataUrl(`data:${source.media_type};base64,${source.data}`, preferredKey);
+    const imageRef = ref.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)
+      ? ref.slice(SESSION_IMAGE_STORE_REF_PREFIX.length)
+      : "";
+    return imageRef
+      ? { type: "session_image", ref: imageRef, media_type: source.media_type }
+      : source;
+  }
+
+  function compactValue(value, preferredKey = "") {
+    if (typeof value === "string") {
+      if (preferredKey) return storeDataUrl(value, preferredKey);
+      return isBase64DataUrl(value) ? storeDataUrl(value) : value;
+    }
+    if (Array.isArray(value)) return value.map(item => compactValue(item));
+    if (!value || typeof value !== "object") return value;
+    if (value.type === "image" && value.source) {
+      return {
+        ...value,
+        source: storeImageBlockSource(value.source, preferredKey)
+      };
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        compactValue(child, getImageStorePreferredKeyForChild(key, child, value))
+      ])
+    );
+  }
+
+  const compactMessages = messages.map(message => compactValue(message));
+  return {
+    messages: compactMessages,
+    imageStore: Object.keys(imageStore).length > 0 ? imageStore : undefined
+  };
+}
+
+export function hydrateSessionMessages(messages, imageStore) {
+  if (!Array.isArray(messages) || !imageStore || typeof imageStore !== "object") return messages;
+
+  function hydrateValue(value) {
+    if (typeof value === "string") {
+      if (!value.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)) return value;
+      const key = value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length);
+      return imageStore[key] || value;
+    }
+    if (Array.isArray(value)) return value.map(hydrateValue);
+    if (!value || typeof value !== "object") return value;
+    if (value.type === "image" && value.source?.type === "session_image") {
+      const dataUrl = imageStore[value.source.ref];
+      const parsed = parseImageDataUrl(dataUrl);
+      if (parsed) {
+        return {
+          ...value,
+          source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
+        };
+      }
+      return value;
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, hydrateValue(child)])
+    );
+  }
+
+  return messages.map(hydrateValue);
+}
+
+function normalizeImageStoreKey(value) {
+  const raw = String(value || "").trim();
+  return /^img_[A-Za-z0-9_-]+$/.test(raw) ? raw : "";
+}
+
+function getImageStorePreferredKeyForChild(key, child, parent) {
+  if (!isImageDataFieldName(key) || typeof child !== "string") return "";
+  return String(parent?.ref || "").trim();
+}
+
+function isImageDataFieldName(key) {
+  return /^(dataUrl|displayImageUrl|url|source)$/i.test(String(key || ""));
+}
+
+function isBase64DataUrl(value) {
+  return typeof value === "string" && /^data:[^;]+;base64,/.test(value);
+}
+
+function parseImageDataUrl(dataUrl) {
+  if (typeof dataUrl !== "string") return null;
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return { mediaType: match[1], data: match[2] };
 }
 
 /**
@@ -200,6 +354,7 @@ export async function deleteSession(id) {
   const lastActiveSessionId = await loadLastActiveSessionId();
   const keysToRemove = [
     key,
+    getSessionImageStoreKey(id),
     ...(lastActiveSessionId === id ? [LAST_ACTIVE_SESSION_ID_KEY] : [])
   ];
   await chrome.storage.local.remove(keysToRemove);
@@ -245,13 +400,31 @@ export async function saveDefaultNewSessionSystemPrompt(value = {}) {
 }
 
 /**
- * Extract a title from messages: first user message content, truncated to 20 chars.
+ * Extract a title from messages: first user-visible text, truncated to 20 chars.
  * @param {Array} messages
  * @returns {string}
  */
 export function extractTitle(messages) {
-  const firstUser = messages.find(m => m.role === "user" && typeof m.content === "string");
+  const firstUser = messages.find(m => m.role === "user" && extractUserTitleText(m));
   if (!firstUser) return "新会话";
-  const text = firstUser.content.trim();
+  const text = extractUserTitleText(firstUser);
   return text.length > 20 ? text.substring(0, 20) + "..." : text;
+}
+
+function extractUserTitleText(message) {
+  const displayContent = String(message?.displayContent || "").trim();
+  if (displayContent) return displayContent;
+
+  if (typeof message?.content === "string") {
+    return message.content.trim();
+  }
+
+  if (!Array.isArray(message?.content)) return "";
+
+  const textBlock = message.content.find(block => block?.type === "text" && String(block.text || "").trim());
+  if (!textBlock) return "";
+
+  return String(textBlock.text || "")
+    .split(/\n{2,}Attached image ref:/)[0]
+    .trim();
 }
