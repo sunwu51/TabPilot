@@ -699,7 +699,7 @@ export default function AgentPanel() {
     }
 
     const ref = registerSessionImageDataUrl(currentSessionId, source, image?.ref);
-    if (!ref) {
+    if (!ref && !source) {
       toast.error("无法为这张图片创建 ref");
       return;
     }

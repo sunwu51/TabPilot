@@ -921,6 +921,9 @@ function EditableChatImage({
   const previewImageRef = useRef(null);
   const previewStageRef = useRef(null);
   const previewDragRef = useRef(null);
+  const canPreviewImage = !isPendingSessionImage && !!src;
+  const previewButtonLabel = refId || "预览";
+  const previewButtonTitle = refId ? `预览 ${refId}` : "预览图片";
 
   function handleEditClick(event) {
     event.preventDefault();
@@ -932,7 +935,7 @@ function EditableChatImage({
   function handleRefClick(event) {
     event.preventDefault();
     event.stopPropagation();
-    if (!refId || isPendingSessionImage || !src) return;
+    if (!canPreviewImage) return;
     setPreviewZoom(1);
     setPreviewFitZoom(1);
     setPreviewOffset({ x: 0, y: 0 });
@@ -1061,19 +1064,20 @@ function EditableChatImage({
             className={imageClassName}
             loading="lazy"
             decoding="async"
+            onDoubleClick={handleRefClick}
           />
         )}
-        {!isPendingSessionImage && (refId || editable) && (
+        {!isPendingSessionImage && (canPreviewImage || editable) && (
           <span className="chat-image-actions">
-            {refId && (
+            {canPreviewImage && (
               <button
                 type="button"
                 className="chat-image-ref-btn"
                 onClick={handleRefClick}
-                title={`预览 ${refId}`}
-                aria-label={`预览 ${refId}`}
+                title={previewButtonTitle}
+                aria-label={previewButtonTitle}
               >
-                {refId}
+                {previewButtonLabel}
               </button>
             )}
             {editable && (
