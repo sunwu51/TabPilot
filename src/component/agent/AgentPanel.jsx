@@ -1924,6 +1924,9 @@ export default function AgentPanel() {
         ? buildUserMessageContent(finalText, imageAtts, textAtts, imageRefs)
         : finalText
     };
+    if (hasAnyAttachment) {
+      userMsg.displayContent = text;
+    }
     if (localImageRefs.length > 0) {
       userMsg.imageRefs = localImageRefs;
     }
@@ -2866,7 +2869,9 @@ export default function AgentPanel() {
 
     if (Array.isArray(target.content)) {
       const textBlock = target.content.find(b => b.type === "text");
-      text = textBlock?.text ?? "";
+      text = typeof target.displayContent === "string" && target.displayContent.length > 0
+        ? target.displayContent
+        : (textBlock?.text ?? "");
 
       // Restore file attachments
       for (const block of target.content) {
@@ -2889,7 +2894,9 @@ export default function AgentPanel() {
         }
       }
     } else {
-      text = typeof target.content === "string" ? target.content : String(target.content ?? "");
+      text = typeof target.displayContent === "string" && target.displayContent.length > 0
+        ? target.displayContent
+        : (typeof target.content === "string" ? target.content : String(target.content ?? ""));
     }
     stopSessionGeneration(currentSessionId);
 
