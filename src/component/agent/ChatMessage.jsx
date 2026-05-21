@@ -4,8 +4,8 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
-import { memo, useEffect, useState } from "react";
-import { normalizeMessageImageRefs } from "./imageRefs";
+import { memo, useEffect, useRef, useState } from "react";
+import { normalizeImageRefSource, normalizeMessageImageRefs } from "./imageRefs";
 
 /**
  * Render a single chat message based on its role and content.
@@ -84,6 +84,7 @@ const ChatMessage = memo(function ChatMessage({
                 searchState={messageSearchState}
                 displayContent={msg.displayContent}
                 imageRefs={msg.imageRefs}
+                imageEditMeta={msg.imageEditMeta}
                 imageEditingEnabled={imageEditingEnabled}
                 onImageEditRequest={onImageEditRequest}
               />
@@ -134,7 +135,7 @@ const ChatMessage = memo(function ChatMessage({
           )}
           <div className="chat-bubble chat-bubble-user">
             {renderHighlightedText(msg.displayContent || content, messageSearchState)}
-            {buildSupplementalUserImages([], msg.imageRefs).map((image, index) => (
+            {buildSupplementalUserImages([], msg.imageRefs, msg.imageEditMeta).map((image, index) => (
               <SupplementalUserImage
                 key={`plain-supplemental-image-${image.ref || index}`}
                 image={image}
@@ -273,12 +274,13 @@ function UserMultimodalContent({
   searchState,
   displayContent,
   imageRefs,
+  imageEditMeta,
   imageEditingEnabled = false,
   onImageEditRequest
 }) {
   if (!Array.isArray(content)) return null;
   let displayedText = false;
-  const supplementalImages = buildSupplementalUserImages(content, imageRefs);
+  const supplementalImages = buildSupplementalUserImages(content, imageRefs, imageEditMeta);
 
   return (
     <>
@@ -329,16 +331,24 @@ function UserMultimodalContent({
   );
 }
 
-function buildSupplementalUserImages(content, imageRefs) {
+function buildSupplementalUserImages(content, imageRefs, imageEditMeta) {
   const renderedSources = new Set();
   for (const block of Array.isArray(content) ? content : []) {
     const source = getUserImageBlockSource(block);
     if (source) renderedSources.add(source);
   }
 
-  const editRefs = normalizeMessageImageRefs(imageRefs)
+  const seenSupplementalSources = new Set(renderedSources);
+  const editRefs = [
+    ...normalizeMessageImageRefs(imageRefs),
+    ...normalizeImageEditPreviewImages(imageEditMeta?.images)
+  ]
     .filter(item => ["edit_image", "edit_reference", "edit_mask"].includes(item.role))
-    .filter(item => item.dataUrl && !renderedSources.has(item.dataUrl));
+    .filter(item => {
+      if (!item.dataUrl || seenSupplementalSources.has(item.dataUrl)) return false;
+      seenSupplementalSources.add(item.dataUrl);
+      return true;
+    });
 
   let referenceIndex = 0;
   return editRefs.map(item => {
@@ -368,6 +378,16 @@ function getUserImageBlockSource(block) {
     return `data:${block.source.media_type};base64,${block.source.data}`;
   }
   return "";
+}
+
+function normalizeImageEditPreviewImages(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map(item => ({
+      ref: String(item?.ref || "").trim(),
+      dataUrl: normalizeImageRefSource(item?.dataUrl || item?.source || item?.url),
+      role: String(item?.role || "").trim()
+    }))
+    .filter(item => item.dataUrl && ["edit_image", "edit_reference", "edit_mask"].includes(item.role));
 }
 
 function SupplementalUserImage({ image, imageEditingEnabled = false, onImageEditRequest }) {
@@ -894,6 +914,9 @@ function EditableChatImage({
   ...imgProps
 }) {
   const isPendingSessionImage = typeof src === "string" && src.startsWith("session-image:");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const previewStageRef = useRef(null);
 
   function handleEditClick(event) {
     event.preventDefault();
@@ -902,67 +925,133 @@ function EditableChatImage({
     onEdit({ src, alt, ref: refId || "" });
   }
 
-  async function handleRefClick(event) {
+  function handleRefClick(event) {
     event.preventDefault();
     event.stopPropagation();
     if (!refId || isPendingSessionImage || !src) return;
+    setPreviewZoom(1);
+    setIsPreviewOpen(true);
+  }
 
-    try {
-      if (typeof chrome !== "undefined" && chrome.tabs?.create) {
-        await chrome.tabs.create({ url: src, active: true });
-        return;
+  useEffect(() => {
+    if (!isPreviewOpen) return undefined;
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsPreviewOpen(false);
       }
-    } catch (error) {
-      console.error("Failed to open image in tab:", error);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPreviewOpen]);
+
+  useEffect(() => {
+    if (!isPreviewOpen) return undefined;
+    const stage = previewStageRef.current;
+    if (!stage) return undefined;
+
+    function handlePreviewWheel(event) {
+      event.preventDefault();
+      zoomBy(event.deltaY < 0 ? 0.2 : -0.2);
     }
 
-    window.open(src, "_blank", "noopener,noreferrer");
+    stage.addEventListener("wheel", handlePreviewWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", handlePreviewWheel);
+  }, [isPreviewOpen]);
+
+  function zoomBy(delta) {
+    setPreviewZoom(current => clampImagePreviewZoom(current + delta));
+  }
+
+  function fitPreviewToWindow() {
+    setPreviewZoom(0.98);
   }
 
   return (
-    <span className={`chat-editable-image-wrap ${wrapperClassName}`.trim()}>
-      {isPendingSessionImage ? (
-        <span className={`${imageClassName} chat-image-placeholder`}>
-          图片加载中...
-        </span>
-      ) : (
-        <img
-          {...imgProps}
-          src={src}
-          alt={alt}
-          className={imageClassName}
-          loading="lazy"
-          decoding="async"
-        />
+    <>
+      <span className={`chat-editable-image-wrap ${wrapperClassName}`.trim()}>
+        {isPendingSessionImage ? (
+          <span className={`${imageClassName} chat-image-placeholder`}>
+            图片加载中...
+          </span>
+        ) : (
+          <img
+            {...imgProps}
+            src={src}
+            alt={alt}
+            className={imageClassName}
+            loading="lazy"
+            decoding="async"
+          />
+        )}
+        {!isPendingSessionImage && (refId || editable) && (
+          <span className="chat-image-actions">
+            {refId && (
+              <button
+                type="button"
+                className="chat-image-ref-btn"
+                onClick={handleRefClick}
+                title={`预览 ${refId}`}
+                aria-label={`预览 ${refId}`}
+              >
+                {refId}
+              </button>
+            )}
+            {editable && (
+              <button
+                type="button"
+                className="chat-image-edit-btn"
+                onClick={handleEditClick}
+                title="编辑图片"
+                aria-label="编辑图片"
+              >
+                Edit
+              </button>
+            )}
+          </span>
+        )}
+      </span>
+      {isPreviewOpen && !isPendingSessionImage && src && (
+        <div
+          className="chat-image-preview-backdrop"
+          onClick={() => setIsPreviewOpen(false)}
+        >
+          <div
+            className="chat-image-preview-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={refId ? `${refId} 图片预览` : "图片预览"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="chat-image-preview-toolbar">
+              <div className="chat-image-preview-title">{refId || alt || "图片预览"}</div>
+              <div className="chat-image-preview-controls">
+                <button type="button" className="chat-image-preview-btn" onClick={() => zoomBy(-0.2)} aria-label="缩小图片">-</button>
+                <button type="button" className="chat-image-preview-btn" onClick={() => zoomBy(0.2)} aria-label="放大图片">+</button>
+                <button type="button" className="chat-image-preview-btn" onClick={fitPreviewToWindow} aria-label="适应窗口">适应</button>
+                <button type="button" className="chat-image-preview-btn" onClick={() => setIsPreviewOpen(false)} aria-label="关闭图片预览">关闭</button>
+              </div>
+            </div>
+            <div className="chat-image-preview-meta">
+              <span>{Math.round(previewZoom * 100)}%</span>
+              <span className="chat-image-preview-hint">滚轮可缩放</span>
+            </div>
+            <div ref={previewStageRef} className="chat-image-preview-stage">
+              <img
+                src={src}
+                alt={alt}
+                className="chat-image-preview-image"
+                style={{ transform: `scale(${previewZoom})` }}
+              />
+            </div>
+          </div>
+        </div>
       )}
-      {!isPendingSessionImage && (refId || editable) && (
-        <span className="chat-image-actions">
-          {refId && (
-            <button
-              type="button"
-              className="chat-image-ref-btn"
-              onClick={handleRefClick}
-              title={`在新标签页查看 ${refId}`}
-              aria-label={`在新标签页查看 ${refId}`}
-            >
-              {refId}
-            </button>
-          )}
-          {editable && (
-            <button
-              type="button"
-              className="chat-image-edit-btn"
-              onClick={handleEditClick}
-              title="编辑图片"
-              aria-label="编辑图片"
-            >
-              Edit
-            </button>
-          )}
-        </span>
-      )}
-    </span>
+    </>
   );
+}
+
+function clampImagePreviewZoom(value) {
+  return Math.max(0.2, Math.min(6, Math.round(value * 100) / 100));
 }
 
 function findImageRefForSource(imageRefs, source) {

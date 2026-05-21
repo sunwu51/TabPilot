@@ -13,7 +13,8 @@ export function buildPlainApiMessage(msg, options = {}) {
     "_usageModel",
     "displayContent",
     "injectedUserContext",
-    "imageRefs"
+    "imageRefs",
+    "imageEditMeta"
   ]) {
     delete apiMessage[field];
   }

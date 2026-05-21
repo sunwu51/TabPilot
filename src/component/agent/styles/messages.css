@@ -147,6 +147,7 @@
 
 .chat-assistant-image-wrap {
   margin: 4px 0;
+  max-width: 275px;
 }
 
 .chat-image-actions {
@@ -197,6 +198,108 @@
 .chat-image-ref-btn:hover,
 .chat-image-edit-btn:hover {
   background: white;
+}
+
+.chat-image-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.68);
+  backdrop-filter: blur(3px);
+}
+
+.chat-image-preview-dialog {
+  width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.3);
+}
+
+.chat-image-preview-toolbar,
+.chat-image-preview-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-image-preview-title {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-all;
+}
+
+.chat-image-preview-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chat-image-preview-btn {
+  min-width: 44px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: white;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 28px;
+  cursor: pointer;
+}
+
+.chat-image-preview-btn:hover {
+  background: #eff6ff;
+}
+
+.chat-image-preview-meta {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.chat-image-preview-hint {
+  color: #64748b;
+}
+
+.chat-image-preview-stage {
+  flex: 1 1 auto;
+  min-height: 220px;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border-radius: 10px;
+  background:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%, transparent 75%, rgba(148, 163, 184, 0.12) 75%),
+    linear-gradient(45deg, rgba(148, 163, 184, 0.12) 25%, transparent 25%, transparent 75%, rgba(148, 163, 184, 0.12) 75%);
+  background-color: #e2e8f0;
+  background-position: 0 0, 12px 12px;
+  background-size: 24px 24px;
+}
+
+.chat-image-preview-image {
+  max-width: calc(100vw - 160px);
+  max-height: calc(100vh - 220px);
+  transform-origin: center center;
+  transition: transform 120ms ease;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
 }
 
 .chat-user-injected-context {

@@ -120,4 +120,27 @@ describe("buildApiMessages image options", () => {
       content: [{ type: "text", text: "look" }]
     }]);
   });
+
+  it("strips local-only image edit metadata from provider requests", () => {
+    const messages = [{
+      role: "user",
+      content: "edit this image",
+      imageRefs: [{ ref: "img_1", dataUrl: "data:image/png;base64,dXNlcg==" }],
+      imageEditMeta: {
+        kind: "image_edit",
+        hasMask: true,
+        referenceCount: 2
+      }
+    }];
+
+    expect(buildApiMessages(API_TYPES.OPENAI_CHAT, messages)).toEqual([{
+      role: "user",
+      content: "edit this image"
+    }]);
+
+    expect(buildApiMessages(API_TYPES.ANTHROPIC, messages)).toEqual([{
+      role: "user",
+      content: "edit this image"
+    }]);
+  });
 });

@@ -32,4 +32,28 @@ describe("ChatMessage image edit refs", () => {
     expect(screen.getByAltText("原图")).toHaveAttribute("src", "data:image/png;base64,b3JpZw==");
     expect(screen.getByAltText("参考图 1")).toHaveAttribute("src", "data:image/png;base64,cmVm");
   });
+
+  it("renders http image edit previews from imageEditMeta without creating refs", () => {
+    render(
+      <ChatMessage
+        msg={{
+          role: "user",
+          content: "请使用工具 image_edit 修改这张图片。",
+          displayContent: "编辑图片：把云层调亮。",
+          imageEditMeta: {
+            kind: "image_edit",
+            images: [
+              { dataUrl: "https://example.com/original.png", role: "edit_image" },
+              { dataUrl: "https://example.com/reference.png", role: "edit_reference" }
+            ]
+          }
+        }}
+      />
+    );
+
+    expect(screen.getByText("原图")).toBeInTheDocument();
+    expect(screen.getByText("参考图 1")).toBeInTheDocument();
+    expect(screen.getByAltText("原图")).toHaveAttribute("src", "https://example.com/original.png");
+    expect(screen.getByAltText("参考图 1")).toHaveAttribute("src", "https://example.com/reference.png");
+  });
 });

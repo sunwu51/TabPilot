@@ -122,7 +122,8 @@ import {
   getMcpToolCallName,
   buildImageEditUserPrompt,
   buildImageEditDisplayText,
-  buildImageEditMessageRefs
+  buildImageEditMessageRefs,
+  buildImageEditPreviewImages
 } from "./panel/messages/imageEditTool";
 import {
   imageBlockToDataUrl,
@@ -151,7 +152,7 @@ import { SessionExportDialogBody } from "./panel/components/SessionExportDialog"
 
 // Re-export for tests (AgentPanel.{export,imageEdit}.test.jsx import these from this file)
 export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDialog };
-export { buildRewindRestoredAttachments };
+export { buildRewindRestoredAttachments, buildImageEditRewindHint };
 
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
@@ -202,9 +203,16 @@ function buildRewindRestoredAttachments(target) {
     edit_reference: 1,
     edit_mask: 2
   };
-  const supplementalImageRefs = normalizeMessageImageRefs(target?.imageRefs)
+  const supplementalImageRefs = [
+    ...normalizeMessageImageRefs(target?.imageRefs),
+    ...normalizeImageEditPreviewImages(target?.imageEditMeta?.images)
+  ]
     .filter(item => ["edit_image", "edit_reference", "edit_mask"].includes(item.role))
-    .filter(item => !seenImageSources.has(item.dataUrl))
+    .filter(item => {
+      if (seenImageSources.has(item.dataUrl)) return false;
+      seenImageSources.add(item.dataUrl);
+      return true;
+    })
     .sort((a, b) => {
       const priorityDiff = (rolePriority[a.role] ?? 99) - (rolePriority[b.role] ?? 99);
       if (priorityDiff !== 0) return priorityDiff;
@@ -232,15 +240,56 @@ function buildRewindRestoredAttachments(target) {
 
 function buildImageEditRewindHint(meta = {}) {
   if (meta?.kind !== "image_edit") return "";
-  const parts = ["第1张图是原图"];
-  const referenceCount = Math.max(0, Number(meta.referenceCount) || 0);
-  for (let index = 0; index < referenceCount; index++) {
-    parts.push(`第${index + 2}张图是参考图${index + 1}`);
+  const previewImages = normalizeImageEditPreviewImages(meta?.images);
+  const parts = [];
+
+  if (previewImages.length > 0) {
+    let attachmentIndex = 0;
+    let referenceIndex = 0;
+    for (const item of previewImages) {
+      const isHttpImage = /^https?:\/\//i.test(item.dataUrl);
+      if (!isHttpImage) attachmentIndex += 1;
+
+      if (item.role === "edit_image") {
+        parts.push(isHttpImage ? `${item.dataUrl} 是原图` : `第${attachmentIndex}张图是原图`);
+        continue;
+      }
+
+      if (item.role === "edit_reference") {
+        referenceIndex += 1;
+        parts.push(isHttpImage
+          ? `${item.dataUrl} 是参考图${referenceIndex}`
+          : `第${attachmentIndex}张图是参考图${referenceIndex}`);
+        continue;
+      }
+
+      if (item.role === "edit_mask") {
+        parts.push(isHttpImage ? `${item.dataUrl} 是蒙版` : `第${attachmentIndex}张图是蒙版`);
+      }
+    }
   }
-  if (meta.hasMask) {
-    parts.push(`第${referenceCount + 2}张图是蒙版`);
+
+  if (parts.length === 0) {
+    parts.push("第1张图是原图");
+    const referenceCount = Math.max(0, Number(meta.referenceCount) || 0);
+    for (let index = 0; index < referenceCount; index++) {
+      parts.push(`第${index + 2}张图是参考图${index + 1}`);
+    }
+    if (meta.hasMask) {
+      parts.push(`第${referenceCount + 2}张图是蒙版`);
+    }
   }
   return parts.length > 0 ? `\n\n图片顺序说明：${parts.join("；")}。` : "";
+}
+
+function normalizeImageEditPreviewImages(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map(item => ({
+      ref: IMAGE_REF_PATTERN.test(String(item?.ref || "").trim()) ? String(item.ref).trim() : "",
+      dataUrl: normalizeImageRefSource(item?.dataUrl || item?.source || item?.url),
+      role: String(item?.role || "").trim()
+    }))
+    .filter(item => item.dataUrl && ["edit_image", "edit_reference", "edit_mask"].includes(item.role));
 }
 
 export default function AgentPanel() {
@@ -943,6 +992,7 @@ export default function AgentPanel() {
   function registerSessionImageDataUrl(targetSessionId, dataUrl, preferredRef) {
     const source = normalizeImageRefSource(dataUrl);
     if (!targetSessionId || !source) return null;
+    if (/^https?:\/\//i.test(source)) return null;
     const cache = getSessionImageRefCache(targetSessionId);
     const existing = cache.byDataUrl.get(source);
     if (existing) return existing;
@@ -2423,7 +2473,7 @@ export default function AgentPanel() {
 
     const source = normalizeImageRefSource(request.src);
     const imageRef = registerSessionImageDataUrl(currentSessionId, source, request.ref);
-    if (!imageRef) {
+    if (!imageRef && !source) {
       toast.error("无法为这张图片创建 ref");
       return;
     }
@@ -2445,11 +2495,22 @@ export default function AgentPanel() {
     const text = buildImageEditUserPrompt({
       toolCallName,
       imageRef,
+      imageSource: source,
       maskRef,
+      maskSource: normalizedMask,
       additionalImageRefs,
+      additionalImageSources: referenceSources,
       suggestion
     });
     const imageEditRefs = buildImageEditMessageRefs({
+      imageRef,
+      imageSource: source,
+      maskRef,
+      maskSource: normalizedMask,
+      referenceRefs: additionalImageRefs,
+      referenceSources
+    });
+    const imageEditPreviewImages = buildImageEditPreviewImages({
       imageRef,
       imageSource: source,
       maskRef,
@@ -2469,7 +2530,8 @@ export default function AgentPanel() {
       imageEditMeta: {
         kind: "image_edit",
         hasMask: !!maskRef,
-        referenceCount: additionalImageRefs.length
+        referenceCount: referenceSources.length,
+        images: imageEditPreviewImages
       }
     });
   }
