@@ -5,6 +5,7 @@ import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
 import { memo, useEffect, useState } from "react";
+import { normalizeMessageImageRefs } from "./imageRefs";
 
 /**
  * Render a single chat message based on its role and content.
@@ -133,6 +134,14 @@ const ChatMessage = memo(function ChatMessage({
           )}
           <div className="chat-bubble chat-bubble-user">
             {renderHighlightedText(msg.displayContent || content, messageSearchState)}
+            {buildSupplementalUserImages([], msg.imageRefs).map((image, index) => (
+              <SupplementalUserImage
+                key={`plain-supplemental-image-${image.ref || index}`}
+                image={image}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
+              />
+            ))}
             <InjectedUserContextBlock context={injectedContext} />
           </div>
           {sentAt && (
@@ -269,6 +278,7 @@ function UserMultimodalContent({
 }) {
   if (!Array.isArray(content)) return null;
   let displayedText = false;
+  const supplementalImages = buildSupplementalUserImages(content, imageRefs);
 
   return (
     <>
@@ -307,7 +317,73 @@ function UserMultimodalContent({
         }
         return null;
       })}
+      {supplementalImages.map((image, index) => (
+        <SupplementalUserImage
+          key={`supplemental-image-${image.ref || index}`}
+          image={image}
+          imageEditingEnabled={imageEditingEnabled}
+          onImageEditRequest={onImageEditRequest}
+        />
+      ))}
     </>
+  );
+}
+
+function buildSupplementalUserImages(content, imageRefs) {
+  const renderedSources = new Set();
+  for (const block of Array.isArray(content) ? content : []) {
+    const source = getUserImageBlockSource(block);
+    if (source) renderedSources.add(source);
+  }
+
+  const editRefs = normalizeMessageImageRefs(imageRefs)
+    .filter(item => ["edit_image", "edit_reference", "edit_mask"].includes(item.role))
+    .filter(item => item.dataUrl && !renderedSources.has(item.dataUrl));
+
+  let referenceIndex = 0;
+  return editRefs.map(item => {
+    let label = "图片";
+    if (item.role === "edit_image") {
+      label = "原图";
+    } else if (item.role === "edit_reference") {
+      referenceIndex += 1;
+      label = `参考图 ${referenceIndex}`;
+    } else if (item.role === "edit_mask") {
+      label = "蒙版";
+    }
+    return {
+      ref: item.ref,
+      src: item.dataUrl,
+      label
+    };
+  });
+}
+
+function getUserImageBlockSource(block) {
+  if (!block || block.type !== "image" || !block.source) return "";
+  if (block.source.type === "session_image" && block.source.ref) {
+    return `session-image:${block.source.ref}`;
+  }
+  if (block.source.type === "base64" && block.source.media_type && block.source.data) {
+    return `data:${block.source.media_type};base64,${block.source.data}`;
+  }
+  return "";
+}
+
+function SupplementalUserImage({ image, imageEditingEnabled = false, onImageEditRequest }) {
+  return (
+    <div style={{ marginTop: "8px" }}>
+      <div style={{ fontSize: "11px", lineHeight: 1.3, color: "#475569", marginBottom: "4px" }}>{image.label}</div>
+      <EditableChatImage
+        src={image.src}
+        alt={image.label}
+        refId={image.ref}
+        editable={imageEditingEnabled}
+        onEdit={onImageEditRequest}
+        wrapperClassName="chat-user-image-wrap"
+        imageClassName="chat-user-image"
+      />
+    </div>
   );
 }
 

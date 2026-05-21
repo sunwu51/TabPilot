@@ -154,6 +154,7 @@ export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDi
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
+const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
 const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
 
 function resolveSupportsToolImageInput(llmConfig = {}) {
@@ -229,6 +230,7 @@ export default function AgentPanel() {
   const activeSessionIdRef = useRef(null);
   const sessionMessagesRef = useRef(new Map());
   const sessionImageRefsRef = useRef(new Map());
+  const sessionNextImageRefIndexRef = useRef(new Map());
   const sessionImageStoreVersionRef = useRef(new Map());
   const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
@@ -436,26 +438,7 @@ export default function AgentPanel() {
         // Restore the session that was being viewed last time the panel was closed.
         const lastActiveSessionId = await loadLastActiveSessionId();
         const restored = allSessions.find(session => session.id === lastActiveSessionId) || allSessions[0];
-        const [msgs, meta] = await Promise.all([
-          loadSession(restored.id),
-          loadSessionMeta(restored.id)
-        ]);
-        setSessionMessages(restored.id, msgs);
-        sessionPlansRef.current.set(restored.id, normalizeSessionPlans(meta.plans));
-        activeSessionIdRef.current = restored.id;
-        void saveLastActiveSessionId(restored.id);
-        setSessionId(restored.id);
-        setSessionTitle(restored.title);
-        setSessionSystemPrompt(meta.systemPrompt || "");
-        applyLatestPlanFromPlans(meta.plans);
-        shouldAutoFollowBottomRef.current = true;
-        setShowJumpToBottom(false);
-        const restoredRuntime = getSessionRuntime(restored.id);
-        setContextUsage(restoredRuntime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
-        setRequestBodySize(restoredRuntime.requestBodySize || null);
-        setMessages(msgs);
-        setImageEditRequest(null);
-        setLoading(false);
+        await openSession(restored.id);
       } else {
         // Create a fresh session
         const id = generateSessionId();
@@ -463,6 +446,7 @@ export default function AgentPanel() {
         if (defaultSystemPrompt.systemPrompt) {
           await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
         }
+        setSessionNextImageRefIndex(id, 1);
         setSessionMessages(id, []);
         sessionPlansRef.current.set(id, []);
         activeSessionIdRef.current = id;
@@ -681,7 +665,9 @@ export default function AgentPanel() {
     const saveTask = state.chain.catch(() => undefined).then(async () => {
       const latestState = sessionSaveStateRef.current.get(targetSessionId);
       if (!latestState || latestState.version !== version) return;
-      await saveSession(targetSessionId, messagesToSave, title);
+      await saveSession(targetSessionId, messagesToSave, title, {
+        nextImageRefIndex: getSessionNextImageRefIndex(targetSessionId)
+      });
       const latestSessions = await listSessions();
       setSessions(latestSessions);
       if (activeSessionIdRef.current === targetSessionId) {
@@ -743,6 +729,23 @@ export default function AgentPanel() {
     return sessionMessagesRef.current.get(targetSessionId) || [];
   }
 
+  function getSessionNextImageRefIndex(targetSessionId) {
+    return sessionNextImageRefIndexRef.current.get(targetSessionId) || 1;
+  }
+
+  function setSessionNextImageRefIndex(targetSessionId, nextIndex) {
+    if (!targetSessionId) return 1;
+    const normalized = Number.isFinite(Number(nextIndex)) && Number(nextIndex) >= 1
+      ? Math.floor(Number(nextIndex))
+      : 1;
+    sessionNextImageRefIndexRef.current.set(targetSessionId, normalized);
+    const cache = sessionImageRefsRef.current.get(targetSessionId);
+    if (cache) {
+      cache.nextIndex = Math.max(cache.nextIndex || 1, normalized);
+    }
+    return normalized;
+  }
+
   function attachKnownImageRefsToMessages(targetSessionId, msgs) {
     if (!targetSessionId || !Array.isArray(msgs)) return msgs;
     const cache = sessionImageRefsRef.current.get(targetSessionId);
@@ -776,9 +779,21 @@ export default function AgentPanel() {
       const dataUrl = refs.get(value.source.ref);
       const parsed = parseImageDataUrl(dataUrl);
       if (parsed) {
+        const sourceRef = IMAGE_REF_PATTERN.test(String(value.source.ref || "").trim())
+          ? String(value.source.ref).trim()
+          : "";
+        const blockRef = IMAGE_REF_PATTERN.test(String(value.ref || sourceRef).trim())
+          ? String(value.ref || sourceRef).trim()
+          : "";
         return {
           ...value,
-          source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
+          ...(blockRef ? { ref: blockRef } : {}),
+          source: {
+            type: "base64",
+            media_type: parsed.mediaType,
+            data: parsed.data,
+            ...(sourceRef ? { ref: sourceRef } : {})
+          }
         };
       }
       return value;
@@ -830,6 +845,7 @@ export default function AgentPanel() {
     if (!targetSessionId) return;
     invalidateSessionImageStore(targetSessionId);
     sessionImageRefsRef.current.delete(targetSessionId);
+    sessionNextImageRefIndexRef.current.delete(targetSessionId);
   }
 
   function getSessionImageRefCache(targetSessionId) {
@@ -839,7 +855,7 @@ export default function AgentPanel() {
         refs: new Map(),
         byDataUrl: new Map(),
         reservedRefs: new Set(),
-        nextIndex: 1
+        nextIndex: getSessionNextImageRefIndex(targetSessionId)
       };
       sessionImageRefsRef.current.set(targetSessionId, cache);
     }
@@ -866,6 +882,7 @@ export default function AgentPanel() {
     if (Number.isFinite(numericSuffix)) {
       cache.nextIndex = Math.max(cache.nextIndex, numericSuffix + 1);
     }
+    setSessionNextImageRefIndex(targetSessionId, cache.nextIndex);
     return ref;
   }
 
@@ -875,6 +892,7 @@ export default function AgentPanel() {
       sessionImageRefsRef.current.delete(targetSessionId);
     }
     const cache = getSessionImageRefCache(targetSessionId);
+    cache.nextIndex = Math.max(cache.nextIndex, getSessionNextImageRefIndex(targetSessionId));
     cache.reservedRefs = collectReservedImageRefsFromMessages(msgs);
     for (const msg of msgs) {
       if (!msg || typeof msg !== "object") continue;
@@ -889,7 +907,10 @@ export default function AgentPanel() {
       if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           const dataUrl = imageBlockToDataUrl(block);
-          if (dataUrl) registerSessionImageDataUrl(targetSessionId, dataUrl);
+          const preferredBlockRef = IMAGE_REF_PATTERN.test(String(block?.ref || block?.source?.ref || "").trim())
+            ? String(block?.ref || block?.source?.ref).trim()
+            : "";
+          if (dataUrl) registerSessionImageDataUrl(targetSessionId, dataUrl, preferredBlockRef);
         }
       }
       const displayImageSources = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
@@ -903,6 +924,7 @@ export default function AgentPanel() {
         }
       }
     }
+    setSessionNextImageRefIndex(targetSessionId, cache.nextIndex);
   }
 
   function resolveToolImageRefs(targetSessionId, args) {
@@ -949,6 +971,52 @@ export default function AgentPanel() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const debugSession = async (targetSessionId) => {
+      const resolvedSessionId = String(targetSessionId || activeSessionIdRef.current || "").trim();
+      const sessionKey = resolvedSessionId ? `session_${resolvedSessionId}` : "";
+      const imageStoreKey = resolvedSessionId ? `session_${resolvedSessionId}_images` : "";
+      const requestedKeys = [
+        "sessions_index",
+        "agent_last_active_session_id",
+        ...(sessionKey ? [sessionKey] : []),
+        ...(imageStoreKey ? [imageStoreKey] : [])
+      ];
+      const storage = await chrome.storage.local.get(requestedKeys);
+      const cache = resolvedSessionId ? sessionImageRefsRef.current.get(resolvedSessionId) : null;
+      const payload = {
+        activeSessionId: activeSessionIdRef.current || "",
+        requestedSessionId: resolvedSessionId,
+        sessionKey,
+        imageStoreKey,
+        inMemory: {
+          messageCount: resolvedSessionId ? (sessionMessagesRef.current.get(resolvedSessionId)?.length || 0) : 0,
+          messages: resolvedSessionId ? (sessionMessagesRef.current.get(resolvedSessionId) || []) : [],
+          nextImageRefIndex: resolvedSessionId ? getSessionNextImageRefIndex(resolvedSessionId) : 1,
+          imageRefCache: summarizeImageRefCache(resolvedSessionId, cache)
+        },
+        storageKeys: Object.keys(storage || {}),
+        storage: {
+          sessions_index: storage.sessions_index || [],
+          agent_last_active_session_id: storage.agent_last_active_session_id || "",
+          session: sessionKey ? (storage[sessionKey] || null) : null,
+          imageStore: imageStoreKey ? (storage[imageStoreKey] || null) : null
+        }
+      };
+      console.log("[TabManager debugSession]", payload);
+      return payload;
+    };
+
+    window[SESSION_DEBUG_GLOBAL] = debugSession;
+    return () => {
+      if (window[SESSION_DEBUG_GLOBAL] === debugSession) {
+        delete window[SESSION_DEBUG_GLOBAL];
+      }
+    };
+  }, []);
+
   function resolveSessionImageSrc(ref) {
     const imageRef = String(ref || "").trim();
     if (!IMAGE_REF_PATTERN.test(imageRef)) return "";
@@ -975,8 +1043,13 @@ export default function AgentPanel() {
       if (cache.refs.get(ref) === source) continue;
       cache.refs.set(ref, source);
       cache.byDataUrl.set(source, ref);
+      const numericSuffix = Number(ref.match(/^img_(\d+)$/)?.[1]);
+      if (Number.isFinite(numericSuffix)) {
+        cache.nextIndex = Math.max(cache.nextIndex, numericSuffix + 1);
+      }
       changed = true;
     }
+    setSessionNextImageRefIndex(targetSessionId, cache.nextIndex);
     if (!changed) return false;
 
     if (version !== getSessionImageStoreVersion(targetSessionId)) return false;
@@ -1153,6 +1226,7 @@ export default function AgentPanel() {
     perf.mark("after-load");
     perf.attachMessageStats(msgs);
     const shouldMigrateInlineImages = hasInlineBase64SessionImages(msgs);
+    setSessionNextImageRefIndex(id, meta.nextImageRefIndex);
     activeSessionIdRef.current = id;
     perf.mark("before-setSessionMessages");
     setSessionMessages(id, msgs);
@@ -1182,7 +1256,9 @@ export default function AgentPanel() {
       console.error("Failed to load session image store:", error);
     });
     if (shouldMigrateInlineImages) {
-      void saveSession(id, msgs).catch(error => {
+      void saveSession(id, msgs, undefined, {
+        nextImageRefIndex: getSessionNextImageRefIndex(id)
+      }).catch(error => {
         console.error("Failed to migrate session image storage:", error);
       });
     }
@@ -1544,6 +1620,7 @@ export default function AgentPanel() {
     if (defaultSystemPrompt.systemPrompt) {
       await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
     }
+    setSessionNextImageRefIndex(id, 1);
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
