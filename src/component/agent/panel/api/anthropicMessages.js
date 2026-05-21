@@ -149,26 +149,8 @@ export function buildAnthropicApiMessages(messages, options = {}) {
 
     if (msg.role === "user" && Array.isArray(msg.content)) {
       const anthropicContent = msg.content
-        .filter(block => !(block.type === "image" && options.supportsImageInput === false))
-        .filter(block => !(block.type === "image" && block.source?.type === "session_image"))
-        .map(block => {
-          if (block.type === "file") {
-            const result = { type: "text", text: `[Attached file: ${block.fileName}]\n${block.text}` };
-            console.log(`[DEBUG] Anthropic API - 文件转换: ${block.fileName}, 原始长度: ${block.text.length}, 转换后长度: ${result.text.length}`);
-            return result;
-          }
-          if (block.type === "image" && block.source?.type === "base64" && block.source.media_type && block.source.data) {
-            return {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: block.source.media_type,
-                data: block.source.data
-              }
-            };
-          }
-          return block;
-        });
+        .map(block => normalizeAnthropicUserContentBlock(block, options))
+        .filter(Boolean);
       apiMessages.push({ role: "user", content: anthropicContent });
       continue;
     }
@@ -177,4 +159,31 @@ export function buildAnthropicApiMessages(messages, options = {}) {
   }
 
   return apiMessages;
+}
+
+function normalizeAnthropicUserContentBlock(block, options = {}) {
+  if (!block || typeof block !== "object") return null;
+  if (block.type === "text") {
+    return typeof block.text === "string" ? { type: "text", text: block.text } : null;
+  }
+  if (block.type === "file") {
+    const fileName = block.fileName || "file";
+    const text = String(block.text || "");
+    const result = { type: "text", text: `[Attached file: ${fileName}]\n${text}` };
+    console.log(`[DEBUG] Anthropic API - 文件转换: ${fileName}, 原始长度: ${text.length}, 转换后长度: ${result.text.length}`);
+    return result;
+  }
+  if (block.type === "image") {
+    if (options.supportsImageInput === false) return null;
+    if (block.source?.type !== "base64" || !block.source.media_type || !block.source.data) return null;
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: block.source.media_type,
+        data: block.source.data
+      }
+    };
+  }
+  return null;
 }

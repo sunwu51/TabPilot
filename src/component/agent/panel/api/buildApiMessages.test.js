@@ -87,6 +87,59 @@ describe("buildApiMessages image options", () => {
     }]);
   });
 
+  it("strips local-only image ref fields from OpenAI user image blocks", () => {
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [{
+      role: "user",
+      content: [
+        {
+          type: "image",
+          ref: "img_7",
+          displayImageRef: "img_7",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "dXNlcg==",
+            ref: "img_7"
+          }
+        }
+      ]
+    }], {
+      supportsImageInput: true
+    });
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [{
+        type: "image_url",
+        image_url: {
+          url: "data:image/png;base64,dXNlcg==",
+          detail: "low"
+        }
+      }]
+    }]);
+  });
+
+  it("normalizes Anthropic user content blocks instead of forwarding local-only fields", () => {
+    const result = buildApiMessages(API_TYPES.ANTHROPIC, [{
+      role: "user",
+      content: [
+        { type: "text", text: "hello", imageRefs: ["img_1"], displayImages: [{ url: "x" }] },
+        { type: "file", fileName: "note.txt", text: "file body", imageEditMeta: { kind: "edit" } }
+      ],
+      imageRefs: [{ ref: "img_1", dataUrl: "data:image/png;base64,dXNlcg==" }]
+    }], {
+      supportsImageInput: true
+    });
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "hello" },
+        { type: "text", text: "[Attached file: note.txt]\nfile body" }
+      ]
+    }]);
+  });
+
   it("does not send unhydrated session-image placeholders to OpenAI", () => {
     const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [{
       role: "user",
@@ -141,6 +194,35 @@ describe("buildApiMessages image options", () => {
     expect(buildApiMessages(API_TYPES.ANTHROPIC, messages)).toEqual([{
       role: "user",
       content: "edit this image"
+    }]);
+  });
+
+  it("strips provider-specific tool call metadata from OpenAI chat requests", () => {
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [{
+      role: "assistant",
+      content: null,
+      tool_calls: [{
+        id: "call_1",
+        response_item_id: "fc_1",
+        function: {
+          name: "lookup",
+          arguments: "{\"query\":\"x\"}"
+        },
+        displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
+      }]
+    }]);
+
+    expect(result).toEqual([{
+      role: "assistant",
+      content: null,
+      tool_calls: [{
+        id: "call_1",
+        type: "function",
+        function: {
+          name: "lookup",
+          arguments: "{\"query\":\"x\"}"
+        }
+      }]
     }]);
   });
 });
