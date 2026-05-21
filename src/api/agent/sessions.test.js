@@ -52,7 +52,7 @@ describe("sessions storage", () => {
 
   it("loads missing session data with safe defaults", async () => {
     expect(await loadSession("missing")).toEqual([]);
-    expect(await loadSessionMeta("missing")).toEqual({ systemPrompt: "", plans: [] });
+    expect(await loadSessionMeta("missing")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 1 });
   });
 
   it("saves messages without replacing existing metadata", async () => {
@@ -65,7 +65,7 @@ describe("sessions storage", () => {
     await saveSession("a", [{ role: "user", content: "hello" }], "Auto title");
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }] });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }], nextImageRefIndex: 1 });
     const [entry] = await listSessions();
     expect(entry).toMatchObject({ title: "Auto title", startedAt: 100, updatedAt: 100 });
   });
@@ -107,7 +107,7 @@ describe("sessions storage", () => {
         { ref: "img_1", dataUrl }
       ]
     }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [] });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [], nextImageRefIndex: 2 });
   });
 
   it("stores user image blocks out of the main message payload", async () => {
@@ -138,9 +138,94 @@ describe("sessions storage", () => {
       role: "user",
       content: [
         { type: "text", text: "look" },
-        { type: "image", source: { type: "base64", media_type: "image/png", data: "dXNlcg==" } }
+        {
+          type: "image",
+          ref: "img_1",
+          source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_1" }
+        }
       ]
     }]);
+  });
+
+  it("keeps canonical image refs aligned across blocks, imageRefs, and image store", () => {
+    const result = compactSessionMessages([{
+      role: "user",
+      imageRefs: [
+        { ref: "img_7", dataUrl: "data:image/png;base64,dXNlcg==" }
+      ],
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image",
+          ref: "img_7",
+          source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_7" }
+        }
+      ]
+    }]);
+
+    expect(result).toEqual({
+      messages: [{
+        role: "user",
+        imageRefs: [
+          { ref: "img_7", dataUrl: "session-image:img_7" }
+        ],
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image",
+            ref: "img_7",
+            source: { type: "session_image", ref: "img_7", media_type: "image/png" }
+          }
+        ]
+      }],
+      imageStore: {
+        img_7: "data:image/png;base64,dXNlcg=="
+      }
+    });
+  });
+
+  it("preserves existing image store entries when saving placeholder-only image messages", async () => {
+    const dataUrl = "data:image/png;base64,dXNlcg==";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 4 },
+      session_a_images: { img_3: dataUrl },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    await saveSession("a", [{
+      role: "user",
+      imageRefs: [{ ref: "img_3", dataUrl: "session-image:img_3" }],
+      content: [
+        {
+          type: "image",
+          ref: "img_3",
+          source: { type: "session_image", ref: "img_3", media_type: "image/png" }
+        }
+      ]
+    }], "A");
+
+    expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4 });
+  });
+
+  it("persists nextImageRefIndex so future refs continue increasing after removed messages", async () => {
+    resetChromeMock({
+      session_a: { messages: [] },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    await saveSession("a", [{
+      role: "user",
+      imageRefs: [{ ref: "img_3", dataUrl: "data:image/png;base64,dXNlcg==" }],
+      content: [{
+        type: "image",
+        ref: "img_3",
+        source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_3" }
+      }]
+    }], "A", { nextImageRefIndex: 4 });
+
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4 });
+    expect(await loadSessionImageStore("a")).toEqual({ img_3: "data:image/png;base64,dXNlcg==" });
   });
 
   it("does not compact base64 data URLs embedded inside text", () => {
@@ -191,7 +276,7 @@ describe("sessions storage", () => {
     await saveSessionMeta("a", { systemPrompt: "sys", plans: [{ step: "one" }] });
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }] });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }], nextImageRefIndex: 1 });
   });
 
   it("clears stored session keywords from the index entry", async () => {

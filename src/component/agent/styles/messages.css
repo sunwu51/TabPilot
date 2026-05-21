@@ -149,10 +149,22 @@
   margin: 4px 0;
 }
 
-.chat-image-edit-btn {
+.chat-image-actions {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.chat-image-ref-btn,
+.chat-image-edit-btn {
   min-width: 42px;
   height: 24px;
   padding: 0 8px;
@@ -163,20 +175,26 @@
   font-size: 12px;
   line-height: 22px;
   cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 2;
-  transform: translateY(-2px);
-  transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+  pointer-events: auto;
+  transition: background 120ms ease;
 }
 
-.chat-editable-image-wrap:hover .chat-image-edit-btn,
-.chat-editable-image-wrap:focus-within .chat-image-edit-btn {
+.chat-image-ref-btn {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.chat-editable-image-wrap:hover .chat-image-actions,
+.chat-editable-image-wrap:focus-within .chat-image-actions {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
 }
 
+.chat-image-ref-btn:hover,
 .chat-image-edit-btn:hover {
   background: white;
 }
@@ -295,4 +313,3 @@
 .tool-group-content .tool-result-msg {
   margin: 0;
 }
-

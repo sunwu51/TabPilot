@@ -135,12 +135,19 @@ export function buildUserMessageContent(text, images, textFiles = [], imageRefs 
     content.push({ type: "file", fileName: f.fileName, text: f.text });
   }
 
-  for (const img of images) {
+  for (const [index, img] of images.entries()) {
     const parsed = parseImageDataUrl(img.dataUrl);
+    const ref = String(imageRefs[index]?.ref || "").trim();
     if (parsed) {
       content.push({
         type: "image",
-        source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
+        ...(IMAGE_REF_PATTERN.test(ref) ? { ref } : {}),
+        source: {
+          type: "base64",
+          media_type: parsed.mediaType,
+          data: parsed.data,
+          ...(IMAGE_REF_PATTERN.test(ref) ? { ref } : {})
+        }
       });
     }
   }

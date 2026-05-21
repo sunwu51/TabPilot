@@ -157,6 +157,16 @@ export function buildAnthropicApiMessages(messages, options = {}) {
             console.log(`[DEBUG] Anthropic API - 文件转换: ${block.fileName}, 原始长度: ${block.text.length}, 转换后长度: ${result.text.length}`);
             return result;
           }
+          if (block.type === "image" && block.source?.type === "base64" && block.source.media_type && block.source.data) {
+            return {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: block.source.media_type,
+                data: block.source.data
+              }
+            };
+          }
           return block;
         });
       apiMessages.push({ role: "user", content: anthropicContent });

@@ -55,6 +55,38 @@ describe("buildApiMessages image options", () => {
     expect(result[1].content[0].content).toBe(JSON.stringify({ success: true }));
   });
 
+  it("strips local-only image ref fields from Anthropic user image blocks", () => {
+    const result = buildApiMessages(API_TYPES.ANTHROPIC, [{
+      role: "user",
+      content: [
+        {
+          type: "image",
+          ref: "img_7",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "dXNlcg==",
+            ref: "img_7"
+          }
+        }
+      ]
+    }], {
+      supportsImageInput: true
+    });
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [{
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "dXNlcg=="
+        }
+      }]
+    }]);
+  });
+
   it("does not send unhydrated session-image placeholders to OpenAI", () => {
     const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [{
       role: "user",

@@ -39,11 +39,15 @@ export function buildDisplayToolResultMessage(toolResult, targetSessionId, regis
   const primaryImage = displayImages[0] || null;
   const parsedImage = parseImageDataUrl(primaryImage?.url);
   const imageRefs = [];
+  const refsByUrl = new Map();
   if (targetSessionId && typeof registerImageDataUrl === "function") {
     for (const image of displayImages) {
       if (!isBase64DataUrl(image.url)) continue;
       const ref = registerImageDataUrl(targetSessionId, image.url);
-      if (ref) imageRefs.push({ ref, dataUrl: image.url });
+      if (ref) {
+        imageRefs.push({ ref, dataUrl: image.url, mediaType: image.mediaType, role: "tool_result" });
+        refsByUrl.set(image.url, ref);
+      }
     }
   }
   const summary = summarizeToolResult(toolResult.result, imageRefs);
@@ -54,7 +58,13 @@ export function buildDisplayToolResultMessage(toolResult, targetSessionId, regis
     tool_name: toolResult.name,
     content: serializedContent,
     displayImageUrl: primaryImage?.url || undefined,
-    displayImages: displayImages.length > 0 ? displayImages : undefined,
+    ...(primaryImage?.url && refsByUrl.get(primaryImage.url) ? { displayImageRef: refsByUrl.get(primaryImage.url) } : {}),
+    displayImages: displayImages.length > 0
+      ? displayImages.map(image => ({
+        ...image,
+        ...(refsByUrl.get(image.url) ? { ref: refsByUrl.get(image.url) } : {})
+      }))
+      : undefined,
     displayImageMediaType: parsedImage?.mediaType,
     durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
   };

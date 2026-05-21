@@ -109,10 +109,11 @@ export async function loadHydratedSession(id) {
  */
 export async function loadSessionMeta(id) {
   const key = `session_${id}`;
-  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [] } });
+  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1 } });
   return {
     systemPrompt: result[key]?.systemPrompt || "",
-    plans: Array.isArray(result[key]?.plans) ? result[key].plans : []
+    plans: Array.isArray(result[key]?.plans) ? result[key].plans : [],
+    nextImageRefIndex: normalizeNextImageRefIndex(result[key]?.nextImageRefIndex)
   };
 }
 
@@ -121,15 +122,30 @@ export async function loadSessionMeta(id) {
  * @param {string} id - session ID
  * @param {Array} messages - full message history
  * @param {string} [title] - updated title (auto-generated from first user message)
+ * @param {{nextImageRefIndex?: number}} [options]
  */
-export async function saveSession(id, messages, title) {
+export async function saveSession(id, messages, title, options = {}) {
   const key = `session_${id}`;
-  const result = await chrome.storage.local.get({ [key]: {} });
-  const { messages: compactMessages, imageStore } = compactSessionMessages(messages);
   const imageStoreKey = getSessionImageStoreKey(id);
+  const result = await chrome.storage.local.get({ [key]: {}, [imageStoreKey]: {} });
+  const existingImageStore = result[imageStoreKey] && typeof result[imageStoreKey] === "object"
+    ? result[imageStoreKey]
+    : {};
+  const { messages: compactMessages, imageStore } = compactSessionMessages(messages, {
+    existingImageStore
+  });
+  const nextImageRefIndex = deriveNextImageRefIndex({
+    messages: compactMessages,
+    imageStore,
+    fallback: options.nextImageRefIndex ?? result[key]?.nextImageRefIndex
+  });
   await chrome.storage.local.set({
-    [key]: { ...result[key], messages: compactMessages },
-    [imageStoreKey]: imageStore || {}
+    [key]: {
+      ...result[key],
+      messages: compactMessages,
+      nextImageRefIndex
+    },
+    [imageStoreKey]: imageStore || existingImageStore || {}
   });
 
   // Update index entry
@@ -149,19 +165,44 @@ function getSessionImageStoreKey(id) {
   return `session_${id}_images`;
 }
 
-export function compactSessionMessages(messages) {
-  if (!Array.isArray(messages)) return { messages, imageStore: undefined };
-  const imageStore = {};
-  const byValue = new Map();
-  let nextIndex = 1;
+export function compactSessionMessages(messages, options = {}) {
+  if (!Array.isArray(messages)) {
+    return {
+      messages,
+      imageStore: cloneImageStore(options.existingImageStore)
+    };
+  }
+
+  const imageStore = cloneImageStore(options.existingImageStore);
+  const byValue = new Map(
+    Object.entries(imageStore)
+      .filter(([, value]) => isBase64DataUrl(value))
+      .map(([key, value]) => [value, key])
+  );
+  let nextIndex = deriveNextImageRefIndex({
+    imageStore,
+    fallback: 1
+  });
 
   function storeDataUrl(dataUrl, preferredKey = "") {
     const raw = String(dataUrl || "");
     if (!isBase64DataUrl(raw)) return raw;
+
+    const normalizedPreferredKey = normalizeImageStoreKey(preferredKey);
+    if (normalizedPreferredKey) {
+      const existingValue = imageStore[normalizedPreferredKey];
+      if (!existingValue || existingValue === raw) {
+        imageStore[normalizedPreferredKey] = raw;
+        byValue.set(raw, normalizedPreferredKey);
+        nextIndex = Math.max(nextIndex, normalizeNextImageRefIndex(numericImageRefSuffix(normalizedPreferredKey) + 1));
+        return `${SESSION_IMAGE_STORE_REF_PREFIX}${normalizedPreferredKey}`;
+      }
+    }
+
     const existing = byValue.get(raw);
     if (existing) return `${SESSION_IMAGE_STORE_REF_PREFIX}${existing}`;
 
-    let key = normalizeImageStoreKey(preferredKey);
+    let key = normalizedPreferredKey;
     while (!key || Object.prototype.hasOwnProperty.call(imageStore, key)) {
       key = `img_${nextIndex}`;
       nextIndex += 1;
@@ -173,6 +214,12 @@ export function compactSessionMessages(messages) {
 
   function storeImageBlockSource(source, preferredKey = "") {
     if (!source || typeof source !== "object") return source;
+    if (source.type === "session_image" && normalizeImageStoreKey(source.ref)) {
+      return {
+        ...source,
+        ref: normalizeImageStoreKey(source.ref)
+      };
+    }
     if (source.type !== "base64" || !source.media_type || !source.data) return compactValue(source, preferredKey);
     const ref = storeDataUrl(`data:${source.media_type};base64,${source.data}`, preferredKey);
     const imageRef = ref.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)
@@ -191,23 +238,28 @@ export function compactSessionMessages(messages) {
     if (Array.isArray(value)) return value.map(item => compactValue(item));
     if (!value || typeof value !== "object") return value;
     if (value.type === "image" && value.source) {
+      const imageRef = normalizeImageStoreKey(value.ref || value.source?.ref || preferredKey);
       return {
         ...value,
-        source: storeImageBlockSource(value.source, preferredKey)
+        ...(imageRef ? { ref: imageRef } : {}),
+        source: storeImageBlockSource(value.source, imageRef)
       };
     }
+    const preferredRefsByValue = buildPreferredImageStoreRefsByValue(value);
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [
         key,
-        compactValue(child, getImageStorePreferredKeyForChild(key, child, value))
+        compactValue(child, getImageStorePreferredKeyForChild(key, child, value, preferredRefsByValue))
       ])
     );
   }
 
   const compactMessages = messages.map(message => compactValue(message));
+  const hasImageStoreEntries = Object.keys(imageStore).length > 0;
+  const hasExistingImageStoreEntries = Object.keys(options.existingImageStore || {}).length > 0;
   return {
     messages: compactMessages,
-    imageStore: Object.keys(imageStore).length > 0 ? imageStore : undefined
+    imageStore: hasImageStoreEntries || hasExistingImageStoreEntries ? imageStore : undefined
   };
 }
 
@@ -226,9 +278,16 @@ export function hydrateSessionMessages(messages, imageStore) {
       const dataUrl = imageStore[value.source.ref];
       const parsed = parseImageDataUrl(dataUrl);
       if (parsed) {
+        const sourceRef = normalizeImageStoreKey(value.source.ref);
         return {
           ...value,
-          source: { type: "base64", media_type: parsed.mediaType, data: parsed.data }
+          ...(normalizeImageStoreKey(value.ref || value.source.ref) ? { ref: normalizeImageStoreKey(value.ref || value.source.ref) } : {}),
+          source: {
+            type: "base64",
+            media_type: parsed.mediaType,
+            data: parsed.data,
+            ...(sourceRef ? { ref: sourceRef } : {})
+          }
         };
       }
       return value;
@@ -246,9 +305,13 @@ function normalizeImageStoreKey(value) {
   return /^img_[A-Za-z0-9_-]+$/.test(raw) ? raw : "";
 }
 
-function getImageStorePreferredKeyForChild(key, child, parent) {
+function getImageStorePreferredKeyForChild(key, child, parent, preferredRefsByValue = new Map()) {
   if (!isImageDataFieldName(key) || typeof child !== "string") return "";
-  return String(parent?.ref || "").trim();
+  return normalizeImageStoreKey(
+    preferredRefsByValue.get(child) ||
+    parent?.ref ||
+    parent?.source?.ref
+  );
 }
 
 function isImageDataFieldName(key) {
@@ -264,6 +327,104 @@ function parseImageDataUrl(dataUrl) {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return null;
   return { mediaType: match[1], data: match[2] };
+}
+
+function buildPreferredImageStoreRefsByValue(value) {
+  const refsByValue = new Map();
+  if (!value || typeof value !== "object") return refsByValue;
+
+  for (const item of Array.isArray(value.imageRefs) ? value.imageRefs : []) {
+    const ref = normalizeImageStoreKey(item?.ref);
+    const source = normalizeStoredImageSource(item?.dataUrl || item?.source || item?.url);
+    if (ref && source) refsByValue.set(source, ref);
+  }
+
+  for (const image of Array.isArray(value.displayImages) ? value.displayImages : []) {
+    const ref = normalizeImageStoreKey(image?.ref);
+    const source = normalizeStoredImageSource(image?.url);
+    if (ref && source) refsByValue.set(source, ref);
+  }
+
+  const blockImageSource = normalizeBlockImageSource(value);
+  const blockImageRef = normalizeImageStoreKey(value.ref || value?.source?.ref);
+  if (blockImageRef && blockImageSource) {
+    refsByValue.set(blockImageSource, blockImageRef);
+  }
+
+  return refsByValue;
+}
+
+function normalizeStoredImageSource(source) {
+  const raw = String(source || "");
+  if (!raw) return "";
+  if (isBase64DataUrl(raw)) return raw;
+  return raw.startsWith(SESSION_IMAGE_STORE_REF_PREFIX) ? raw : "";
+}
+
+function normalizeBlockImageSource(block) {
+  if (!block || typeof block !== "object") return "";
+  if (block.type !== "image") return "";
+  if (block.source?.type === "base64" && block.source.media_type && block.source.data) {
+    return `data:${block.source.media_type};base64,${block.source.data}`;
+  }
+  if (block.source?.type === "session_image" && normalizeImageStoreKey(block.source.ref)) {
+    return `${SESSION_IMAGE_STORE_REF_PREFIX}${normalizeImageStoreKey(block.source.ref)}`;
+  }
+  return "";
+}
+
+function deriveNextImageRefIndex({ messages = [], imageStore = {}, fallback = 1 } = {}) {
+  let maxIndex = Number.isFinite(Number(fallback)) ? Number(fallback) - 1 : 0;
+
+  const trackRef = (value) => {
+    const normalized = normalizeImageStoreKey(value);
+    if (!normalized) return;
+    maxIndex = Math.max(maxIndex, numericImageRefSuffix(normalized));
+  };
+
+  const visit = (value, depth = 0) => {
+    if (depth > 8 || value == null) return;
+    if (typeof value === "string") {
+      const storedRef = value.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)
+        ? value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length)
+        : "";
+      trackRef(storedRef);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+
+    trackRef(value.ref);
+    trackRef(value?.source?.ref);
+    for (const child of Object.values(value)) {
+      visit(child, depth + 1);
+    }
+  };
+
+  for (const key of Object.keys(imageStore || {})) {
+    trackRef(key);
+  }
+  visit(messages);
+
+  return normalizeNextImageRefIndex(maxIndex + 1);
+}
+
+function numericImageRefSuffix(value) {
+  return Number(String(value || "").match(/^img_(\d+)$/)?.[1] || 0);
+}
+
+function normalizeNextImageRefIndex(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 1 ? Math.floor(numeric) : 1;
+}
+
+function cloneImageStore(imageStore) {
+  return imageStore && typeof imageStore === "object"
+    ? Object.fromEntries(Object.entries(imageStore))
+    : {};
 }
 
 /**
