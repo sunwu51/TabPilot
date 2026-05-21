@@ -10,7 +10,7 @@ import { API_TYPES, getDefaultApiType, normalizeApiType } from "../core/config";
  * @param {Array}  messages - [{ role, content }] — plain text only, no tool messages
  * @returns {Promise<string>} the assistant text response
  */
-export async function textComplete(config, messages) {
+export async function textComplete(config, messages, options = {}) {
   if (!config?.apiKey || !config?.baseUrl || !config?.model) {
     throw new Error("LLM config incomplete (apiKey / baseUrl / model required)");
   }
@@ -20,9 +20,9 @@ export async function textComplete(config, messages) {
     return _anthropicComplete(config, messages);
   }
   if (apiType === API_TYPES.OPENAI_RESPONSES) {
-    return _openaiResponsesComplete(config, messages);
+    return _openaiResponsesComplete(config, messages, options);
   }
-  return _openaiComplete(config, messages);
+  return _openaiComplete(config, messages, options);
 }
 
 const DEFAULT_ANTHROPIC_CACHE_CONTROL = { type: "ephemeral" };
@@ -58,6 +58,7 @@ async function _openaiComplete(config, messages, options = {}) {
   const content = json?.choices?.[0]?.message?.content;
   const text = extractOpenAITextContent(content);
   if (!text) {
+    if (options?.allowEmptyResponse === true) return "";
     throw new Error("Unexpected OpenAI response shape");
   }
   return text;
@@ -70,13 +71,22 @@ function extractOpenAITextContent(content) {
 
   if (Array.isArray(content)) {
     const text = content
-      .filter((block) => block?.type === "text" && typeof block?.text === "string")
-      .map((block) => block.text)
+      .map((block) => extractTextBlockText(block))
+      .filter(Boolean)
       .join("")
       .trim();
     return text;
   }
 
+  return "";
+}
+
+function extractTextBlockText(block) {
+  if (!block || typeof block !== "object") return "";
+  if (block.type === "reasoning" || block.type === "thinking" || block.type === "redacted_thinking") return "";
+  if (typeof block.text === "string") return block.text;
+  if (typeof block.output_text === "string") return block.output_text;
+  if (typeof block.value === "string") return block.value;
   return "";
 }
 

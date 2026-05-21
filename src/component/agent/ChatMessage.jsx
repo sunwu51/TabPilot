@@ -916,7 +916,14 @@ function EditableChatImage({
   const isPendingSessionImage = typeof src === "string" && src.startsWith("session-image:");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewFitZoom, setPreviewFitZoom] = useState(1);
+  const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
+  const previewImageRef = useRef(null);
   const previewStageRef = useRef(null);
+  const previewDragRef = useRef(null);
+  const canPreviewImage = !isPendingSessionImage && !!src;
+  const previewButtonLabel = refId || "预览";
+  const previewButtonTitle = refId ? `预览 ${refId}` : "预览图片";
 
   function handleEditClick(event) {
     event.preventDefault();
@@ -928,8 +935,10 @@ function EditableChatImage({
   function handleRefClick(event) {
     event.preventDefault();
     event.stopPropagation();
-    if (!refId || isPendingSessionImage || !src) return;
+    if (!canPreviewImage) return;
     setPreviewZoom(1);
+    setPreviewFitZoom(1);
+    setPreviewOffset({ x: 0, y: 0 });
     setIsPreviewOpen(true);
   }
 
@@ -958,12 +967,86 @@ function EditableChatImage({
     return () => stage.removeEventListener("wheel", handlePreviewWheel);
   }, [isPreviewOpen]);
 
+  useEffect(() => {
+    if (!isPreviewOpen) return undefined;
+    const stage = previewStageRef.current;
+    const image = previewImageRef.current;
+    if (!stage || !image) return undefined;
+
+    const updateFitZoom = () => {
+      const naturalWidth = image.naturalWidth || image.width || 0;
+      const naturalHeight = image.naturalHeight || image.height || 0;
+      const stageRect = stage.getBoundingClientRect();
+      const stageWidth = Math.max(1, stageRect.width - 40);
+      const stageHeight = Math.max(1, stageRect.height - 40);
+      const fitZoom = naturalWidth > 0 && naturalHeight > 0
+        ? Math.min(1, stageWidth / naturalWidth, stageHeight / naturalHeight)
+        : 1;
+      const nextZoom = clampImagePreviewZoom(fitZoom || 1);
+      setPreviewFitZoom(nextZoom);
+      setPreviewZoom(nextZoom);
+      setPreviewOffset({ x: 0, y: 0 });
+    };
+
+    updateFitZoom();
+    image.addEventListener("load", updateFitZoom);
+    window.addEventListener("resize", updateFitZoom);
+    return () => {
+      image.removeEventListener("load", updateFitZoom);
+      window.removeEventListener("resize", updateFitZoom);
+    };
+  }, [isPreviewOpen, src]);
+
   function zoomBy(delta) {
     setPreviewZoom(current => clampImagePreviewZoom(current + delta));
   }
 
   function fitPreviewToWindow() {
-    setPreviewZoom(0.98);
+    setPreviewZoom(previewFitZoom);
+    setPreviewOffset({ x: 0, y: 0 });
+  }
+
+  function showOriginalSize() {
+    setPreviewZoom(1);
+    setPreviewOffset({ x: 0, y: 0 });
+  }
+
+  function handlePreviewPointerDown(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    previewDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: previewOffset.x,
+      originY: previewOffset.y
+    };
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+  }
+
+  function handlePreviewPointerMove(event) {
+    const drag = previewDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    setPreviewOffset({
+      x: drag.originX + event.clientX - drag.startX,
+      y: drag.originY + event.clientY - drag.startY
+    });
+  }
+
+  function finishPreviewDrag(event) {
+    const drag = previewDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    previewDragRef.current = null;
+    if (
+      typeof event.currentTarget.hasPointerCapture === "function" &&
+      typeof event.currentTarget.releasePointerCapture === "function" &&
+      event.currentTarget.hasPointerCapture(event.pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   return (
@@ -981,19 +1064,20 @@ function EditableChatImage({
             className={imageClassName}
             loading="lazy"
             decoding="async"
+            onDoubleClick={handleRefClick}
           />
         )}
-        {!isPendingSessionImage && (refId || editable) && (
+        {!isPendingSessionImage && (canPreviewImage || editable) && (
           <span className="chat-image-actions">
-            {refId && (
+            {canPreviewImage && (
               <button
                 type="button"
                 className="chat-image-ref-btn"
                 onClick={handleRefClick}
-                title={`预览 ${refId}`}
-                aria-label={`预览 ${refId}`}
+                title={previewButtonTitle}
+                aria-label={previewButtonTitle}
               >
-                {refId}
+                {previewButtonLabel}
               </button>
             )}
             {editable && (
@@ -1028,19 +1112,29 @@ function EditableChatImage({
                 <button type="button" className="chat-image-preview-btn" onClick={() => zoomBy(-0.2)} aria-label="缩小图片">-</button>
                 <button type="button" className="chat-image-preview-btn" onClick={() => zoomBy(0.2)} aria-label="放大图片">+</button>
                 <button type="button" className="chat-image-preview-btn" onClick={fitPreviewToWindow} aria-label="适应窗口">适应</button>
+                <button type="button" className="chat-image-preview-btn" onClick={showOriginalSize} aria-label="原图大小">100%</button>
                 <button type="button" className="chat-image-preview-btn" onClick={() => setIsPreviewOpen(false)} aria-label="关闭图片预览">关闭</button>
               </div>
             </div>
             <div className="chat-image-preview-meta">
               <span>{Math.round(previewZoom * 100)}%</span>
-              <span className="chat-image-preview-hint">滚轮可缩放</span>
+              <span className="chat-image-preview-hint">滚轮缩放，按住拖拽查看细节</span>
             </div>
-            <div ref={previewStageRef} className="chat-image-preview-stage">
+            <div
+              ref={previewStageRef}
+              className="chat-image-preview-stage"
+              onPointerDown={handlePreviewPointerDown}
+              onPointerMove={handlePreviewPointerMove}
+              onPointerUp={finishPreviewDrag}
+              onPointerCancel={finishPreviewDrag}
+            >
               <img
+                ref={previewImageRef}
                 src={src}
                 alt={alt}
                 className="chat-image-preview-image"
-                style={{ transform: `scale(${previewZoom})` }}
+                draggable={false}
+                style={{ transform: `translate(${previewOffset.x}px, ${previewOffset.y}px) scale(${previewZoom})` }}
               />
             </div>
           </div>

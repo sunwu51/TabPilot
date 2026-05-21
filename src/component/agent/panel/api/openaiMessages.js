@@ -50,9 +50,25 @@ export function buildOpenAIAssistantMessageForApi(msg, options = {}) {
     content: msg.content ?? null
   };
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-    apiMessage.tool_calls = msg.tool_calls;
+    apiMessage.tool_calls = msg.tool_calls.map(normalizeOpenAIToolCallForApi).filter(Boolean);
   }
   return copyOpenAIProviderMetadataForApi(msg, copyOpenAIReasoningFieldsForApi(msg, apiMessage, options), options);
+}
+
+export function normalizeOpenAIToolCallForApi(toolCall) {
+  if (!toolCall || typeof toolCall !== "object") return null;
+  const name = toolCall.function?.name || toolCall.name || "";
+  const rawArguments = toolCall.function?.arguments ?? toolCall.arguments ?? "{}";
+  const args = typeof rawArguments === "string" ? rawArguments : JSON.stringify(rawArguments ?? {});
+  if (!name) return null;
+  return {
+    id: toolCall.id || toolCall.call_id || `toolcall_${name}_${Date.now()}`,
+    type: "function",
+    function: {
+      name,
+      arguments: args
+    }
+  };
 }
 
 export function copyOpenAIReasoningFieldsForApi(source, target, options = {}) {
