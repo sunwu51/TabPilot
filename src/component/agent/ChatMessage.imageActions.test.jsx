@@ -9,6 +9,33 @@ vi.mock("@sunwu51/camel-ui", () => ({
 
 import ChatMessage from "./ChatMessage";
 
+Object.defineProperty(HTMLImageElement.prototype, "naturalWidth", {
+  configurable: true,
+  value: 1200
+});
+
+Object.defineProperty(HTMLImageElement.prototype, "naturalHeight", {
+  configurable: true,
+  value: 800
+});
+
+Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+  configurable: true,
+  value() {
+    return {
+      width: 960,
+      height: 640,
+      top: 0,
+      left: 0,
+      right: 960,
+      bottom: 640,
+      x: 0,
+      y: 0,
+      toJSON() {}
+    };
+  }
+});
+
 describe("ChatMessage image actions", () => {
   it("opens an in-page preview dialog from the ref button and supports zoom controls", () => {
     render(
@@ -35,11 +62,18 @@ describe("ChatMessage image actions", () => {
     expect(within(dialog).getAllByText("100%").length).toBeGreaterThan(0);
 
     fireEvent.click(within(dialog).getByRole("button", { name: "适应窗口" }));
-    expect(within(dialog).getByText("98%")).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "重置缩放" })).not.toBeInTheDocument();
+    expect(within(dialog).getByText("75%")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "原图大小" })).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "放大图片" }));
-    expect(within(dialog).getByText("118%")).toBeInTheDocument();
+    expect(within(dialog).getByText("95%")).toBeInTheDocument();
+
+    const stage = within(dialog).getByRole("img", { name: "用户上传的图片" }).parentElement;
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(stage, { pointerId: 1, clientX: 160, clientY: 130 });
+    expect(within(dialog).getByRole("img", { name: "用户上传的图片" })).toHaveStyle({
+      transform: "translate(60px, 30px) scale(0.95)"
+    });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭图片预览" }));
     expect(screen.queryByRole("dialog", { name: "img_9 图片预览" })).not.toBeInTheDocument();
