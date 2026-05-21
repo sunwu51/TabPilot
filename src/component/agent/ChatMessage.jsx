@@ -902,6 +902,23 @@ function EditableChatImage({
     onEdit({ src, alt, ref: refId || "" });
   }
 
+  async function handleRefClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!refId || isPendingSessionImage || !src) return;
+
+    try {
+      if (typeof chrome !== "undefined" && chrome.tabs?.create) {
+        await chrome.tabs.create({ url: src, active: true });
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to open image in tab:", error);
+    }
+
+    window.open(src, "_blank", "noopener,noreferrer");
+  }
+
   return (
     <span className={`chat-editable-image-wrap ${wrapperClassName}`.trim()}>
       {isPendingSessionImage ? (
@@ -918,16 +935,31 @@ function EditableChatImage({
           decoding="async"
         />
       )}
-      {editable && !isPendingSessionImage && (
-        <button
-          type="button"
-          className="chat-image-edit-btn"
-          onClick={handleEditClick}
-          title="编辑图片"
-          aria-label="编辑图片"
-        >
-          Edit
-        </button>
+      {!isPendingSessionImage && (refId || editable) && (
+        <span className="chat-image-actions">
+          {refId && (
+            <button
+              type="button"
+              className="chat-image-ref-btn"
+              onClick={handleRefClick}
+              title={`在新标签页查看 ${refId}`}
+              aria-label={`在新标签页查看 ${refId}`}
+            >
+              {refId}
+            </button>
+          )}
+          {editable && (
+            <button
+              type="button"
+              className="chat-image-edit-btn"
+              onClick={handleEditClick}
+              title="编辑图片"
+              aria-label="编辑图片"
+            >
+              Edit
+            </button>
+          )}
+        </span>
       )}
     </span>
   );

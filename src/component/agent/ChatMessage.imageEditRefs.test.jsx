@@ -15,7 +15,8 @@ describe("ChatMessage image edit refs", () => {
       <ChatMessage
         msg={{
           role: "user",
-          content: [{ type: "text", text: "请编辑这张图，并参考另一张图。" }],
+          content: "请使用工具 image_edit 修改这张图片。\n原图 ref: img_1\n调用工具时请把图片输入按这个顺序传入 images 数组: `|deRef:img_1|`, `|deRef:img_2|`。",
+          displayContent: "编辑图片：请编辑这张图，并参考另一张图。",
           imageRefs: [
             { ref: "img_1", dataUrl: "data:image/png;base64,b3JpZw==", role: "edit_image" },
             { ref: "img_2", dataUrl: "data:image/png;base64,cmVm", role: "edit_reference" }
@@ -24,6 +25,8 @@ describe("ChatMessage image edit refs", () => {
       />
     );
 
+    expect(screen.getByText("编辑图片：请编辑这张图，并参考另一张图。")).toBeInTheDocument();
+    expect(screen.queryByText(/原图 ref:/)).not.toBeInTheDocument();
     expect(screen.getByText("原图")).toBeInTheDocument();
     expect(screen.getByText("参考图 1")).toBeInTheDocument();
     expect(screen.getByAltText("原图")).toHaveAttribute("src", "data:image/png;base64,b3JpZw==");

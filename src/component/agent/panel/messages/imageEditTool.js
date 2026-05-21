@@ -49,6 +49,11 @@ export function buildImageEditUserPrompt({ toolCallName, imageRef, maskRef, addi
   return lines.join("\n");
 }
 
+export function buildImageEditDisplayText({ suggestion }) {
+  const trimmedSuggestion = String(suggestion || "").trim();
+  return trimmedSuggestion ? `编辑图片：${trimmedSuggestion}` : "编辑图片";
+}
+
 export function buildImageEditMessageRefs({
   imageRef,
   imageSource,

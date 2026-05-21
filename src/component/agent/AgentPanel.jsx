@@ -121,6 +121,7 @@ import {
   findImageEditMcpTool,
   getMcpToolCallName,
   buildImageEditUserPrompt,
+  buildImageEditDisplayText,
   buildImageEditMessageRefs
 } from "./panel/messages/imageEditTool";
 import {
@@ -150,6 +151,7 @@ import { SessionExportDialogBody } from "./panel/components/SessionExportDialog"
 
 // Re-export for tests (AgentPanel.{export,imageEdit}.test.jsx import these from this file)
 export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDialog };
+export { buildRewindRestoredAttachments };
 
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
@@ -163,6 +165,82 @@ function resolveSupportsToolImageInput(llmConfig = {}) {
     return llmConfig.supportsToolImageInput === true;
   }
   return true;
+}
+
+function createRestoredAttachmentId() {
+  return `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function buildRewindRestoredAttachments(target) {
+  const restoredAttachments = [];
+  const seenImageSources = new Set();
+
+  if (Array.isArray(target?.content)) {
+    for (const block of target.content) {
+      if (block.type === "file") {
+        restoredAttachments.push({
+          id: createRestoredAttachmentId(),
+          type: "text",
+          text: block.text,
+          fileName: block.fileName
+        });
+      } else if (block.type === "image" && block.source?.media_type && block.source?.data) {
+        const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
+        seenImageSources.add(dataUrl);
+        restoredAttachments.push({
+          id: createRestoredAttachmentId(),
+          type: "image",
+          dataUrl,
+          fileName: "image"
+        });
+      }
+    }
+  }
+
+  const rolePriority = {
+    edit_image: 0,
+    edit_reference: 1,
+    edit_mask: 2
+  };
+  const supplementalImageRefs = normalizeMessageImageRefs(target?.imageRefs)
+    .filter(item => ["edit_image", "edit_reference", "edit_mask"].includes(item.role))
+    .filter(item => !seenImageSources.has(item.dataUrl))
+    .sort((a, b) => {
+      const priorityDiff = (rolePriority[a.role] ?? 99) - (rolePriority[b.role] ?? 99);
+      if (priorityDiff !== 0) return priorityDiff;
+      return String(a.ref).localeCompare(String(b.ref));
+    });
+
+  for (const item of supplementalImageRefs) {
+    restoredAttachments.push({
+      id: createRestoredAttachmentId(),
+      type: "image",
+      dataUrl: item.dataUrl,
+      imageRole: item.role,
+      originalRef: item.ref,
+      fileName:
+        item.role === "edit_image"
+          ? "edit-image"
+          : item.role === "edit_reference"
+            ? "edit-reference"
+            : "edit-mask"
+    });
+  }
+
+  return restoredAttachments;
+}
+
+function buildImageEditRewindHint(meta = {}) {
+  if (meta?.kind !== "image_edit") return "";
+  const parts = ["第1张图是原图"];
+  const referenceCount = Math.max(0, Number(meta.referenceCount) || 0);
+  for (let index = 0; index < referenceCount; index++) {
+    parts.push(`第${index + 2}张图是参考图${index + 1}`);
+  }
+  if (meta.hasMask) {
+    parts.push(`第${referenceCount + 2}张图是蒙版`);
+  }
+  return parts.length > 0 ? `\n\n图片顺序说明：${parts.join("；")}。` : "";
 }
 
 export default function AgentPanel() {
@@ -1927,8 +2005,14 @@ export default function AgentPanel() {
     if (hasAnyAttachment) {
       userMsg.displayContent = text;
     }
+    if (typeof options.displayContent === "string") {
+      userMsg.displayContent = options.displayContent;
+    }
     if (localImageRefs.length > 0) {
       userMsg.imageRefs = localImageRefs;
+    }
+    if (options.imageEditMeta && typeof options.imageEditMeta === "object") {
+      userMsg.imageEditMeta = options.imageEditMeta;
     }
     if (injectionMeta) {
       userMsg.displayContent = text || "请根据我指定的上下文回答。";
@@ -2380,7 +2464,13 @@ export default function AgentPanel() {
       attachments: [],
       selectedTabs: [],
       selectedSkills: [],
-      imageRefs: imageEditRefs
+      displayContent: buildImageEditDisplayText({ suggestion }),
+      imageRefs: imageEditRefs,
+      imageEditMeta: {
+        kind: "image_edit",
+        hasMask: !!maskRef,
+        referenceCount: additionalImageRefs.length
+      }
     });
   }
 
@@ -2865,39 +2955,19 @@ export default function AgentPanel() {
 
     // For multimodal messages, extract text blocks and attachments; for plain string, use as-is
     let text = "";
-    const restoredAttachments = [];
+    const restoredAttachments = buildRewindRestoredAttachments(target);
 
     if (Array.isArray(target.content)) {
       const textBlock = target.content.find(b => b.type === "text");
       text = typeof target.displayContent === "string" && target.displayContent.length > 0
         ? target.displayContent
         : (textBlock?.text ?? "");
-
-      // Restore file attachments
-      for (const block of target.content) {
-        if (block.type === "file") {
-          restoredAttachments.push({
-            id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: "text",
-            text: block.text,
-            fileName: block.fileName
-          });
-        } else if (block.type === "image" && block.source) {
-          // Restore image attachments
-          const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
-          restoredAttachments.push({
-            id: `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: "image",
-            dataUrl,
-            fileName: "image"
-          });
-        }
-      }
     } else {
       text = typeof target.displayContent === "string" && target.displayContent.length > 0
         ? target.displayContent
         : (typeof target.content === "string" ? target.content : String(target.content ?? ""));
     }
+    text = `${text}${buildImageEditRewindHint(target.imageEditMeta)}`.trim();
     stopSessionGeneration(currentSessionId);
 
     const truncated = msgs.slice(0, index);
