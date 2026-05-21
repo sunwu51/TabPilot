@@ -6,7 +6,7 @@ vi.mock("@sunwu51/camel-ui", () => ({
   Dialog: () => null
 }));
 
-import { buildRewindRestoredAttachments } from "./AgentPanel";
+import { buildImageEditRewindHint, buildRewindRestoredAttachments } from "./AgentPanel";
 
 describe("AgentPanel rewind attachments", () => {
   it("restores image edit refs back into pending attachments", () => {
@@ -45,5 +45,40 @@ describe("AgentPanel rewind attachments", () => {
       hasMask: true,
       referenceCount: 1
     });
+  });
+
+  it("restores http image edit previews from imageEditMeta without refs", () => {
+    const target = {
+      role: "user",
+      content: "请编辑图片",
+      imageEditMeta: {
+        kind: "image_edit",
+        images: [
+          { dataUrl: "https://example.com/original.png", role: "edit_image" },
+          { dataUrl: "https://example.com/reference.png", role: "edit_reference" }
+        ]
+      }
+    };
+
+    const attachments = buildRewindRestoredAttachments(target);
+
+    expect(attachments.map(item => ({ type: item.type, dataUrl: item.dataUrl, fileName: item.fileName }))).toEqual([
+      { type: "image", dataUrl: "https://example.com/original.png", fileName: "edit-image" },
+      { type: "image", dataUrl: "https://example.com/reference.png", fileName: "edit-reference" }
+    ]);
+  });
+
+  it("uses the original http url in rewind hint instead of claiming attachment 1 is the original", () => {
+    const hint = buildImageEditRewindHint({
+      kind: "image_edit",
+      images: [
+        { dataUrl: "https://example.com/original.png", role: "edit_image" },
+        { dataUrl: "data:image/png;base64,cmVm", role: "edit_reference" }
+      ]
+    });
+
+    expect(hint).toContain("https://example.com/original.png 是原图");
+    expect(hint).toContain("第1张图是参考图1");
+    expect(hint).not.toContain("第1张图是原图");
   });
 });
