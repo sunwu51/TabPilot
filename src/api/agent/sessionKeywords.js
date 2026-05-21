@@ -126,7 +126,7 @@ async function generateSessionKeywords(config, { previousKeywords, conversationT
         "只输出 JSON 字符串数组，例如：[\"前端调试\",\"旅行计划\",\"报错排查\"]，不要输出解释。"
     },
     { role: "user", content: userContent }
-  ]);
+  ], { allowEmptyResponse: true });
 
   return normalizeGeneratedKeywords(parseKeywordOutput(output));
 }
