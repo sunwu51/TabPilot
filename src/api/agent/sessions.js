@@ -165,6 +165,44 @@ function getSessionImageStoreKey(id) {
   return `session_${id}_images`;
 }
 
+/**
+ * Walk an arbitrary message tree and collect every imageStore key it still
+ * points at. Two reference shapes are recognized:
+ *   - `block.source.ref` when `block.source.type === "session_image"`
+ *   - any string of the form `session-image:img_X` in any object field
+ * Used by the pre-sweep in compactSessionMessages to drop orphan entries
+ * without touching anything that is legitimately reachable (including
+ * un-hydrated messages produced during the openSession hydrate window).
+ */
+function collectReferencedImageStoreKeys(messages) {
+  const keys = new Set();
+  function visit(value, depth = 0) {
+    if (depth > 12 || value == null) return;
+    if (typeof value === "string") {
+      if (value.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)) {
+        const key = value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length);
+        const normalized = normalizeImageStoreKey(key);
+        if (normalized) keys.add(normalized);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+    if (value.type === "image" && value.source?.type === "session_image") {
+      const ref = normalizeImageStoreKey(value.source.ref);
+      if (ref) keys.add(ref);
+    }
+    for (const child of Object.values(value)) {
+      visit(child, depth + 1);
+    }
+  }
+  visit(messages);
+  return keys;
+}
+
 export function compactSessionMessages(messages, options = {}) {
   if (!Array.isArray(messages)) {
     return {
@@ -174,6 +212,19 @@ export function compactSessionMessages(messages, options = {}) {
   }
 
   const imageStore = cloneImageStore(options.existingImageStore);
+
+  // Pre-sweep: drop any imageStore entry that no input message references.
+  // This must happen before computing nextIndex / byValue so that allocations
+  // can re-use freed slots and the resulting index stays tight. It also fully
+  // recovers from latent bugs that leave orphan entries behind.
+  const referencedKeys = collectReferencedImageStoreKeys(messages);
+  for (const key of Object.keys(imageStore)) {
+    if (!referencedKeys.has(key)) {
+      console.warn(`[sessions] compactSessionMessages dropping orphan image ref ${key}`);
+      delete imageStore[key];
+    }
+  }
+
   const byValue = new Map(
     Object.entries(imageStore)
       .filter(([, value]) => isBase64DataUrl(value))
@@ -255,6 +306,7 @@ export function compactSessionMessages(messages, options = {}) {
   }
 
   const compactMessages = messages.map(message => compactValue(message));
+
   const hasImageStoreEntries = Object.keys(imageStore).length > 0;
   const hasExistingImageStoreEntries = Object.keys(options.existingImageStore || {}).length > 0;
   return {

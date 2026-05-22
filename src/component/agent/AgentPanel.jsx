@@ -994,24 +994,54 @@ export default function AgentPanel() {
     if (!targetSessionId || !source) return null;
     if (/^https?:\/\//i.test(source)) return null;
     const cache = getSessionImageRefCache(targetSessionId);
+
+    const wantedRef = IMAGE_REF_PATTERN.test(String(preferredRef || "").trim())
+      ? String(preferredRef).trim()
+      : "";
+
+    // When the caller supplies a preferredRef, honor it if the cache is
+    // either empty at that slot or already maps the slot to this exact data.
+    // This keeps the message's declared ref ("img_1") authoritative instead
+    // of silently flipping it to whatever byDataUrl points at (which can be
+    // a stale leftover after openSession reloads orphan entries).
+    if (wantedRef) {
+      const existingAtWanted = cache.refs.get(wantedRef);
+      if (!existingAtWanted || existingAtWanted === source) {
+        const stale = cache.byDataUrl.get(source);
+        if (stale && stale !== wantedRef) {
+          // Same image previously cached under a different ref; rewrite the
+          // mapping so cache invariant (one ref per dataUrl) holds.
+          cache.refs.delete(stale);
+        }
+        cache.refs.set(wantedRef, source);
+        cache.byDataUrl.set(source, wantedRef);
+        bumpCacheNextIndex(cache, wantedRef);
+        setSessionNextImageRefIndex(targetSessionId, cache.nextIndex);
+        return wantedRef;
+      }
+      // wantedRef slot is occupied by a different image; fall back to dedup.
+    }
+
     const existing = cache.byDataUrl.get(source);
     if (existing) return existing;
 
-    let ref = IMAGE_REF_PATTERN.test(String(preferredRef || "").trim())
-      ? String(preferredRef).trim()
-      : allocateGeneratedImageRef(cache);
+    let ref = wantedRef || allocateGeneratedImageRef(cache);
     while (cache.refs.has(ref) && cache.refs.get(ref) !== source) {
       ref = allocateGeneratedImageRef(cache);
     }
 
     cache.refs.set(ref, source);
     cache.byDataUrl.set(source, ref);
-    const numericSuffix = Number(ref.match(/^img_(\d+)$/)?.[1]);
+    bumpCacheNextIndex(cache, ref);
+    setSessionNextImageRefIndex(targetSessionId, cache.nextIndex);
+    return ref;
+  }
+
+  function bumpCacheNextIndex(cache, ref) {
+    const numericSuffix = Number(String(ref || "").match(/^img_(\d+)$/)?.[1]);
     if (Number.isFinite(numericSuffix)) {
       cache.nextIndex = Math.max(cache.nextIndex, numericSuffix + 1);
     }
-    setSessionNextImageRefIndex(targetSessionId, cache.nextIndex);
-    return ref;
   }
 
   function rebuildSessionImageRefs(targetSessionId, msgs, options = {}) {
@@ -2585,16 +2615,20 @@ export default function AgentPanel() {
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
     closeInputCompletions();
+    // Wipe the persisted image store before saving so saveSession does not
+    // resurrect orphan entries via the existingImageStore clone path. Pair
+    // with nextImageRefIndex: 1 to restart ref allocation at img_1.
+    await chrome.storage.local.remove(`session_${currentSessionId}_images`);
     const currentSessionEntry = sessions.find(s => s.id === currentSessionId);
     if (currentSessionEntry?.manualTitle) {
       const preservedTitle = String(sessionTitle || "").trim() || "新会话";
       setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
-      await saveSession(currentSessionId, [], preservedTitle);
+      await saveSession(currentSessionId, [], preservedTitle, { nextImageRefIndex: 1 });
       await saveSessionMeta(currentSessionId, { plans: [] });
       await clearSessionKeywords(currentSessionId);
     } else {
       setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
-      await saveSession(currentSessionId, [], "新会话");
+      await saveSession(currentSessionId, [], "新会话", { nextImageRefIndex: 1 });
       await saveSessionMeta(currentSessionId, { plans: [] });
       await clearSessionKeywords(currentSessionId);
     }

@@ -184,6 +184,94 @@ describe("sessions storage", () => {
     });
   });
 
+  it("garbage-collects orphan imageStore entries that no compacted message references", async () => {
+    const dataUrl = "data:image/png;base64,dXNlcg==";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 4 },
+      session_a_images: {
+        img_1: "data:image/png;base64,b2xkQQ==",
+        img_2: "data:image/png;base64,b2xkQg==",
+        img_3: "data:image/png;base64,b2xkQw=="
+      },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Mirrors autoSave: the in-memory counter (reset to 1 by clearSessionImageState,
+    // bumped to 2 after one new ref) is passed as nextImageRefIndex hint.
+    await saveSession("a", [{
+      role: "user",
+      content: [
+        { type: "text", text: "fresh start" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "dXNlcg==" } }
+      ]
+    }], "A", { nextImageRefIndex: 1 });
+
+    // Only the freshly referenced image survives; the three orphan entries are swept.
+    expect(await loadSessionImageStore("a")).toEqual({ img_1: dataUrl });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 2 });
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("preserves the monotonic nextImageRefIndex when a rewind drops the latest image ref", async () => {
+    const img1 = "data:image/png;base64,b25l";
+    const img2 = "data:image/png;base64,dHdv";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 4 },
+      session_a_images: { img_1: img1, img_2: img2, img_3: "data:image/png;base64,dGhyZWU=" },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Simulate a rewind that removed the message referencing img_3. autoSave
+    // passes the in-memory monotonic counter (still 4) as the fallback.
+    await saveSession("a", [{
+      role: "user",
+      imageRefs: [
+        { ref: "img_1", dataUrl: "session-image:img_1" },
+        { ref: "img_2", dataUrl: "session-image:img_2" }
+      ],
+      content: [
+        { type: "image", ref: "img_1", source: { type: "session_image", ref: "img_1", media_type: "image/png" } },
+        { type: "image", ref: "img_2", source: { type: "session_image", ref: "img_2", media_type: "image/png" } }
+      ]
+    }], "A", { nextImageRefIndex: 4 });
+
+    // img_3 data GC'd, but the counter does not recycle: it stays at 4 so that
+    // the next allocation is img_4, not img_3.
+    expect(await loadSessionImageStore("a")).toEqual({ img_1: img1, img_2: img2 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4 });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("img_3"));
+    warnSpy.mockRestore();
+  });
+
+  it("keeps imageStore entries alive that are only reachable through un-hydrated session-image refs", async () => {
+    const dataUrl = "data:image/png;base64,dXNlcg==";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 4 },
+      session_a_images: { img_3: dataUrl },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    // Mirrors the openSession hydrate window: messages still carry session_image
+    // and "session-image:" pointers because loadSessionImagesIntoCache has not
+    // populated the in-memory cache yet.
+    await saveSession("a", [{
+      role: "user",
+      imageRefs: [{ ref: "img_3", dataUrl: "session-image:img_3" }],
+      content: [
+        {
+          type: "image",
+          ref: "img_3",
+          source: { type: "session_image", ref: "img_3", media_type: "image/png" }
+        }
+      ]
+    }], "A");
+
+    expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
+  });
+
   it("preserves existing image store entries when saving placeholder-only image messages", async () => {
     const dataUrl = "data:image/png;base64,dXNlcg==";
     resetChromeMock({
