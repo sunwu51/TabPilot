@@ -18,6 +18,7 @@ import {
   loadSessionMeta,
   pruneExpiredSessionLocks,
   releaseSessionLock,
+  releaseSessionLocksForWindow,
   resetSessionTitle,
   saveLastActiveSessionId,
   saveLastActiveSessionIdForWindow,
@@ -502,6 +503,36 @@ describe("sessions storage", () => {
     });
   });
 
+  it("allows session locks from closed windows to be reclaimed immediately", async () => {
+    resetChromeMock({
+      agent_session_locks: {
+        a: { windowId: "1", updatedAt: 1000 }
+      }
+    });
+    chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
+    vi.spyOn(Date, "now").mockReturnValue(2000);
+
+    expect(await claimSessionLock("a", 2)).toEqual({ claimed: true, conflict: null });
+    expect(await isSessionLockedByOtherWindow("a", 1)).toEqual({
+      sessionId: "a",
+      windowId: "2",
+      updatedAt: 2000
+    });
+  });
+
+  it("clears conflicts from closed windows when checking locks", async () => {
+    resetChromeMock({
+      agent_session_locks: {
+        a: { windowId: "1", updatedAt: 1000 }
+      }
+    });
+    chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
+    vi.spyOn(Date, "now").mockReturnValue(2000);
+
+    expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();
+    expect(await claimSessionLock("a", 2)).toEqual({ claimed: true, conflict: null });
+  });
+
   it("releases session locks only from the owning window", async () => {
     resetChromeMock({
       agent_session_locks: {
@@ -519,6 +550,26 @@ describe("sessions storage", () => {
 
     await releaseSessionLock("a", 1);
     expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();
+  });
+
+  it("releases all session locks owned by a window", async () => {
+    resetChromeMock({
+      agent_session_locks: {
+        a: { windowId: "1", updatedAt: 1000 },
+        b: { windowId: "2", updatedAt: 1000 },
+        c: { windowId: "1", updatedAt: 1000 }
+      }
+    });
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+
+    expect(await releaseSessionLocksForWindow(1)).toBe(2);
+    expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();
+    expect(await isSessionLockedByOtherWindow("c", 2)).toBeNull();
+    expect(await isSessionLockedByOtherWindow("b", 1)).toEqual({
+      sessionId: "b",
+      windowId: "2",
+      updatedAt: 1000
+    });
   });
 
   it("prunes expired session locks", async () => {

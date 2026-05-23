@@ -164,6 +164,7 @@ export { buildRewindRestoredAttachments, buildImageEditRewindHint };
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
+const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
 const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
@@ -364,6 +365,7 @@ export default function AgentPanel() {
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
   const currentWindowIdRef = useRef(null);
+  const sessionLockPortRef = useRef(null);
   const defaultNewSessionSystemPromptRef = useRef({ sessionId: "", systemPrompt: "" });
   const sessionMessagesRef = useRef(new Map());
   const sessionImageRefsRef = useRef(new Map());
@@ -607,6 +609,18 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
+    try {
+      const port = chrome.runtime?.connect?.({ name: AGENT_PANEL_SESSION_LOCK_PORT_NAME });
+      sessionLockPortRef.current = port || null;
+      port?.onDisconnect?.addListener?.(() => {
+        sessionLockPortRef.current = null;
+        console.debug("[agent-session-lock]", "port disconnected");
+      });
+      console.debug("[agent-session-lock]", "port connected");
+    } catch (error) {
+      console.debug("[agent-session-lock]", "port connect failed", error);
+    }
+
     const intervalId = setInterval(() => {
       const currentSessionId = activeSessionIdRef.current;
       const currentWindowId = currentWindowIdRef.current;
@@ -616,7 +630,26 @@ export default function AgentPanel() {
     }, SESSION_LOCK_HEARTBEAT_MS);
     return () => {
       clearInterval(intervalId);
+      notifyServiceWorkerToReleaseCurrentSessionLock("effect-cleanup");
+      try {
+        sessionLockPortRef.current?.disconnect?.();
+      } catch {
+        // Ignore teardown failures.
+      }
+      sessionLockPortRef.current = null;
       void releaseCurrentSessionLock();
+    };
+  }, []);
+
+  useEffect(() => {
+    const releaseLock = (event) => {
+      notifyServiceWorkerToReleaseCurrentSessionLock(event?.type || "page-lifecycle");
+    };
+    window.addEventListener("pagehide", releaseLock);
+    window.addEventListener("beforeunload", releaseLock);
+    return () => {
+      window.removeEventListener("pagehide", releaseLock);
+      window.removeEventListener("beforeunload", releaseLock);
     };
   }, []);
 
@@ -818,10 +851,46 @@ export default function AgentPanel() {
     }
   }
 
+  function postActiveSessionLockToServiceWorker() {
+    const currentSessionId = activeSessionIdRef.current;
+    const windowId = currentWindowIdRef.current;
+    if (!currentSessionId || !windowId) return;
+    try {
+      sessionLockPortRef.current?.postMessage?.({
+        type: "agent_session_lock_port",
+        action: "active",
+        sessionId: currentSessionId,
+        windowId
+      });
+      console.debug("[agent-session-lock]", "port active", { sessionId: currentSessionId, windowId });
+    } catch (error) {
+      console.debug("[agent-session-lock]", "port active failed", error);
+    }
+  }
+
+  function notifyServiceWorkerToReleaseCurrentSessionLock(reason = "unknown") {
+    const currentSessionId = activeSessionIdRef.current;
+    const windowId = currentWindowIdRef.current;
+    if (!currentSessionId || !windowId) return;
+    console.debug("[agent-session-lock]", "release message", { sessionId: currentSessionId, windowId, reason });
+    try {
+      chrome.runtime?.sendMessage?.({
+        type: "agent_session_lock",
+        action: "release",
+        sessionId: currentSessionId,
+        windowId,
+        reason
+      }, () => void chrome.runtime?.lastError);
+    } catch {
+      // Best-effort cleanup during side panel teardown.
+    }
+  }
+
   async function saveActiveSessionForWindow(targetSessionId) {
     const windowId = await getCurrentWindowId();
     void saveLastActiveSessionId(targetSessionId);
     void saveLastActiveSessionIdForWindow(windowId, targetSessionId);
+    postActiveSessionLockToServiceWorker();
   }
 
   async function handleActiveSessionDeletedExternally(remainingSessions) {
@@ -1475,8 +1544,12 @@ export default function AgentPanel() {
 
   async function focusLockedSessionWindow(lockResult) {
     const shouldFocus = window.confirm("其他窗口已经打开这个会话。是否切换到该窗口？");
-    if (shouldFocus && lockResult.conflict?.windowId) {
+    if (!shouldFocus || !lockResult.conflict?.windowId) return false;
+    try {
       await chrome.windows.update(Number(lockResult.conflict.windowId), { focused: true });
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -1484,7 +1557,13 @@ export default function AgentPanel() {
     if (!options.lockAlreadyClaimed) {
       const lockResult = await claimSessionForWindow(id);
       if (!lockResult.claimed) {
-        if (!options.skipLockPrompt) await focusLockedSessionWindow(lockResult);
+        if (!options.skipLockPrompt) {
+          const focused = await focusLockedSessionWindow(lockResult);
+          if (!focused) {
+            await claimSessionForWindow(id, { force: true });
+            return openSession(id, { ...options, lockAlreadyClaimed: true });
+          }
+        }
         return false;
       }
     }
