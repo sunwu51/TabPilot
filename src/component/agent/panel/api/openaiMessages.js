@@ -1,6 +1,6 @@
 import { API_TYPES, normalizeApiType } from "../../../../api/llm";
 import { buildPlainApiMessage, shouldOmitThinkingFromRequests } from "./_helpers";
-import { buildOpenAIToolResultContent } from "../messages/toolResults";
+import { buildOpenAIToolResultContent, buildOpenAIToolResultImageUserMessage } from "../messages/toolResults";
 
 
 export function buildOpenAIAssistantMessageFromAnthropic(msg, options = {}) {
@@ -123,11 +123,11 @@ export function buildOpenAIApiMessages(messages, options = {}) {
       }
 
       apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
-      apiMessages.push(...followingToolMessages.map(toolMsg => ({
-        role: "tool",
-        tool_call_id: toolMsg.tool_call_id,
-        content: buildOpenAIToolResultContent(toolMsg, options)
-      })));
+      for (const toolMsg of followingToolMessages) {
+        apiMessages.push(buildOpenAIToolMessageForApi(toolMsg, options));
+        const imageUserMessage = buildOpenAIToolResultImageUserMessage(toolMsg, options);
+        if (imageUserMessage) apiMessages.push(imageUserMessage);
+      }
 
       i = j - 1;
       continue;
@@ -157,11 +157,9 @@ export function buildOpenAIApiMessages(messages, options = {}) {
     }
 
     if (msg.role === "tool") {
-      apiMessages.push({
-        role: "tool",
-        tool_call_id: msg.tool_call_id,
-        content: buildOpenAIToolResultContent(msg, options)
-      });
+      apiMessages.push(buildOpenAIToolMessageForApi(msg, options));
+      const imageUserMessage = buildOpenAIToolResultImageUserMessage(msg, options);
+      if (imageUserMessage) apiMessages.push(imageUserMessage);
       continue;
     }
 
@@ -169,6 +167,14 @@ export function buildOpenAIApiMessages(messages, options = {}) {
   }
 
   return apiMessages;
+}
+
+function buildOpenAIToolMessageForApi(msg, options = {}) {
+  return {
+    role: "tool",
+    tool_call_id: msg.tool_call_id,
+    content: buildOpenAIToolResultContent(msg, options)
+  };
 }
 
 function buildImageBlockDataUrlForApi(block) {

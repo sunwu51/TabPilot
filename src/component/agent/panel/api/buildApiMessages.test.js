@@ -11,6 +11,60 @@ describe("buildApiMessages image options", () => {
     displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
   };
 
+  it("sends OpenAI Chat tool result images through a follow-up user message", () => {
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      toolImageMessage
+    ], {
+      supportsImageInput: true,
+      supportsToolImageInput: true
+    });
+
+    expect(result).toEqual([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        content: JSON.stringify({ success: true })
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "The following image is from the previous image_gen tool result."
+          },
+          {
+            type: "image_url",
+            image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "low" }
+          }
+        ]
+      }
+    ]);
+  });
+
   it("keeps user images while omitting OpenAI tool result images when disabled", () => {
     const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [
       {
