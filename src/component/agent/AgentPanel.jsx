@@ -1545,8 +1545,14 @@ export default function AgentPanel() {
   async function focusLockedSessionWindow(lockResult) {
     const shouldFocus = window.confirm("其他窗口已经打开这个会话。是否切换到该窗口？");
     if (!shouldFocus || !lockResult.conflict?.windowId) return false;
+    const windowId = Number(lockResult.conflict.windowId);
     try {
-      await chrome.windows.update(Number(lockResult.conflict.windowId), { focused: true });
+      await chrome.windows.update(windowId, { focused: true });
+      await chrome.sidePanel?.open?.({ windowId });
+      chrome.runtime?.sendMessage?.({
+        type: "focus_agent_panel",
+        windowId
+      }, () => void chrome.runtime?.lastError);
       return true;
     } catch {
       return false;
