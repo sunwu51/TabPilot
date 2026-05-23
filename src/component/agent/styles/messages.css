@@ -242,17 +242,25 @@
 }
 
 .chat-image-preview-controls {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, 52px);
+  gap: 6px;
   justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
+}
+
+.chat-image-preview-control-row {
+  display: contents;
+}
+
+.chat-image-preview-zoom-pair {
+  display: flex;
+  width: 52px;
 }
 
 .chat-image-preview-btn {
-  min-width: 44px;
+  width: 52px;
   height: 30px;
-  padding: 0 10px;
+  padding: 0;
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 8px;
   background: white;
@@ -261,6 +269,27 @@
   font-weight: 600;
   line-height: 28px;
   cursor: pointer;
+}
+
+.chat-image-preview-btn-placeholder {
+  width: 52px;
+  height: 30px;
+}
+
+.chat-image-preview-btn-compact {
+  width: 26px;
+  min-width: 0;
+}
+
+.chat-image-preview-btn-zoom-out {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.chat-image-preview-btn-zoom-in {
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .chat-image-preview-btn:hover {

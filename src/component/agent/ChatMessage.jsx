@@ -19,6 +19,7 @@ const ChatMessage = memo(function ChatMessage({
   msg,
   messageIndex,
   onRewindToUserMessage,
+  sessionId = "",
   searchState,
   imageEditingEnabled = false,
   onImageEditRequest,
@@ -85,6 +86,7 @@ const ChatMessage = memo(function ChatMessage({
                 displayContent={msg.displayContent}
                 imageRefs={msg.imageRefs}
                 imageEditMeta={msg.imageEditMeta}
+                sessionId={sessionId}
                 imageEditingEnabled={imageEditingEnabled}
                 onImageEditRequest={onImageEditRequest}
               />
@@ -139,6 +141,7 @@ const ChatMessage = memo(function ChatMessage({
               <SupplementalUserImage
                 key={`plain-supplemental-image-${image.ref || index}`}
                 image={image}
+                sessionId={sessionId}
                 imageEditingEnabled={imageEditingEnabled}
                 onImageEditRequest={onImageEditRequest}
               />
@@ -183,6 +186,7 @@ const ChatMessage = memo(function ChatMessage({
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
+              sessionId={sessionId}
             />
           );
         } else if (block.type === "thinking" || block.type === "redacted_thinking") {
@@ -202,10 +206,11 @@ const ChatMessage = memo(function ChatMessage({
             key="text"
             text={content}
             searchState={messageSearchState}
-            imageEditingEnabled={imageEditingEnabled}
-            onImageEditRequest={onImageEditRequest}
-            imageSrcResolver={imageSrcResolver}
-          />
+              imageEditingEnabled={imageEditingEnabled}
+              onImageEditRequest={onImageEditRequest}
+              imageSrcResolver={imageSrcResolver}
+              sessionId={sessionId}
+            />
         );
       }
       for (let i = 0; i < msg.tool_calls.length; i++) {
@@ -237,6 +242,7 @@ const ChatMessage = memo(function ChatMessage({
           imageEditingEnabled={imageEditingEnabled}
           onImageEditRequest={onImageEditRequest}
           imageSrcResolver={imageSrcResolver}
+          sessionId={sessionId}
         />
       );
     }
@@ -253,6 +259,7 @@ const ChatMessage = memo(function ChatMessage({
           imageEditingEnabled={imageEditingEnabled}
           onImageEditRequest={onImageEditRequest}
           imageSrcResolver={imageSrcResolver}
+          sessionId={sessionId}
         />
       );
     }
@@ -275,6 +282,7 @@ function UserMultimodalContent({
   displayContent,
   imageRefs,
   imageEditMeta,
+  sessionId = "",
   imageEditingEnabled = false,
   onImageEditRequest
 }) {
@@ -309,6 +317,7 @@ function UserMultimodalContent({
                 src={dataUrl}
                 alt="用户上传的图片"
                 refId={ref}
+                sessionId={sessionId}
                 editable={imageEditingEnabled}
                 onEdit={onImageEditRequest}
                 wrapperClassName="chat-user-image-wrap"
@@ -323,6 +332,7 @@ function UserMultimodalContent({
         <SupplementalUserImage
           key={`supplemental-image-${image.ref || index}`}
           image={image}
+          sessionId={sessionId}
           imageEditingEnabled={imageEditingEnabled}
           onImageEditRequest={onImageEditRequest}
         />
@@ -390,7 +400,7 @@ function normalizeImageEditPreviewImages(items = []) {
     .filter(item => item.dataUrl && ["edit_image", "edit_reference", "edit_mask"].includes(item.role));
 }
 
-function SupplementalUserImage({ image, imageEditingEnabled = false, onImageEditRequest }) {
+function SupplementalUserImage({ image, sessionId = "", imageEditingEnabled = false, onImageEditRequest }) {
   return (
     <div style={{ marginTop: "8px" }}>
       <div style={{ fontSize: "11px", lineHeight: 1.3, color: "#475569", marginBottom: "4px" }}>{image.label}</div>
@@ -398,6 +408,7 @@ function SupplementalUserImage({ image, imageEditingEnabled = false, onImageEdit
         src={image.src}
         alt={image.label}
         refId={image.ref}
+        sessionId={sessionId}
         editable={imageEditingEnabled}
         onEdit={onImageEditRequest}
         wrapperClassName="chat-user-image-wrap"
@@ -413,7 +424,8 @@ export function AssistantTextBubble({
   searchState,
   imageEditingEnabled = false,
   onImageEditRequest,
-  imageSrcResolver
+  imageSrcResolver,
+  sessionId = ""
 }) {
   const [copied, setCopied] = useState(false);
   const [hideCopyButton, setHideCopyButton] = useState(false);
@@ -458,7 +470,8 @@ export function AssistantTextBubble({
             components={buildAssistantMarkdownComponents({
               imageEditingEnabled,
               onImageEditRequest,
-              imageSrcResolver
+              imageSrcResolver,
+              sessionId
             })}
           >
             {text}
@@ -867,7 +880,8 @@ function InjectedUserContextBlock({ context }) {
 function buildAssistantMarkdownComponents({
   imageEditingEnabled = false,
   onImageEditRequest,
-  imageSrcResolver
+  imageSrcResolver,
+  sessionId = ""
 } = {}) {
   return {
     pre: CodeBlock,
@@ -878,12 +892,13 @@ function buildAssistantMarkdownComponents({
         editable={imageEditingEnabled}
         onImageEditRequest={onImageEditRequest}
         imageSrcResolver={imageSrcResolver}
+        sessionId={sessionId}
       />
     )
   };
 }
 
-function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSrcResolver, ...props }) {
+function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSrcResolver, sessionId = "", ...props }) {
   delete props.node;
   const refId = extractImageDerefRef(src);
   const imageSrc = normalizeMarkdownImageSrc(src, imageSrcResolver);
@@ -895,6 +910,7 @@ function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSr
       src={imageSrc}
       alt={alt || "图片"}
       refId={refId}
+      sessionId={sessionId}
       editable={editable}
       onEdit={onImageEditRequest}
       wrapperClassName="chat-assistant-image-wrap"
@@ -907,6 +923,7 @@ function EditableChatImage({
   src,
   alt,
   refId,
+  sessionId = "",
   editable = false,
   onEdit,
   wrapperClassName = "",
@@ -922,6 +939,8 @@ function EditableChatImage({
   const previewStageRef = useRef(null);
   const previewDragRef = useRef(null);
   const canPreviewImage = !isPendingSessionImage && !!src;
+  const isHttpImageSrc = /^https?:\/\//i.test(String(src || ""));
+  const canOpenInNewTab = (!!sessionId && !!refId) || isHttpImageSrc;
   const previewButtonLabel = refId || "预览";
   const previewButtonTitle = refId ? `预览 ${refId}` : "预览图片";
 
@@ -1009,6 +1028,48 @@ function EditableChatImage({
   function showOriginalSize() {
     setPreviewZoom(1);
     setPreviewOffset({ x: 0, y: 0 });
+  }
+
+  function getPreviewImageFilename() {
+    const base = String(refId || alt || "image")
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, "-")
+      .replace(/\s+/g, "-")
+      .slice(0, 80) || "image";
+    return `${base}.${inferImageExtension(src)}`;
+  }
+
+  async function openPreviewInNewTab() {
+    if (!canOpenInNewTab) return;
+    if (isHttpImageSrc) {
+      if (chrome?.tabs?.create) {
+        await chrome.tabs.create({ url: src });
+      } else {
+        window.open(src, "_blank", "noopener,noreferrer");
+      }
+      return;
+    }
+    if (!chrome?.runtime?.getURL) return;
+    const url = new URL(chrome.runtime.getURL("image-viewer.html"));
+    url.searchParams.set("sessionId", sessionId);
+    url.searchParams.set("ref", refId);
+    url.searchParams.set("title", refId || alt || "图片预览");
+    if (chrome?.tabs?.create) {
+      await chrome.tabs.create({ url: url.href });
+    } else {
+      window.open(url.href, "_blank", "noopener,noreferrer");
+    }
+  }
+
+  function savePreviewImage() {
+    const imageSrc = String(src || "");
+    if (!imageSrc) return;
+    const anchor = document.createElement("a");
+    anchor.href = imageSrc;
+    anchor.download = getPreviewImageFilename();
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   }
 
   function handlePreviewPointerDown(event) {
@@ -1109,11 +1170,23 @@ function EditableChatImage({
             <div className="chat-image-preview-toolbar">
               <div className="chat-image-preview-title">{refId || alt || "图片预览"}</div>
               <div className="chat-image-preview-controls">
-                <button type="button" className="chat-image-preview-btn" onClick={() => zoomBy(-0.2)} aria-label="缩小图片">-</button>
-                <button type="button" className="chat-image-preview-btn" onClick={() => zoomBy(0.2)} aria-label="放大图片">+</button>
-                <button type="button" className="chat-image-preview-btn" onClick={fitPreviewToWindow} aria-label="适应窗口">适应</button>
-                <button type="button" className="chat-image-preview-btn" onClick={showOriginalSize} aria-label="原图大小">100%</button>
-                <button type="button" className="chat-image-preview-btn" onClick={() => setIsPreviewOpen(false)} aria-label="关闭图片预览">关闭</button>
+                <div className="chat-image-preview-control-row">
+                  <div className="chat-image-preview-zoom-pair">
+                    <button type="button" className="chat-image-preview-btn chat-image-preview-btn-compact chat-image-preview-btn-zoom-out" onClick={() => zoomBy(-0.2)} aria-label="缩小图片">-</button>
+                    <button type="button" className="chat-image-preview-btn chat-image-preview-btn-compact chat-image-preview-btn-zoom-in" onClick={() => zoomBy(0.2)} aria-label="放大图片">+</button>
+                  </div>
+                  <button type="button" className="chat-image-preview-btn" onClick={fitPreviewToWindow} aria-label="适应窗口">适应</button>
+                  <button type="button" className="chat-image-preview-btn" onClick={showOriginalSize} aria-label="原图大小">100%</button>
+                </div>
+                <div className="chat-image-preview-control-row">
+                  {canOpenInNewTab ? (
+                    <button type="button" className="chat-image-preview-btn" onClick={openPreviewInNewTab} aria-label="在新标签中打开图片">新开</button>
+                  ) : (
+                    <span className="chat-image-preview-btn-placeholder" aria-hidden="true" />
+                  )}
+                  <button type="button" className="chat-image-preview-btn" onClick={savePreviewImage} aria-label="保存图片">保存</button>
+                  <button type="button" className="chat-image-preview-btn" onClick={() => setIsPreviewOpen(false)} aria-label="关闭图片预览">关闭</button>
+                </div>
               </div>
             </div>
             <div className="chat-image-preview-meta">
@@ -1146,6 +1219,24 @@ function EditableChatImage({
 
 function clampImagePreviewZoom(value) {
   return Math.max(0.2, Math.min(6, Math.round(value * 100) / 100));
+}
+
+function inferImageExtension(src) {
+  const raw = String(src || "");
+  const dataUrlMatch = raw.match(/^data:image\/([^;,]+)/i);
+  if (dataUrlMatch) {
+    const type = dataUrlMatch[1].toLowerCase();
+    if (type === "jpeg") return "jpg";
+    if (/^[a-z0-9]+$/.test(type)) return type;
+  }
+  try {
+    const path = new URL(raw, window.location.href).pathname;
+    const match = path.match(/\.([a-z0-9]{2,5})$/i);
+    if (match) return match[1].toLowerCase();
+  } catch {
+    // Keep the default when the source is not URL-like.
+  }
+  return "png";
 }
 
 function findImageRefForSource(imageRefs, source) {

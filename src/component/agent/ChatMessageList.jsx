@@ -5,6 +5,7 @@ const HIDDEN_TOOL_CARD_NAMES = new Set(["plan_create_for_session", "plan_update_
 
 /* eslint-disable react/prop-types */
 const ChatMessageList = memo(function ChatMessageList({
+  sessionId = "",
   messages = [],
   onRewindToUserMessage,
   searchState,
@@ -24,6 +25,7 @@ const ChatMessageList = memo(function ChatMessageList({
               items={group.items}
               toolCallCount={group.toolCallCount}
               onRewindToUserMessage={onRewindToUserMessage}
+              sessionId={sessionId}
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
@@ -36,6 +38,7 @@ const ChatMessageList = memo(function ChatMessageList({
               key={group.key || `tool-sequence-${groupIndex}`}
               items={group.items}
               onRewindToUserMessage={onRewindToUserMessage}
+              sessionId={sessionId}
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
@@ -48,6 +51,7 @@ const ChatMessageList = memo(function ChatMessageList({
             msg={group.message}
             messageIndex={group.index}
             onRewindToUserMessage={onRewindToUserMessage}
+            sessionId={sessionId}
             searchState={searchState}
             imageEditingEnabled={imageEditingEnabled}
             onImageEditRequest={onImageEditRequest}
@@ -59,6 +63,7 @@ const ChatMessageList = memo(function ChatMessageList({
   );
 }, (prevProps, nextProps) =>
   prevProps.messages === nextProps.messages &&
+  prevProps.sessionId === nextProps.sessionId &&
   prevProps.searchState === nextProps.searchState &&
   prevProps.imageEditingEnabled === nextProps.imageEditingEnabled
 );
@@ -70,6 +75,7 @@ function CollapsedToolGroup({
   items,
   toolCallCount,
   onRewindToUserMessage,
+  sessionId = "",
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver
@@ -94,6 +100,7 @@ function CollapsedToolGroup({
           <ToolMessageSequence
             items={items}
             onRewindToUserMessage={onRewindToUserMessage}
+            sessionId={sessionId}
             imageEditingEnabled={imageEditingEnabled}
             onImageEditRequest={onImageEditRequest}
             imageSrcResolver={imageSrcResolver}
@@ -108,6 +115,7 @@ function CollapsedToolGroup({
 function ToolMessageSequence({
   items,
   onRewindToUserMessage,
+  sessionId = "",
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver
@@ -122,6 +130,7 @@ function ToolMessageSequence({
               msg={item.message}
               messageIndex={item.messageIndex}
               onRewindToUserMessage={onRewindToUserMessage}
+              sessionId={sessionId}
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}

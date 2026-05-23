@@ -18,6 +18,7 @@ export default defineConfig({
         sidepanel: "sidepanel.html",
         playground: "playground.html",
         stash: "stash.html",
+        imageViewer: "image-viewer.html",
       },
       output: {
         entryFileNames: "[name].js",
