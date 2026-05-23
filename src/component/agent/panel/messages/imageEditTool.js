@@ -63,6 +63,7 @@ export function buildImageEditUserPrompt({
   }
 
   lines.push(`修改建议：${String(suggestion || "").trim()}`);
+  lines.push("这些 ref 对应的图片已经由用户上传并保存在当前会话的 imageRefs 中；即使你之前没有见过某个 ref，也应当认为图片已存在，工具调用时直接使用对应的 `|deRef:...|` 占位符获取图片数据。");
   return lines.join("\n");
 }
 
