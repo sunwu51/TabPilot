@@ -21,8 +21,13 @@ import {
     newMacroId,
     normalizeStep
 } from "./api/macro";
+import {
+    releaseSessionLock,
+    releaseSessionLocksForWindow
+} from "./api/agent/sessions";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
+const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
 const pendingReusePrompts = new Map();
 const SCHEDULE_STORAGE_KEY = "scheduledJobs";
 const SCHEDULE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -34,6 +39,10 @@ const PASSWORD_PLACEHOLDER = "1A2b3!4399";
 
 function buildScheduleFireAlarmName(id) {
     return `${SCHEDULE_FIRE_ALARM_PREFIX}${id}`;
+}
+
+function logAgentSessionLockLifecycle(message, details = {}) {
+    console.debug("[agent-session-lock]", message, details);
 }
 
 function buildScheduleCleanupAlarmName(id) {
@@ -744,6 +753,37 @@ async function replayMacroSteps(macro, options = {}) {
  * communicates with the auto-injected content script (no host_permissions needed).
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === "agent_session_lock") {
+        (async () => {
+            try {
+                if (msg.action === "release") {
+                    await releaseSessionLock(msg.sessionId, msg.windowId);
+                    logAgentSessionLockLifecycle("released by message", {
+                        sessionId: msg.sessionId,
+                        windowId: msg.windowId,
+                        reason: msg.reason || ""
+                    });
+                    sendResponse({ success: true });
+                    return;
+                }
+                if (msg.action === "release_window") {
+                    const releasedCount = await releaseSessionLocksForWindow(msg.windowId);
+                    logAgentSessionLockLifecycle("released window by message", {
+                        windowId: msg.windowId,
+                        releasedCount,
+                        reason: msg.reason || ""
+                    });
+                    sendResponse({ success: true, releasedCount });
+                    return;
+                }
+                sendResponse({ success: false, error: `Unknown agent session lock action: ${msg.action}` });
+            } catch (error) {
+                sendResponse({ success: false, error: error?.message || String(error) });
+            }
+        })();
+        return true;
+    }
+
     if (msg?.type === "wsbridge") {
     (async () => {
       try {
@@ -1145,6 +1185,37 @@ chrome.tabs.onRemoved.addListener(async function (tabId) {
 
 chrome.tabs.onActivated.addListener(async function (activeInfo) {
     try { await chrome.runtime.sendMessage({ type: 'active', tabId: activeInfo.tabId }); } catch (e) {/* ignore */}
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== AGENT_PANEL_PORT_NAME) return;
+    let activeSessionId = "";
+    let windowId = "";
+
+    port.onMessage.addListener((message) => {
+        if (message?.type !== "agent_session_lock_port") return;
+        if (message.action === "active") {
+            activeSessionId = String(message.sessionId || "").trim();
+            windowId = String(message.windowId || "").trim();
+            logAgentSessionLockLifecycle("port active", { sessionId: activeSessionId, windowId });
+        }
+    });
+
+    port.onDisconnect.addListener(() => {
+        if (!activeSessionId || !windowId) return;
+        void releaseSessionLock(activeSessionId, windowId).then(() => {
+            logAgentSessionLockLifecycle("released by port disconnect", {
+                sessionId: activeSessionId,
+                windowId
+            });
+        });
+    });
+});
+
+chrome.windows?.onRemoved?.addListener((windowId) => {
+    void releaseSessionLocksForWindow(windowId).then((releasedCount) => {
+        logAgentSessionLockLifecycle("released by window removed", { windowId, releasedCount });
+    });
 });
 
 chrome.runtime.onInstalled.addListener(() => {

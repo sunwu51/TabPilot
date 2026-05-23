@@ -45,6 +45,25 @@ function App() {
     return () => chrome.storage.onChanged.removeListener(handleChange);
   }, []);
 
+  useEffect(() => {
+    async function handleRuntimeMessage(message) {
+      if (message?.type !== "focus_agent_panel") return;
+      const currentWindow = await chrome.windows.getCurrent();
+      if (String(currentWindow?.id || "") !== String(message.windowId || "")) return;
+      requestAnimationFrame(() => {
+        const agentPanel = document.querySelector(".agent-tab-panel");
+        const panels = Array.from(document.querySelectorAll(".tabs-panel, .tabs-panel-selected"));
+        const buttons = Array.from(document.querySelectorAll(".tabs-button-container button"));
+        const agentPanelWrapper = agentPanel?.closest(".tabs-panel, .tabs-panel-selected");
+        const agentIndex = panels.indexOf(agentPanelWrapper);
+        if (agentIndex >= 0) buttons[agentIndex]?.click();
+      });
+    }
+
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+  }, []);
+
   const tabs = [
     <TabsItem key="tab-mgr" title="标签管理">
       <div className="p-1 relative flex flex-col gap-2">
@@ -54,7 +73,7 @@ function App() {
         {betaFeaturesEnabled && <Macro />}
       </div>
     </TabsItem>,
-    <TabsItem key="agent" title="小助手">
+    <TabsItem key="agent" title="小助手" className="agent-tab-panel">
       <AgentPanel />
     </TabsItem>,
     bridgeEnabled ? (

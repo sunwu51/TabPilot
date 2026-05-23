@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from "react";
-import ChatMessage from "./ChatMessage";
+import ChatMessage, { EditableChatImage } from "./ChatMessage";
 
 const HIDDEN_TOOL_CARD_NAMES = new Set(["plan_create_for_session", "plan_update_for_session"]);
 
@@ -11,7 +11,8 @@ const ChatMessageList = memo(function ChatMessageList({
   searchState,
   imageEditingEnabled = false,
   onImageEditRequest,
-  imageSrcResolver
+  imageSrcResolver,
+  imageRefNavigator
 }) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
@@ -29,6 +30,7 @@ const ChatMessageList = memo(function ChatMessageList({
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
+              imageRefNavigator={imageRefNavigator}
             />
           );
         }
@@ -42,6 +44,7 @@ const ChatMessageList = memo(function ChatMessageList({
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
+              imageRefNavigator={imageRefNavigator}
             />
           );
         }
@@ -56,6 +59,7 @@ const ChatMessageList = memo(function ChatMessageList({
             imageEditingEnabled={imageEditingEnabled}
             onImageEditRequest={onImageEditRequest}
             imageSrcResolver={imageSrcResolver}
+            imageRefNavigator={imageRefNavigator}
           />
         );
       })}
@@ -65,7 +69,9 @@ const ChatMessageList = memo(function ChatMessageList({
   prevProps.messages === nextProps.messages &&
   prevProps.sessionId === nextProps.sessionId &&
   prevProps.searchState === nextProps.searchState &&
-  prevProps.imageEditingEnabled === nextProps.imageEditingEnabled
+  prevProps.imageEditingEnabled === nextProps.imageEditingEnabled &&
+  prevProps.imageSrcResolver === nextProps.imageSrcResolver &&
+  prevProps.imageRefNavigator === nextProps.imageRefNavigator
 );
 
 export default ChatMessageList;
@@ -78,7 +84,8 @@ function CollapsedToolGroup({
   sessionId = "",
   imageEditingEnabled = false,
   onImageEditRequest,
-  imageSrcResolver
+  imageSrcResolver,
+  imageRefNavigator
 }) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
@@ -104,6 +111,7 @@ function CollapsedToolGroup({
             imageEditingEnabled={imageEditingEnabled}
             onImageEditRequest={onImageEditRequest}
             imageSrcResolver={imageSrcResolver}
+            imageRefNavigator={imageRefNavigator}
           />
         </div>
       )}
@@ -118,7 +126,8 @@ function ToolMessageSequence({
   sessionId = "",
   imageEditingEnabled = false,
   onImageEditRequest,
-  imageSrcResolver
+  imageSrcResolver,
+  imageRefNavigator
 }) {
   return (
     <>
@@ -134,17 +143,18 @@ function ToolMessageSequence({
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
+              imageRefNavigator={imageRefNavigator}
             />
           );
         }
-        return <MergedToolCallBlock key={item.key || `tool-${index}`} item={item} />;
+        return <MergedToolCallBlock key={item.key || `tool-${index}`} item={item} sessionId={sessionId} imageRefNavigator={imageRefNavigator} />;
       })}
     </>
   );
 }
 
 /* eslint-disable react/prop-types */
-function MergedToolCallBlock({ item }) {
+function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
   const result = summarizeToolResultMessage(item.resultMessage);
@@ -175,18 +185,14 @@ function MergedToolCallBlock({ item }) {
       {pendingHint && <div className="tool-result-pending-hint loading-dots">{pendingHint}</div>}
       {expanded && result.displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
-          <img
+          <EditableChatImage
             src={result.displayImageUrl}
             alt={name || "tool screenshot"}
-            style={{
-              display: "block",
-              maxWidth: "100%",
-              width: "100%",
-              maxHeight: "420px",
-              objectFit: "contain",
-              borderRadius: "8px",
-              background: "#f5f5f5"
-            }}
+            refId={result.displayImageRef || ""}
+            sessionId={sessionId}
+            imageRefNavigator={imageRefNavigator}
+            wrapperClassName="chat-tool-image-wrap"
+            imageClassName="chat-tool-image"
           />
         </div>
       )}

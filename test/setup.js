@@ -45,7 +45,14 @@ export function resetChromeMock(initialStorage = {}) {
       sendMessage: vi.fn((message, callback) => {
         callback?.({ success: true, message });
       }),
+      connect: vi.fn(() => ({
+        name: "",
+        postMessage: vi.fn(),
+        disconnect: vi.fn(),
+        onDisconnect: { addListener: vi.fn(), removeListener: vi.fn() },
+      })),
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+      onConnect: { addListener: vi.fn(), removeListener: vi.fn() },
       onInstalled: { addListener: vi.fn() },
       onStartup: { addListener: vi.fn() },
     },
@@ -93,6 +100,7 @@ export function resetChromeMock(initialStorage = {}) {
     },
     windows: {
       getAll: makeAsyncCallback(() => []),
+      get: makeAsyncCallback((id) => ({ id })),
       getCurrent: makeAsyncCallback(() => ({ id: 1 })),
       update: makeAsyncCallback((id, updateInfo) => ({ id, ...updateInfo })),
       create: makeAsyncCallback((createData) => ({ id: 1, ...createData })),

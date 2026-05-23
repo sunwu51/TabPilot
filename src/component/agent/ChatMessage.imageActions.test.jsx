@@ -109,6 +109,44 @@ describe("ChatMessage image actions", () => {
     expect(createdUrl).not.toContain("data:image");
   });
 
+  it("navigates ref-backed preview images with side arrows", () => {
+    const imageRefNavigator = vi.fn((ref, direction) => {
+      if (ref === "img_9" && direction === "next") {
+        return { ref: "img_11", src: "data:image/png;base64,bmV4dA==" };
+      }
+      return null;
+    });
+
+    render(
+      <ChatMessage
+        msg={{
+          role: "user",
+          content: [{
+            type: "image",
+            ref: "img_9",
+            source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_9" }
+          }],
+          imageRefs: [{ ref: "img_9", dataUrl: "data:image/png;base64,dXNlcg==" }]
+        }}
+        sessionId="s_123"
+        imageRefNavigator={imageRefNavigator}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "预览 img_9" }));
+    const dialog = screen.getByRole("dialog", { name: "img_9 图片预览" });
+    expect(within(dialog).queryByRole("button", { name: "预览上一张 ref 图片" })).not.toBeInTheDocument();
+    const nextButton = within(dialog).getByRole("button", { name: "预览下一张 ref 图片" });
+    fireEvent.pointerDown(nextButton, { button: 0, pointerId: 1, clientX: 900, clientY: 300 });
+    fireEvent.click(nextButton);
+
+    expect(imageRefNavigator).toHaveBeenCalledWith("img_9", "next");
+    const nextDialog = screen.getByRole("dialog", { name: "img_11 图片预览" });
+    expect(within(nextDialog).getByRole("img", { name: "img_11" })).toHaveAttribute("src", "data:image/png;base64,bmV4dA==");
+    expect(within(nextDialog).queryByText("下一张")).not.toBeInTheDocument();
+    expect(within(nextDialog).queryByText("上一张")).not.toBeInTheDocument();
+  });
+
   it("opens http preview images directly when no ref is available", () => {
     render(
       <ChatMessage

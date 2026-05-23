@@ -202,28 +202,32 @@ export function buildAnthropicToolResultContentFromMessage(msg, options = {}) {
   ];
 }
 
-export function buildOpenAIToolResultContent(msg, options = {}) {
+export function buildOpenAIToolResultContent(msg) {
   const summary = normalizeToolSummary(parseToolMessageContent(msg.content));
-  const parsedImages = getToolResultParsedImages(msg);
-  if (parsedImages.length === 0 || !supportsToolImageInput(options)) {
-    return typeof summary === "string" ? summary : JSON.stringify(summary);
-  }
+  return typeof summary === "string" ? summary : JSON.stringify(summary);
+}
 
-  return [
-    {
-      type: "text",
-      text:
-        `Tool result for ${msg.tool_name || "unknown tool"}: ` +
-        JSON.stringify({ ...summary, imageAttachedToToolResult: true })
-    },
-    ...parsedImages.map(parsedImage => ({
-      type: "image_url",
-      image_url: {
-        url: parsedImage.url,
-        detail: "low"
-      }
-    }))
-  ];
+export function buildOpenAIToolResultImageUserMessage(msg, options = {}) {
+  const parsedImages = getToolResultParsedImages(msg);
+  if (parsedImages.length === 0 || !supportsToolImageInput(options)) return null;
+
+  const toolName = msg.tool_name || "unknown tool";
+  return {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `The following image${parsedImages.length > 1 ? "s are" : " is"} from the previous ${toolName} tool result.`
+      },
+      ...parsedImages.map(parsedImage => ({
+        type: "image_url",
+        image_url: {
+          url: parsedImage.url,
+          detail: "low"
+        }
+      }))
+    ]
+  };
 }
 
 export function getToolResultParsedImages(msg) {

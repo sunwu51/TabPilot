@@ -83,14 +83,17 @@ export async function claimSessionLock(sessionId, windowId, options = {}) {
   const now = Date.now();
   const locks = await loadSessionLocks();
   const existing = locks[normalizedSessionId];
+  const existingWindowId = normalizeWindowId(existing?.windowId);
   if (
     existing &&
-    normalizeWindowId(existing.windowId) &&
-    normalizeWindowId(existing.windowId) !== normalizedWindowId &&
+    existingWindowId &&
+    existingWindowId !== normalizedWindowId &&
     !isSessionLockExpired(existing, now) &&
     !options.force
   ) {
-    return { claimed: false, conflict: { ...existing, sessionId: normalizedSessionId } };
+    if (await sessionLockWindowExists(existingWindowId)) {
+      return { claimed: false, conflict: { ...existing, sessionId: normalizedSessionId } };
+    }
   }
   locks[normalizedSessionId] = { windowId: normalizedWindowId, updatedAt: now };
   await chrome.storage.local.set({ [SESSION_LOCKS_KEY]: locks });
@@ -112,18 +115,41 @@ export async function releaseSessionLock(sessionId, windowId) {
   }
 }
 
+export async function releaseSessionLocksForWindow(windowId) {
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedWindowId) return 0;
+  const locks = await loadSessionLocks();
+  let releasedCount = 0;
+  for (const [sessionId, lock] of Object.entries(locks)) {
+    if (normalizeWindowId(lock?.windowId) === normalizedWindowId) {
+      delete locks[sessionId];
+      releasedCount += 1;
+    }
+  }
+  if (releasedCount > 0) {
+    await chrome.storage.local.set({ [SESSION_LOCKS_KEY]: locks });
+  }
+  return releasedCount;
+}
+
 export async function isSessionLockedByOtherWindow(sessionId, windowId) {
   const normalizedSessionId = String(sessionId || "").trim();
   const normalizedWindowId = normalizeWindowId(windowId);
   if (!normalizedSessionId || !normalizedWindowId) return null;
   const locks = await loadSessionLocks();
   const existing = locks[normalizedSessionId];
+  const existingWindowId = normalizeWindowId(existing?.windowId);
   if (
     existing &&
-    normalizeWindowId(existing.windowId) &&
-    normalizeWindowId(existing.windowId) !== normalizedWindowId &&
+    existingWindowId &&
+    existingWindowId !== normalizedWindowId &&
     !isSessionLockExpired(existing)
   ) {
+    if (!(await sessionLockWindowExists(existingWindowId))) {
+      delete locks[normalizedSessionId];
+      await chrome.storage.local.set({ [SESSION_LOCKS_KEY]: locks });
+      return null;
+    }
     return { ...existing, sessionId: normalizedSessionId };
   }
   return null;
@@ -134,7 +160,7 @@ export async function pruneExpiredSessionLocks() {
   const now = Date.now();
   let changed = false;
   for (const [sessionId, lock] of Object.entries(locks)) {
-    if (isSessionLockExpired(lock, now)) {
+    if (isSessionLockExpired(lock, now) || !(await sessionLockWindowExists(lock?.windowId))) {
       delete locks[sessionId];
       changed = true;
     }
@@ -276,6 +302,17 @@ function normalizeWindowId(value) {
 function isSessionLockExpired(lock, now = Date.now()) {
   const updatedAt = Number(lock?.updatedAt || 0);
   return !updatedAt || now - updatedAt > SESSION_LOCK_TTL_MS;
+}
+
+async function sessionLockWindowExists(windowId) {
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedWindowId || !chrome?.windows?.get) return true;
+  try {
+    await chrome.windows.get(Number(normalizedWindowId));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
