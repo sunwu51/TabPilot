@@ -1372,6 +1372,26 @@ export default function AgentPanel() {
     return cache?.refs?.get(imageRef) || "";
   }
 
+  function navigateSessionImageRef(ref, direction) {
+    const imageRef = String(ref || "").trim();
+    if (!/^img_\d+$/.test(imageRef)) return null;
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return null;
+    const cache = sessionImageRefsRef.current.get(currentSessionId);
+    if (!(cache?.refs instanceof Map)) return null;
+
+    const refs = Array.from(cache.refs.entries())
+      .filter(([candidateRef, source]) => /^img_\d+$/.test(candidateRef) && isBase64DataUrl(source))
+      .sort(([a], [b]) => Number(a.slice(4)) - Number(b.slice(4)));
+    const currentIndex = refs.findIndex(([candidateRef]) => candidateRef === imageRef);
+    if (currentIndex < 0) return null;
+
+    const nextIndex = direction === "prev" ? currentIndex - 1 : currentIndex + 1;
+    const next = refs[nextIndex];
+    if (!next) return null;
+    return { ref: next[0], src: next[1] };
+  }
+
   async function loadSessionImagesIntoCache(targetSessionId, perf) {
     if (!targetSessionId) return false;
     const version = getSessionImageStoreVersion(targetSessionId);
@@ -3580,6 +3600,7 @@ export default function AgentPanel() {
                 imageEditingEnabled={imageEditingEnabled}
                 onImageEditRequest={openImageEditDialog}
                 imageSrcResolver={resolveSessionImageSrc}
+                imageRefNavigator={navigateSessionImageRef}
               />
               {streamingThinking !== null && streamingThinking.length > 0 && (
                 <AssistantThinkingBubble text={streamingThinking} />

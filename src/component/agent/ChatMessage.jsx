@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeImageRefSource, normalizeMessageImageRefs } from "./imageRefs";
 
 /**
@@ -23,7 +23,8 @@ const ChatMessage = memo(function ChatMessage({
   searchState,
   imageEditingEnabled = false,
   onImageEditRequest,
-  imageSrcResolver
+  imageSrcResolver,
+  imageRefNavigator
 }) {
   const { role, content } = msg;
   const messageSearchState = isSearchableChatMessage(msg)
@@ -89,6 +90,7 @@ const ChatMessage = memo(function ChatMessage({
                 sessionId={sessionId}
                 imageEditingEnabled={imageEditingEnabled}
                 onImageEditRequest={onImageEditRequest}
+                imageRefNavigator={imageRefNavigator}
               />
               <InjectedUserContextBlock context={injectedContext} />
             </div>
@@ -144,6 +146,7 @@ const ChatMessage = memo(function ChatMessage({
                 sessionId={sessionId}
                 imageEditingEnabled={imageEditingEnabled}
                 onImageEditRequest={onImageEditRequest}
+                imageRefNavigator={imageRefNavigator}
               />
             ))}
             <InjectedUserContextBlock context={injectedContext} />
@@ -161,7 +164,7 @@ const ChatMessage = memo(function ChatMessage({
 
   // Tool result message (OpenAI format)
   if (role === "tool") {
-    return <ToolResultBlock msg={msg} />;
+    return <ToolResultBlock msg={msg} sessionId={sessionId} imageRefNavigator={imageRefNavigator} />;
   }
 
   if (role === "error") {
@@ -186,6 +189,7 @@ const ChatMessage = memo(function ChatMessage({
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
+              imageRefNavigator={imageRefNavigator}
               sessionId={sessionId}
             />
           );
@@ -209,6 +213,7 @@ const ChatMessage = memo(function ChatMessage({
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
+              imageRefNavigator={imageRefNavigator}
               sessionId={sessionId}
             />
         );
@@ -242,6 +247,7 @@ const ChatMessage = memo(function ChatMessage({
           imageEditingEnabled={imageEditingEnabled}
           onImageEditRequest={onImageEditRequest}
           imageSrcResolver={imageSrcResolver}
+          imageRefNavigator={imageRefNavigator}
           sessionId={sessionId}
         />
       );
@@ -259,6 +265,7 @@ const ChatMessage = memo(function ChatMessage({
           imageEditingEnabled={imageEditingEnabled}
           onImageEditRequest={onImageEditRequest}
           imageSrcResolver={imageSrcResolver}
+          imageRefNavigator={imageRefNavigator}
           sessionId={sessionId}
         />
       );
@@ -284,7 +291,8 @@ function UserMultimodalContent({
   imageEditMeta,
   sessionId = "",
   imageEditingEnabled = false,
-  onImageEditRequest
+  onImageEditRequest,
+  imageRefNavigator
 }) {
   if (!Array.isArray(content)) return null;
   let displayedText = false;
@@ -320,6 +328,7 @@ function UserMultimodalContent({
                 sessionId={sessionId}
                 editable={imageEditingEnabled}
                 onEdit={onImageEditRequest}
+                imageRefNavigator={imageRefNavigator}
                 wrapperClassName="chat-user-image-wrap"
                 imageClassName="chat-user-image"
               />
@@ -335,6 +344,7 @@ function UserMultimodalContent({
           sessionId={sessionId}
           imageEditingEnabled={imageEditingEnabled}
           onImageEditRequest={onImageEditRequest}
+          imageRefNavigator={imageRefNavigator}
         />
       ))}
     </>
@@ -400,7 +410,7 @@ function normalizeImageEditPreviewImages(items = []) {
     .filter(item => item.dataUrl && ["edit_image", "edit_reference", "edit_mask"].includes(item.role));
 }
 
-function SupplementalUserImage({ image, sessionId = "", imageEditingEnabled = false, onImageEditRequest }) {
+function SupplementalUserImage({ image, sessionId = "", imageEditingEnabled = false, onImageEditRequest, imageRefNavigator }) {
   return (
     <div style={{ marginTop: "8px" }}>
       <div style={{ fontSize: "11px", lineHeight: 1.3, color: "#475569", marginBottom: "4px" }}>{image.label}</div>
@@ -411,6 +421,7 @@ function SupplementalUserImage({ image, sessionId = "", imageEditingEnabled = fa
         sessionId={sessionId}
         editable={imageEditingEnabled}
         onEdit={onImageEditRequest}
+        imageRefNavigator={imageRefNavigator}
         wrapperClassName="chat-user-image-wrap"
         imageClassName="chat-user-image"
       />
@@ -425,6 +436,7 @@ export function AssistantTextBubble({
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver,
+  imageRefNavigator,
   sessionId = ""
 }) {
   const [copied, setCopied] = useState(false);
@@ -471,6 +483,7 @@ export function AssistantTextBubble({
               imageEditingEnabled,
               onImageEditRequest,
               imageSrcResolver,
+              imageRefNavigator,
               sessionId
             })}
           >
@@ -612,7 +625,7 @@ function ThinkingBlock({ block }) {
 
 /** Collapsed block showing tool execution result (success or failure) */
 /* eslint-disable react/prop-types */
-function ToolResultBlock({ msg }) {
+function ToolResultBlock({ msg, sessionId = "", imageRefNavigator }) {
   const [expanded, setExpanded] = useState(false);
   const { content, displayImageUrl, tool_name: toolName, durationMs } = msg;
   const displayImages = Array.isArray(msg.displayImages) && msg.displayImages.length > 0
@@ -671,20 +684,15 @@ function ToolResultBlock({ msg }) {
       {expanded && displayImages.length > 0 && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
           {displayImages.map((src, index) => (
-            <img
+            <EditableChatImage
               key={`${src}-${index}`}
               src={src}
               alt={displayImages.length > 1 ? `${toolName || "tool image"} ${index + 1}` : (toolName || "tool screenshot")}
-              style={{
-                display: "block",
-                maxWidth: "100%",
-                width: "100%",
-                maxHeight: "420px",
-                objectFit: "contain",
-                borderRadius: "8px",
-                background: "#f5f5f5",
-                marginTop: index === 0 ? 0 : "8px"
-              }}
+              refId={getToolDisplayImageRef(msg, src)}
+              sessionId={sessionId}
+              imageRefNavigator={imageRefNavigator}
+              wrapperClassName={`chat-tool-image-wrap ${index > 0 ? "chat-tool-image-wrap-spaced" : ""}`}
+              imageClassName="chat-tool-image"
             />
           ))}
         </div>
@@ -694,6 +702,20 @@ function ToolResultBlock({ msg }) {
       )}
     </div>
   );
+}
+
+function getToolDisplayImageRef(msg, src) {
+  const imageSrc = normalizeImageRefSource(src);
+  if (!imageSrc) return "";
+  if (Array.isArray(msg?.displayImages)) {
+    const match = msg.displayImages.find(image => normalizeImageRefSource(image?.url) === imageSrc);
+    if (match?.ref) return match.ref;
+  }
+  if (normalizeImageRefSource(msg?.displayImageUrl) === imageSrc && msg?.displayImageRef) {
+    return msg.displayImageRef;
+  }
+  const refs = normalizeMessageImageRefs(msg?.imageRefs);
+  return refs.find(item => item.dataUrl === imageSrc)?.ref || "";
 }
 
 /* eslint-disable react/prop-types */
@@ -881,6 +903,7 @@ function buildAssistantMarkdownComponents({
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver,
+  imageRefNavigator,
   sessionId = ""
 } = {}) {
   return {
@@ -892,13 +915,14 @@ function buildAssistantMarkdownComponents({
         editable={imageEditingEnabled}
         onImageEditRequest={onImageEditRequest}
         imageSrcResolver={imageSrcResolver}
+        imageRefNavigator={imageRefNavigator}
         sessionId={sessionId}
       />
     )
   };
 }
 
-function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSrcResolver, sessionId = "", ...props }) {
+function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSrcResolver, imageRefNavigator, sessionId = "", ...props }) {
   delete props.node;
   const refId = extractImageDerefRef(src);
   const imageSrc = normalizeMarkdownImageSrc(src, imageSrcResolver);
@@ -913,25 +937,28 @@ function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSr
       sessionId={sessionId}
       editable={editable}
       onEdit={onImageEditRequest}
+      imageRefNavigator={imageRefNavigator}
       wrapperClassName="chat-assistant-image-wrap"
       imageClassName="chat-assistant-image"
     />
   );
 }
 
-function EditableChatImage({
+export function EditableChatImage({
   src,
   alt,
   refId,
   sessionId = "",
   editable = false,
   onEdit,
+  imageRefNavigator,
   wrapperClassName = "",
   imageClassName = "",
   ...imgProps
 }) {
   const isPendingSessionImage = typeof src === "string" && src.startsWith("session-image:");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState(() => ({ src, refId: refId || "", alt }));
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewFitZoom, setPreviewFitZoom] = useState(1);
   const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
@@ -939,8 +966,19 @@ function EditableChatImage({
   const previewStageRef = useRef(null);
   const previewDragRef = useRef(null);
   const canPreviewImage = !isPendingSessionImage && !!src;
-  const isHttpImageSrc = /^https?:\/\//i.test(String(src || ""));
-  const canOpenInNewTab = (!!sessionId && !!refId) || isHttpImageSrc;
+  const previewSrc = previewImage.src || src;
+  const previewRefId = previewImage.refId || "";
+  const previewAlt = previewImage.alt || alt || "图片";
+  const isPreviewHttpImageSrc = /^https?:\/\//i.test(String(previewSrc || ""));
+  const canNavigatePreviewRefs = !!previewRefId && typeof imageRefNavigator === "function";
+  const previewRefNavigation = useMemo(() => {
+    if (!canNavigatePreviewRefs) return { prev: null, next: null };
+    return {
+      prev: imageRefNavigator(previewRefId, "prev"),
+      next: imageRefNavigator(previewRefId, "next")
+    };
+  }, [canNavigatePreviewRefs, imageRefNavigator, previewRefId]);
+  const canOpenInNewTab = (!!sessionId && !!previewRefId) || isPreviewHttpImageSrc;
   const previewButtonLabel = refId || "预览";
   const previewButtonTitle = refId ? `预览 ${refId}` : "预览图片";
 
@@ -955,22 +993,12 @@ function EditableChatImage({
     event.preventDefault();
     event.stopPropagation();
     if (!canPreviewImage) return;
+    setPreviewImage({ src, refId: refId || "", alt });
     setPreviewZoom(1);
     setPreviewFitZoom(1);
     setPreviewOffset({ x: 0, y: 0 });
     setIsPreviewOpen(true);
   }
-
-  useEffect(() => {
-    if (!isPreviewOpen) return undefined;
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        setIsPreviewOpen(false);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPreviewOpen]);
 
   useEffect(() => {
     if (!isPreviewOpen) return undefined;
@@ -1014,7 +1042,7 @@ function EditableChatImage({
       image.removeEventListener("load", updateFitZoom);
       window.removeEventListener("resize", updateFitZoom);
     };
-  }, [isPreviewOpen, src]);
+  }, [isPreviewOpen, previewSrc]);
 
   function zoomBy(delta) {
     setPreviewZoom(current => clampImagePreviewZoom(current + delta));
@@ -1030,30 +1058,68 @@ function EditableChatImage({
     setPreviewOffset({ x: 0, y: 0 });
   }
 
+  const resetPreviewViewport = useCallback(() => {
+    setPreviewZoom(1);
+    setPreviewFitZoom(1);
+    setPreviewOffset({ x: 0, y: 0 });
+  }, []);
+
+  const navigatePreviewImage = useCallback((direction) => {
+    if (!canNavigatePreviewRefs) return;
+    const next = previewRefNavigation[direction];
+    if (!next?.ref || !next?.src) return;
+    setPreviewImage({
+      src: next.src,
+      refId: next.ref,
+      alt: next.ref
+    });
+    resetPreviewViewport();
+  }, [canNavigatePreviewRefs, previewRefNavigation, resetPreviewViewport]);
+
+  function stopPreviewNavPointer(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  useEffect(() => {
+    if (!isPreviewOpen) return undefined;
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsPreviewOpen(false);
+      } else if (event.key === "ArrowLeft") {
+        navigatePreviewImage("prev");
+      } else if (event.key === "ArrowRight") {
+        navigatePreviewImage("next");
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isPreviewOpen, navigatePreviewImage]);
+
   function getPreviewImageFilename() {
-    const base = String(refId || alt || "image")
+    const base = String(previewRefId || previewAlt || "image")
       .trim()
       .replace(/[\\/:*?"<>|]+/g, "-")
       .replace(/\s+/g, "-")
       .slice(0, 80) || "image";
-    return `${base}.${inferImageExtension(src)}`;
+    return `${base}.${inferImageExtension(previewSrc)}`;
   }
 
   async function openPreviewInNewTab() {
     if (!canOpenInNewTab) return;
-    if (isHttpImageSrc) {
+    if (isPreviewHttpImageSrc) {
       if (chrome?.tabs?.create) {
-        await chrome.tabs.create({ url: src });
+        await chrome.tabs.create({ url: previewSrc });
       } else {
-        window.open(src, "_blank", "noopener,noreferrer");
+        window.open(previewSrc, "_blank", "noopener,noreferrer");
       }
       return;
     }
     if (!chrome?.runtime?.getURL) return;
     const url = new URL(chrome.runtime.getURL("image-viewer.html"));
     url.searchParams.set("sessionId", sessionId);
-    url.searchParams.set("ref", refId);
-    url.searchParams.set("title", refId || alt || "图片预览");
+    url.searchParams.set("ref", previewRefId);
+    url.searchParams.set("title", previewRefId || previewAlt || "图片预览");
     if (chrome?.tabs?.create) {
       await chrome.tabs.create({ url: url.href });
     } else {
@@ -1062,7 +1128,7 @@ function EditableChatImage({
   }
 
   function savePreviewImage() {
-    const imageSrc = String(src || "");
+    const imageSrc = String(previewSrc || "");
     if (!imageSrc) return;
     const anchor = document.createElement("a");
     anchor.href = imageSrc;
@@ -1155,7 +1221,7 @@ function EditableChatImage({
           </span>
         )}
       </span>
-      {isPreviewOpen && !isPendingSessionImage && src && (
+      {isPreviewOpen && !isPendingSessionImage && previewSrc && (
         <div
           className="chat-image-preview-backdrop"
           onClick={() => setIsPreviewOpen(false)}
@@ -1164,11 +1230,11 @@ function EditableChatImage({
             className="chat-image-preview-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label={refId ? `${refId} 图片预览` : "图片预览"}
+            aria-label={previewRefId ? `${previewRefId} 图片预览` : "图片预览"}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="chat-image-preview-toolbar">
-              <div className="chat-image-preview-title">{refId || alt || "图片预览"}</div>
+              <div className="chat-image-preview-title">{previewRefId || previewAlt || "图片预览"}</div>
               <div className="chat-image-preview-controls">
                 <div className="chat-image-preview-control-row">
                   <div className="chat-image-preview-zoom-pair">
@@ -1201,10 +1267,40 @@ function EditableChatImage({
               onPointerUp={finishPreviewDrag}
               onPointerCancel={finishPreviewDrag}
             >
+              {(previewRefNavigation.prev || previewRefNavigation.next) && (
+                <>
+                  {previewRefNavigation.prev && (
+                    <button
+                      type="button"
+                      className="chat-image-preview-nav chat-image-preview-nav-prev"
+                      onPointerDown={stopPreviewNavPointer}
+                      onPointerMove={(event) => event.stopPropagation()}
+                      onPointerUp={(event) => event.stopPropagation()}
+                      onClick={(event) => { event.stopPropagation(); navigatePreviewImage("prev"); }}
+                      aria-label="预览上一张 ref 图片"
+                    >
+                      ‹
+                    </button>
+                  )}
+                  {previewRefNavigation.next && (
+                    <button
+                      type="button"
+                      className="chat-image-preview-nav chat-image-preview-nav-next"
+                      onPointerDown={stopPreviewNavPointer}
+                      onPointerMove={(event) => event.stopPropagation()}
+                      onPointerUp={(event) => event.stopPropagation()}
+                      onClick={(event) => { event.stopPropagation(); navigatePreviewImage("next"); }}
+                      aria-label="预览下一张 ref 图片"
+                    >
+                      ›
+                    </button>
+                  )}
+                </>
+              )}
               <img
                 ref={previewImageRef}
-                src={src}
-                alt={alt}
+                src={previewSrc}
+                alt={previewAlt}
                 className="chat-image-preview-image"
                 draggable={false}
                 style={{ transform: `translate(${previewOffset.x}px, ${previewOffset.y}px) scale(${previewZoom})` }}
