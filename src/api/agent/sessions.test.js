@@ -6,15 +6,21 @@ import {
   deleteSession,
   extractTitle,
   generateSessionId,
+  claimSessionLock,
+  isSessionLockedByOtherWindow,
   listSessions,
   loadLastActiveSessionId,
+  loadLastActiveSessionIdForWindow,
   loadDefaultNewSessionSystemPrompt,
   loadHydratedSession,
   loadSession,
   loadSessionImageStore,
   loadSessionMeta,
+  pruneExpiredSessionLocks,
+  releaseSessionLock,
   resetSessionTitle,
   saveLastActiveSessionId,
+  saveLastActiveSessionIdForWindow,
   saveDefaultNewSessionSystemPrompt,
   saveSession,
   saveSessionMeta,
@@ -68,6 +74,17 @@ describe("sessions storage", () => {
     expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }], nextImageRefIndex: 1 });
     const [entry] = await listSessions();
     expect(entry).toMatchObject({ title: "Auto title", startedAt: 100, updatedAt: 100 });
+  });
+
+  it("does not recreate a deleted session payload when saving after its index entry is gone", async () => {
+    resetChromeMock({
+      sessions_index: [{ id: "b", title: "B", updatedAt: 1, startedAt: 1 }]
+    });
+
+    await expect(saveSession("a", [{ role: "user", content: "orphan" }], "A")).resolves.toBe(false);
+
+    expect(await loadSession("a")).toEqual([]);
+    expect((await listSessions()).map(session => session.id)).toEqual(["b"]);
   });
 
   it("stores repeated base64 session images out of the main message payload", async () => {
@@ -272,6 +289,33 @@ describe("sessions storage", () => {
     expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
   });
 
+  it("keeps imageStore entries alive that are reachable through hydrated image refs", async () => {
+    const img1 = "data:image/png;base64,b25l";
+    const img2 = "data:image/png;base64,dHdv";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 3 },
+      session_a_images: { img_1: img1, img_2: img2 },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await saveSession("a", [{
+      role: "user",
+      imageRefs: [
+        { ref: "img_1", dataUrl: img1 },
+        { ref: "img_2", dataUrl: img2 }
+      ],
+      content: [
+        { type: "image", ref: "img_1", source: { type: "base64", media_type: "image/png", data: "b25l", ref: "img_1" } },
+        { type: "image", ref: "img_2", source: { type: "base64", media_type: "image/png", data: "dHdv", ref: "img_2" } }
+      ]
+    }], "A", { nextImageRefIndex: 3 });
+
+    expect(await loadSessionImageStore("a")).toEqual({ img_1: img1, img_2: img2 });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("preserves existing image store entries when saving placeholder-only image messages", async () => {
     const dataUrl = "data:image/png;base64,dXNlcg==";
     resetChromeMock({
@@ -414,6 +458,88 @@ describe("sessions storage", () => {
     expect(await loadLastActiveSessionId()).toBe("");
   });
 
+  it("loads, saves, and clears the per-window last active session id", async () => {
+    expect(await loadLastActiveSessionIdForWindow(7)).toBe("");
+
+    expect(await saveLastActiveSessionIdForWindow(7, "a")).toBe("a");
+    expect(await loadLastActiveSessionIdForWindow("7")).toBe("a");
+
+    expect(await saveLastActiveSessionIdForWindow(7, "")).toBe("");
+    expect(await loadLastActiveSessionIdForWindow(7)).toBe("");
+  });
+
+  it("claims session locks and reports conflicts from other windows", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+
+    expect(await claimSessionLock("a", 1)).toEqual({ claimed: true, conflict: null });
+    expect(await claimSessionLock("a", 1)).toEqual({ claimed: true, conflict: null });
+
+    const conflict = await claimSessionLock("a", 2);
+    expect(conflict).toEqual({
+      claimed: false,
+      conflict: { sessionId: "a", windowId: "1", updatedAt: 1000 }
+    });
+    expect(await isSessionLockedByOtherWindow("a", 2)).toEqual({
+      sessionId: "a",
+      windowId: "1",
+      updatedAt: 1000
+    });
+  });
+
+  it("allows expired session locks to be reclaimed", async () => {
+    resetChromeMock({
+      agent_session_locks: {
+        a: { windowId: "1", updatedAt: 1000 }
+      }
+    });
+    vi.spyOn(Date, "now").mockReturnValue(31_001);
+
+    expect(await claimSessionLock("a", 2)).toEqual({ claimed: true, conflict: null });
+    expect(await isSessionLockedByOtherWindow("a", 1)).toEqual({
+      sessionId: "a",
+      windowId: "2",
+      updatedAt: 31_001
+    });
+  });
+
+  it("releases session locks only from the owning window", async () => {
+    resetChromeMock({
+      agent_session_locks: {
+        a: { windowId: "1", updatedAt: 1000 }
+      }
+    });
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+
+    await releaseSessionLock("a", 2);
+    expect(await isSessionLockedByOtherWindow("a", 2)).toEqual({
+      sessionId: "a",
+      windowId: "1",
+      updatedAt: 1000
+    });
+
+    await releaseSessionLock("a", 1);
+    expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();
+  });
+
+  it("prunes expired session locks", async () => {
+    resetChromeMock({
+      agent_session_locks: {
+        stale: { windowId: "1", updatedAt: 1000 },
+        fresh: { windowId: "2", updatedAt: 30_000 }
+      }
+    });
+    vi.spyOn(Date, "now").mockReturnValue(31_001);
+
+    await pruneExpiredSessionLocks();
+
+    expect(await isSessionLockedByOtherWindow("stale", 3)).toBeNull();
+    expect(await isSessionLockedByOtherWindow("fresh", 3)).toEqual({
+      sessionId: "fresh",
+      windowId: "2",
+      updatedAt: 30_000
+    });
+  });
+
   it("clears the last active session id when deleting that session", async () => {
     resetChromeMock({
       agent_last_active_session_id: "a",
@@ -424,6 +550,30 @@ describe("sessions storage", () => {
     await deleteSession("a");
 
     expect(await loadLastActiveSessionId()).toBe("");
+  });
+
+  it("cleans lock and per-window last active state when deleting a session", async () => {
+    resetChromeMock({
+      agent_last_active_session_by_window: { 1: "a", 2: "b" },
+      agent_session_locks: {
+        a: { windowId: "1", updatedAt: 1000 },
+        b: { windowId: "2", updatedAt: 1000 }
+      },
+      session_a: { messages: [{ role: "user", content: "hello" }] },
+      sessions_index: [{ id: "a" }, { id: "b" }]
+    });
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+
+    await deleteSession("a");
+
+    expect(await loadLastActiveSessionIdForWindow(1)).toBe("");
+    expect(await loadLastActiveSessionIdForWindow(2)).toBe("b");
+    expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();
+    expect(await isSessionLockedByOtherWindow("b", 1)).toEqual({
+      sessionId: "b",
+      windowId: "2",
+      updatedAt: 1000
+    });
   });
 
   it("loads, saves, and clears default new-session system prompt", async () => {

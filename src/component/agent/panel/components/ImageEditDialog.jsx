@@ -9,11 +9,13 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   const [maskEnabled, setMaskEnabled] = useState(false);
   const [maskTouched, setMaskTouched] = useState(false);
   const [referenceImages, setReferenceImages] = useState([]);
+  const [referenceImagesLoading, setReferenceImagesLoading] = useState(false);
   const canvasRef = useRef(null);
   const referenceImageInputRef = useRef(null);
   const drawingRef = useRef(false);
   const maskPathsRef = useRef([]);
   const activeMaskPathRef = useRef([]);
+  const pendingReferenceImageBatchesRef = useRef(0);
   const maskSupported = request?.maskSupported !== false;
 
   useEffect(() => {
@@ -22,9 +24,11 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     setMaskEnabled(false);
     setMaskTouched(false);
     setReferenceImages([]);
+    setReferenceImagesLoading(false);
     drawingRef.current = false;
     maskPathsRef.current = [];
     activeMaskPathRef.current = [];
+    pendingReferenceImageBatchesRef.current = 0;
     clearMaskCanvas();
   }, [request?.src]);
 
@@ -42,20 +46,29 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     const imageFiles = Array.from(files || []).filter(isImageFile);
     if (imageFiles.length === 0) return;
 
+    pendingReferenceImageBatchesRef.current += 1;
+    setReferenceImagesLoading(true);
     const newItems = [];
-    for (const file of imageFiles) {
-      try {
-        const item = await imageFileToAttachmentItem(file);
-        if (item) newItems.push(item);
-      } catch (err) {
-        console.error("Failed to process reference image:", err);
-        setError(`参考图处理失败: ${file.name || "图片"}`);
+    try {
+      for (const file of imageFiles) {
+        try {
+          const item = await imageFileToAttachmentItem(file);
+          if (item) newItems.push(item);
+        } catch (err) {
+          console.error("Failed to process reference image:", err);
+          setError(`参考图处理失败: ${file.name || "图片"}`);
+        }
       }
-    }
 
-    if (newItems.length > 0) {
-      setReferenceImages(prev => [...prev, ...newItems]);
-      if (error) setError("");
+      if (newItems.length > 0) {
+        setReferenceImages(prev => [...prev, ...newItems]);
+        if (error) setError("");
+      }
+    } finally {
+      pendingReferenceImageBatchesRef.current = Math.max(0, pendingReferenceImageBatchesRef.current - 1);
+      if (pendingReferenceImageBatchesRef.current === 0) {
+        setReferenceImagesLoading(false);
+      }
     }
   }
 
@@ -234,6 +247,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   }
 
   function handleConfirm() {
+    if (referenceImagesLoading) return;
     const trimmed = suggestion.trim();
     if (!trimmed) {
       setError("请输入修改建议");
@@ -352,7 +366,13 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
           {error && <div className="image-edit-error">{error}</div>}
           <div className="image-edit-actions">
             <Button className="!text-xs" onPress={onCancel}>取消</Button>
-            <Button className="!text-xs" onPress={handleConfirm} isDisabled={disabled}>确认</Button>
+            <Button
+              className="!text-xs"
+              onPress={handleConfirm}
+              isDisabled={disabled || referenceImagesLoading}
+            >
+              {referenceImagesLoading ? "处理中..." : "确认"}
+            </Button>
           </div>
         </div>
       </div>

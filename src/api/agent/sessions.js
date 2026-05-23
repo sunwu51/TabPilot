@@ -2,6 +2,9 @@
 
 const DEFAULT_NEW_SESSION_SYSTEM_PROMPT_KEY = "agent_default_new_session_system_prompt";
 const LAST_ACTIVE_SESSION_ID_KEY = "agent_last_active_session_id";
+const LAST_ACTIVE_SESSION_BY_WINDOW_KEY = "agent_last_active_session_by_window";
+const SESSION_LOCKS_KEY = "agent_session_locks";
+const SESSION_LOCK_TTL_MS = 30 * 1000;
 
 /**
  * Generate a unique session ID: s_{timestamp}_{random4chars}
@@ -32,6 +35,14 @@ export async function loadLastActiveSessionId() {
   return typeof result[LAST_ACTIVE_SESSION_ID_KEY] === "string" ? result[LAST_ACTIVE_SESSION_ID_KEY] : "";
 }
 
+export async function loadLastActiveSessionIdForWindow(windowId) {
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedWindowId) return "";
+  const result = await chrome.storage.local.get({ [LAST_ACTIVE_SESSION_BY_WINDOW_KEY]: {} });
+  const value = result[LAST_ACTIVE_SESSION_BY_WINDOW_KEY];
+  return typeof value?.[normalizedWindowId] === "string" ? value[normalizedWindowId] : "";
+}
+
 /**
  * Persist the session ID that is currently being viewed in the assistant panel.
  * @param {string} id - session ID
@@ -44,6 +55,92 @@ export async function saveLastActiveSessionId(id) {
   }
   await chrome.storage.local.set({ [LAST_ACTIVE_SESSION_ID_KEY]: normalizedId });
   return normalizedId;
+}
+
+export async function saveLastActiveSessionIdForWindow(windowId, id) {
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedWindowId) return "";
+  const normalizedId = typeof id === "string" ? id : "";
+  const result = await chrome.storage.local.get({ [LAST_ACTIVE_SESSION_BY_WINDOW_KEY]: {} });
+  const next = result[LAST_ACTIVE_SESSION_BY_WINDOW_KEY] && typeof result[LAST_ACTIVE_SESSION_BY_WINDOW_KEY] === "object"
+    ? { ...result[LAST_ACTIVE_SESSION_BY_WINDOW_KEY] }
+    : {};
+  if (normalizedId) {
+    next[normalizedWindowId] = normalizedId;
+  } else {
+    delete next[normalizedWindowId];
+  }
+  await chrome.storage.local.set({ [LAST_ACTIVE_SESSION_BY_WINDOW_KEY]: next });
+  return normalizedId;
+}
+
+export async function claimSessionLock(sessionId, windowId, options = {}) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedSessionId || !normalizedWindowId) {
+    return { claimed: false, conflict: null };
+  }
+  const now = Date.now();
+  const locks = await loadSessionLocks();
+  const existing = locks[normalizedSessionId];
+  if (
+    existing &&
+    normalizeWindowId(existing.windowId) &&
+    normalizeWindowId(existing.windowId) !== normalizedWindowId &&
+    !isSessionLockExpired(existing, now) &&
+    !options.force
+  ) {
+    return { claimed: false, conflict: { ...existing, sessionId: normalizedSessionId } };
+  }
+  locks[normalizedSessionId] = { windowId: normalizedWindowId, updatedAt: now };
+  await chrome.storage.local.set({ [SESSION_LOCKS_KEY]: locks });
+  return { claimed: true, conflict: null };
+}
+
+export async function refreshSessionLock(sessionId, windowId) {
+  return claimSessionLock(sessionId, windowId, { force: false });
+}
+
+export async function releaseSessionLock(sessionId, windowId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedSessionId || !normalizedWindowId) return;
+  const locks = await loadSessionLocks();
+  if (normalizeWindowId(locks[normalizedSessionId]?.windowId) === normalizedWindowId) {
+    delete locks[normalizedSessionId];
+    await chrome.storage.local.set({ [SESSION_LOCKS_KEY]: locks });
+  }
+}
+
+export async function isSessionLockedByOtherWindow(sessionId, windowId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const normalizedWindowId = normalizeWindowId(windowId);
+  if (!normalizedSessionId || !normalizedWindowId) return null;
+  const locks = await loadSessionLocks();
+  const existing = locks[normalizedSessionId];
+  if (
+    existing &&
+    normalizeWindowId(existing.windowId) &&
+    normalizeWindowId(existing.windowId) !== normalizedWindowId &&
+    !isSessionLockExpired(existing)
+  ) {
+    return { ...existing, sessionId: normalizedSessionId };
+  }
+  return null;
+}
+
+export async function pruneExpiredSessionLocks() {
+  const locks = await loadSessionLocks();
+  const now = Date.now();
+  let changed = false;
+  for (const [sessionId, lock] of Object.entries(locks)) {
+    if (isSessionLockExpired(lock, now)) {
+      delete locks[sessionId];
+      changed = true;
+    }
+  }
+  if (changed) await chrome.storage.local.set({ [SESSION_LOCKS_KEY]: locks });
+  return locks;
 }
 
 /**
@@ -127,6 +224,10 @@ export async function loadSessionMeta(id) {
 export async function saveSession(id, messages, title, options = {}) {
   const key = `session_${id}`;
   const imageStoreKey = getSessionImageStoreKey(id);
+  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(s => s.id === id);
+  if (!entry) return false;
+
   const result = await chrome.storage.local.get({ [key]: {}, [imageStoreKey]: {} });
   const existingImageStore = result[imageStoreKey] && typeof result[imageStoreKey] === "object"
     ? result[imageStoreKey]
@@ -148,15 +249,11 @@ export async function saveSession(id, messages, title, options = {}) {
     [imageStoreKey]: imageStore || existingImageStore || {}
   });
 
-  // Update index entry
-  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
-  const entry = sessions_index.find(s => s.id === id);
-  if (entry) {
-    if (title && !entry.manualTitle) entry.title = title;
-    if (!entry.startedAt && messages && messages.length > 0) entry.startedAt = Date.now();
-    entry.updatedAt = Date.now();
-  }
+  if (title && !entry.manualTitle) entry.title = title;
+  if (!entry.startedAt && messages && messages.length > 0) entry.startedAt = Date.now();
+  entry.updatedAt = Date.now();
   await chrome.storage.local.set({ sessions_index });
+  return true;
 }
 
 const SESSION_IMAGE_STORE_REF_PREFIX = "session-image:";
@@ -165,24 +262,45 @@ function getSessionImageStoreKey(id) {
   return `session_${id}_images`;
 }
 
+async function loadSessionLocks() {
+  const result = await chrome.storage.local.get({ [SESSION_LOCKS_KEY]: {} });
+  const locks = result[SESSION_LOCKS_KEY];
+  return locks && typeof locks === "object" ? { ...locks } : {};
+}
+
+function normalizeWindowId(value) {
+  const raw = String(value ?? "").trim();
+  return raw && raw !== "-1" ? raw : "";
+}
+
+function isSessionLockExpired(lock, now = Date.now()) {
+  const updatedAt = Number(lock?.updatedAt || 0);
+  return !updatedAt || now - updatedAt > SESSION_LOCK_TTL_MS;
+}
+
 /**
  * Walk an arbitrary message tree and collect every imageStore key it still
- * points at. Two reference shapes are recognized:
+ * points at. Recognized reference shapes:
  *   - `block.source.ref` when `block.source.type === "session_image"`
+ *   - hydrated image refs such as `imageRefs[].ref`, `block.ref`, or
+ *     `block.source.ref` when paired with base64 payloads
  *   - any string of the form `session-image:img_X` in any object field
  * Used by the pre-sweep in compactSessionMessages to drop orphan entries
  * without touching anything that is legitimately reachable (including
- * un-hydrated messages produced during the openSession hydrate window).
+ * un-hydrated messages produced during the openSession hydrate window and
+ * hydrated messages already carrying inline base64 data).
  */
 function collectReferencedImageStoreKeys(messages) {
   const keys = new Set();
+  function addKey(value) {
+    const normalized = normalizeImageStoreKey(value);
+    if (normalized) keys.add(normalized);
+  }
   function visit(value, depth = 0) {
     if (depth > 12 || value == null) return;
     if (typeof value === "string") {
       if (value.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)) {
-        const key = value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length);
-        const normalized = normalizeImageStoreKey(key);
-        if (normalized) keys.add(normalized);
+        addKey(value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length));
       }
       return;
     }
@@ -192,8 +310,15 @@ function collectReferencedImageStoreKeys(messages) {
     }
     if (typeof value !== "object") return;
     if (value.type === "image" && value.source?.type === "session_image") {
-      const ref = normalizeImageStoreKey(value.source.ref);
-      if (ref) keys.add(ref);
+      addKey(value.source.ref);
+    }
+    if (value.type === "image" && value.source?.type === "base64") {
+      addKey(value.ref || value.source.ref);
+    }
+    if (Array.isArray(value.imageRefs)) {
+      for (const item of value.imageRefs) {
+        addKey(item?.ref);
+      }
     }
     for (const child of Object.values(value)) {
       visit(child, depth + 1);
@@ -565,6 +690,16 @@ export async function clearSessionKeywords(id) {
 export async function deleteSession(id) {
   const key = `session_${id}`;
   const lastActiveSessionId = await loadLastActiveSessionId();
+  const lastActiveByWindowResult = await chrome.storage.local.get({ [LAST_ACTIVE_SESSION_BY_WINDOW_KEY]: {} });
+  const lastActiveByWindow = lastActiveByWindowResult[LAST_ACTIVE_SESSION_BY_WINDOW_KEY];
+  const nextLastActiveByWindow = lastActiveByWindow && typeof lastActiveByWindow === "object"
+    ? { ...lastActiveByWindow }
+    : {};
+  for (const [windowId, sessionId] of Object.entries(nextLastActiveByWindow)) {
+    if (sessionId === id) delete nextLastActiveByWindow[windowId];
+  }
+  const locks = await loadSessionLocks();
+  if (locks[id]) delete locks[id];
   const keysToRemove = [
     key,
     getSessionImageStoreKey(id),
@@ -574,7 +709,11 @@ export async function deleteSession(id) {
 
   const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
   const updated = sessions_index.filter(s => s.id !== id);
-  await chrome.storage.local.set({ sessions_index: updated });
+  await chrome.storage.local.set({
+    sessions_index: updated,
+    [LAST_ACTIVE_SESSION_BY_WINDOW_KEY]: nextLastActiveByWindow,
+    [SESSION_LOCKS_KEY]: locks
+  });
 }
 
 /**

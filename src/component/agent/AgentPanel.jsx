@@ -25,10 +25,17 @@ import {
   loadSessionImageStore,
   loadSessionMeta,
   loadLastActiveSessionId,
+  loadLastActiveSessionIdForWindow,
   saveSession,
   saveSessionMeta,
   clearSessionKeywords,
   saveLastActiveSessionId,
+  saveLastActiveSessionIdForWindow,
+  claimSessionLock,
+  releaseSessionLock,
+  refreshSessionLock,
+  isSessionLockedByOtherWindow,
+  pruneExpiredSessionLocks,
   deleteSession,
   extractTitle,
   updateSessionTitle,
@@ -156,6 +163,7 @@ export { buildRewindRestoredAttachments, buildImageEditRewindHint };
 
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
 const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
@@ -355,6 +363,8 @@ export default function AgentPanel() {
   const inputResizeDragRef = useRef(null);
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
+  const currentWindowIdRef = useRef(null);
+  const defaultNewSessionSystemPromptRef = useRef({ sessionId: "", systemPrompt: "" });
   const sessionMessagesRef = useRef(new Map());
   const sessionImageRefsRef = useRef(new Map());
   const sessionNextImageRefIndexRef = useRef(new Map());
@@ -386,6 +396,10 @@ export default function AgentPanel() {
   const isMacPlatform = platformInfo?.os === "mac";
   const searchShortcutLabel = isMacPlatform ? "⌘⇧K" : "Alt+K";
   const clearShortcutLabel = isMacPlatform ? "⌘⇧Backspace" : "Alt+Backspace";
+
+  useEffect(() => {
+    defaultNewSessionSystemPromptRef.current = defaultNewSessionSystemPrompt;
+  }, [defaultNewSessionSystemPrompt]);
 
   useEffect(() => {
     if (!showAttachMenu) return;
@@ -557,39 +571,21 @@ export default function AgentPanel() {
   /** Initialize: load last session or create a new one */
   useEffect(() => {
     (async () => {
+      const currentWindowId = await getCurrentWindowId();
+      await pruneExpiredSessionLocks();
       const allSessions = await listSessions();
       const defaultSystemPrompt = await loadDefaultNewSessionSystemPrompt();
       setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
       setSessions(allSessions);
       if (allSessions.length > 0) {
-        // Restore the session that was being viewed last time the panel was closed.
-        const lastActiveSessionId = await loadLastActiveSessionId();
-        const restored = allSessions.find(session => session.id === lastActiveSessionId) || allSessions[0];
-        await openSession(restored.id);
-      } else {
-        // Create a fresh session
-        const id = generateSessionId();
-        await createSession(id, "新会话");
-        if (defaultSystemPrompt.systemPrompt) {
-          await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
+        const restored = await pickInitialUnlockedSession(allSessions, currentWindowId);
+        if (restored) {
+          await openSession(restored.id, { skipLockPrompt: true });
+        } else {
+          await createAndOpenFreshSession(defaultSystemPrompt);
         }
-        setSessionNextImageRefIndex(id, 1);
-        setSessionMessages(id, []);
-        sessionPlansRef.current.set(id, []);
-        activeSessionIdRef.current = id;
-        void saveLastActiveSessionId(id);
-        setSessionId(id);
-        setSessionTitle("新会话");
-        setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
-        setImageEditRequest(null);
-        applyLatestPlanFromPlans([]);
-        shouldAutoFollowBottomRef.current = true;
-        setShowJumpToBottom(false);
-        setContextUsage(null);
-        setRequestBodySize(null);
-        setMessages([]);
-        setLoading(false);
-        setSessions(await listSessions());
+      } else {
+        await createAndOpenFreshSession(defaultSystemPrompt);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -611,6 +607,20 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
+    const intervalId = setInterval(() => {
+      const currentSessionId = activeSessionIdRef.current;
+      const currentWindowId = currentWindowIdRef.current;
+      if (currentSessionId && currentWindowId) {
+        void refreshSessionLock(currentSessionId, currentWindowId);
+      }
+    }, SESSION_LOCK_HEARTBEAT_MS);
+    return () => {
+      clearInterval(intervalId);
+      void releaseCurrentSessionLock();
+    };
+  }, []);
+
+  useEffect(() => {
     chrome.runtime.getPlatformInfo((info) => {
       if (chrome.runtime.lastError) {
         console.error("Failed to get platform info:", chrome.runtime.lastError.message);
@@ -624,6 +634,7 @@ export default function AgentPanel() {
     void refreshLlmConfigInfo();
 
     function handleStorageChanged(changes, areaName) {
+      if (areaName !== "local") return;
       if (areaName === "local" && changes.llmConfig) {
         const nextConfig = changes.llmConfig.newValue || {};
         setLlmConfigInfo({
@@ -638,10 +649,21 @@ export default function AgentPanel() {
           imageToolsEnabled: isImageApiConfigured(nextConfig)
         });
       }
+      if (changes.sessions_index) {
+        const nextSessions = Array.isArray(changes.sessions_index.newValue)
+          ? changes.sessions_index.newValue
+          : [];
+        setSessions(nextSessions);
+        const currentSessionId = activeSessionIdRef.current;
+        if (currentSessionId && !nextSessions.some(session => session.id === currentSessionId)) {
+          void handleActiveSessionDeletedExternally(nextSessions);
+        }
+      }
     }
 
     chrome.storage?.onChanged?.addListener(handleStorageChanged);
     return () => chrome.storage?.onChanged?.removeListener(handleStorageChanged);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Close history dropdown when clicking outside */
@@ -772,6 +794,103 @@ export default function AgentPanel() {
       imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(llmConfig)
     });
+  }
+
+  async function getCurrentWindowId() {
+    if (currentWindowIdRef.current) return currentWindowIdRef.current;
+    const currentWindow = await chrome.windows.getCurrent();
+    const windowId = String(currentWindow?.id || "").trim();
+    currentWindowIdRef.current = windowId;
+    return windowId;
+  }
+
+  async function claimSessionForWindow(targetSessionId, { force = false } = {}) {
+    const windowId = await getCurrentWindowId();
+    if (!windowId || !targetSessionId) return { claimed: true, conflict: null };
+    return claimSessionLock(targetSessionId, windowId, { force });
+  }
+
+  async function releaseCurrentSessionLock() {
+    const currentSessionId = activeSessionIdRef.current;
+    const windowId = currentWindowIdRef.current;
+    if (currentSessionId && windowId) {
+      await releaseSessionLock(currentSessionId, windowId);
+    }
+  }
+
+  async function saveActiveSessionForWindow(targetSessionId) {
+    const windowId = await getCurrentWindowId();
+    void saveLastActiveSessionId(targetSessionId);
+    void saveLastActiveSessionIdForWindow(windowId, targetSessionId);
+  }
+
+  async function handleActiveSessionDeletedExternally(remainingSessions) {
+    const deletedSessionId = activeSessionIdRef.current;
+    if (!deletedSessionId) return;
+    await releaseCurrentSessionLock();
+    activeSessionIdRef.current = "";
+    stopSessionGeneration(deletedSessionId);
+    sessionMessagesRef.current.delete(deletedSessionId);
+    clearSessionImageState(deletedSessionId);
+    sessionPlansRef.current.delete(deletedSessionId);
+    sessionRuntimeRef.current.delete(deletedSessionId);
+
+    const windowId = await getCurrentWindowId();
+    const restored = await pickInitialUnlockedSession(remainingSessions, windowId);
+    if (restored) {
+      await openSession(restored.id, { skipLockPrompt: true });
+    } else {
+      await createAndOpenFreshSession(defaultNewSessionSystemPromptRef.current);
+    }
+  }
+
+  async function createAndOpenFreshSession(defaultSystemPrompt = { systemPrompt: "" }) {
+    const id = generateSessionId();
+    await createSession(id, "新会话");
+    if (defaultSystemPrompt.systemPrompt) {
+      await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
+    }
+    await claimSessionForWindow(id, { force: true });
+    setSessionNextImageRefIndex(id, 1);
+    setSessionMessages(id, []);
+    sessionPlansRef.current.set(id, []);
+    activeSessionIdRef.current = id;
+    await saveActiveSessionForWindow(id);
+    setSessionId(id);
+    setSessionTitle("新会话");
+    setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
+    setImageEditRequest(null);
+    applyLatestPlanFromPlans([]);
+    shouldAutoFollowBottomRef.current = true;
+    setShowJumpToBottom(false);
+    setContextUsage(null);
+    setRequestBodySize(null);
+    setMessages([]);
+    setLoading(false);
+    setSessions(await listSessions());
+    return id;
+  }
+
+  async function pickInitialUnlockedSession(allSessions, windowId) {
+    const windowLastActiveSessionId = await loadLastActiveSessionIdForWindow(windowId);
+    const globalLastActiveSessionId = await loadLastActiveSessionId();
+    const preferredIds = [
+      windowLastActiveSessionId,
+      globalLastActiveSessionId,
+      allSessions[0]?.id
+    ].filter(Boolean);
+    const candidates = [
+      ...preferredIds.map(id => allSessions.find(session => session.id === id)).filter(Boolean),
+      ...allSessions
+    ];
+    const seen = new Set();
+    for (const session of candidates) {
+      if (!session?.id || seen.has(session.id)) continue;
+      seen.add(session.id);
+      const conflict = await isSessionLockedByOtherWindow(session.id, windowId);
+      if (!conflict) return session;
+    }
+    return null;
   }
 
   /**
@@ -1354,7 +1473,21 @@ export default function AgentPanel() {
     };
   }
 
+  async function focusLockedSessionWindow(lockResult) {
+    const shouldFocus = window.confirm("其他窗口已经打开这个会话。是否切换到该窗口？");
+    if (shouldFocus && lockResult.conflict?.windowId) {
+      await chrome.windows.update(Number(lockResult.conflict.windowId), { focused: true });
+    }
+  }
+
   async function openSession(id, options = {}) {
+    if (!options.lockAlreadyClaimed) {
+      const lockResult = await claimSessionForWindow(id);
+      if (!lockResult.claimed) {
+        if (!options.skipLockPrompt) await focusLockedSessionWindow(lockResult);
+        return false;
+      }
+    }
     const perf = startSessionSwitchPerf(id, {
       fromSessionId: activeSessionIdRef.current || "",
       cached: sessionMessagesRef.current.has(id)
@@ -1385,12 +1518,16 @@ export default function AgentPanel() {
     perf.attachMessageStats(msgs);
     const shouldMigrateInlineImages = hasInlineBase64SessionImages(msgs);
     setSessionNextImageRefIndex(id, meta.nextImageRefIndex);
+    const previousSessionId = activeSessionIdRef.current;
+    if (previousSessionId && previousSessionId !== id) {
+      void releaseSessionLock(previousSessionId, currentWindowIdRef.current);
+    }
     activeSessionIdRef.current = id;
     perf.mark("before-setSessionMessages");
     setSessionMessages(id, msgs);
     perf.mark("after-setSessionMessages");
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
-    void saveLastActiveSessionId(id);
+    await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
     setSessionSystemPrompt(meta.systemPrompt || "");
@@ -1420,6 +1557,7 @@ export default function AgentPanel() {
         console.error("Failed to migrate session image storage:", error);
       });
     }
+    return true;
   }
 
   function stopSessionGeneration(targetSessionId) {
@@ -1778,12 +1916,16 @@ export default function AgentPanel() {
     if (defaultSystemPrompt.systemPrompt) {
       await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
     }
+    await claimSessionForWindow(id, { force: true });
+    if (currentSessionId) {
+      await releaseSessionLock(currentSessionId, currentWindowIdRef.current);
+    }
     setSessionNextImageRefIndex(id, 1);
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
-    void saveLastActiveSessionId(id);
+    await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle("新会话");
     setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
@@ -1809,6 +1951,12 @@ export default function AgentPanel() {
 
   /** Switch to a historical session */
   async function switchSession(id, options = {}) {
+    if (activeSessionIdRef.current === id) return;
+    const lockResult = await claimSessionForWindow(id);
+    if (!lockResult.claimed) {
+      await focusLockedSessionWindow(lockResult);
+      return;
+    }
     // Save current session first
     const currentSessionId = activeSessionIdRef.current;
     if (currentSessionId && currentSessionId !== id) {
@@ -1817,14 +1965,24 @@ export default function AgentPanel() {
         await autoSave(currentSessionId, currentMessages);
       }
     }
-    await openSession(id, options);
+    if (currentSessionId && currentSessionId !== id) {
+      await releaseSessionLock(currentSessionId, currentWindowIdRef.current);
+    }
+    await openSession(id, { ...options, lockAlreadyClaimed: true });
   }
 
   /** Delete a session from history */
   async function handleDeleteSession(id, e) {
     e.stopPropagation();
+    const deletingCurrentSession = id === activeSessionIdRef.current;
     stopSessionGeneration(id);
 
+    if (deletingCurrentSession) {
+      await releaseCurrentSessionLock();
+      activeSessionIdRef.current = "";
+    } else {
+      await releaseSessionLock(id, currentWindowIdRef.current);
+    }
     sessionMessagesRef.current.delete(id);
     clearSessionImageState(id);
     sessionPlansRef.current.delete(id);
@@ -1833,11 +1991,17 @@ export default function AgentPanel() {
     const updated = await listSessions();
     setSessions(updated);
     // If deleted the current session, switch to another or create new
-    if (id === sessionId) {
+    if (deletingCurrentSession) {
       if (updated.length > 0) {
-        await switchSession(updated[0].id);
+        const windowId = await getCurrentWindowId();
+        const restored = await pickInitialUnlockedSession(updated, windowId);
+        if (restored) {
+          await openSession(restored.id, { skipLockPrompt: true });
+        } else {
+          await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
+        }
       } else {
-        await handleNewSession();
+        await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
       }
     }
   }
@@ -3324,6 +3488,7 @@ export default function AgentPanel() {
           ) : (
             <>
               <ChatMessageList
+                sessionId={sessionId || ""}
                 messages={messages}
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}

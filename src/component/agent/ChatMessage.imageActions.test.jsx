@@ -1,3 +1,4 @@
+/* global chrome */
 /* eslint-disable react/prop-types */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -77,5 +78,58 @@ describe("ChatMessage image actions", () => {
 
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭图片预览" }));
     expect(screen.queryByRole("dialog", { name: "img_9 图片预览" })).not.toBeInTheDocument();
+  });
+
+  it("opens preview images in a storage-backed viewer tab", async () => {
+    render(
+      <ChatMessage
+        msg={{
+          role: "user",
+          content: [{
+            type: "image",
+            ref: "img_9",
+            source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_9" }
+          }],
+          imageRefs: [{ ref: "img_9", dataUrl: "data:image/png;base64,dXNlcg==" }]
+        }}
+        sessionId="s_123"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "预览 img_9" }));
+    const dialog = screen.getByRole("dialog", { name: "img_9 图片预览" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "在新标签中打开图片" }));
+
+    expect(await screen.findByRole("dialog", { name: "img_9 图片预览" })).toBeInTheDocument();
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+    const createdUrl = chrome.tabs.create.mock.calls.at(-1)[0].url;
+    expect(createdUrl).toContain("chrome-extension://test-extension/image-viewer.html?");
+    expect(createdUrl).toContain("sessionId=s_123");
+    expect(createdUrl).toContain("ref=img_9");
+    expect(createdUrl).not.toContain("data:image");
+  });
+
+  it("opens http preview images directly when no ref is available", () => {
+    render(
+      <ChatMessage
+        msg={{
+          role: "user",
+          content: "编辑图片：参考网络图片",
+          imageEditMeta: {
+            kind: "image_edit",
+            images: [
+              { dataUrl: "https://example.com/reference.png", role: "edit_reference" }
+            ]
+          }
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "预览图片" }));
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "在新标签中打开图片" }));
+
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://example.com/reference.png" });
   });
 });

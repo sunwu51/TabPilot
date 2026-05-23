@@ -41,6 +41,7 @@ export function resetChromeMock(initialStorage = {}) {
     runtime: {
       lastError: null,
       getURL: vi.fn((path = "") => `chrome-extension://test-extension/${String(path).replace(/^\/+/, "")}`),
+      getPlatformInfo: makeAsyncCallback(() => ({ os: "win" })),
       sendMessage: vi.fn((message, callback) => {
         callback?.({ success: true, message });
       }),
@@ -129,6 +130,10 @@ export function resetChromeMock(initialStorage = {}) {
   };
 
   return storageData;
+}
+
+export function getChromeStorageSnapshot() {
+  return clone(storageData);
 }
 
 beforeEach(() => {
