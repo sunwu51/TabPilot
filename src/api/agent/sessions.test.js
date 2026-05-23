@@ -272,6 +272,33 @@ describe("sessions storage", () => {
     expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
   });
 
+  it("keeps imageStore entries alive that are reachable through hydrated image refs", async () => {
+    const img1 = "data:image/png;base64,b25l";
+    const img2 = "data:image/png;base64,dHdv";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 3 },
+      session_a_images: { img_1: img1, img_2: img2 },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await saveSession("a", [{
+      role: "user",
+      imageRefs: [
+        { ref: "img_1", dataUrl: img1 },
+        { ref: "img_2", dataUrl: img2 }
+      ],
+      content: [
+        { type: "image", ref: "img_1", source: { type: "base64", media_type: "image/png", data: "b25l", ref: "img_1" } },
+        { type: "image", ref: "img_2", source: { type: "base64", media_type: "image/png", data: "dHdv", ref: "img_2" } }
+      ]
+    }], "A", { nextImageRefIndex: 3 });
+
+    expect(await loadSessionImageStore("a")).toEqual({ img_1: img1, img_2: img2 });
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("preserves existing image store entries when saving placeholder-only image messages", async () => {
     const dataUrl = "data:image/png;base64,dXNlcg==";
     resetChromeMock({

@@ -167,22 +167,27 @@ function getSessionImageStoreKey(id) {
 
 /**
  * Walk an arbitrary message tree and collect every imageStore key it still
- * points at. Two reference shapes are recognized:
+ * points at. Recognized reference shapes:
  *   - `block.source.ref` when `block.source.type === "session_image"`
+ *   - hydrated image refs such as `imageRefs[].ref`, `block.ref`, or
+ *     `block.source.ref` when paired with base64 payloads
  *   - any string of the form `session-image:img_X` in any object field
  * Used by the pre-sweep in compactSessionMessages to drop orphan entries
  * without touching anything that is legitimately reachable (including
- * un-hydrated messages produced during the openSession hydrate window).
+ * un-hydrated messages produced during the openSession hydrate window and
+ * hydrated messages already carrying inline base64 data).
  */
 function collectReferencedImageStoreKeys(messages) {
   const keys = new Set();
+  function addKey(value) {
+    const normalized = normalizeImageStoreKey(value);
+    if (normalized) keys.add(normalized);
+  }
   function visit(value, depth = 0) {
     if (depth > 12 || value == null) return;
     if (typeof value === "string") {
       if (value.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)) {
-        const key = value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length);
-        const normalized = normalizeImageStoreKey(key);
-        if (normalized) keys.add(normalized);
+        addKey(value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length));
       }
       return;
     }
@@ -192,8 +197,15 @@ function collectReferencedImageStoreKeys(messages) {
     }
     if (typeof value !== "object") return;
     if (value.type === "image" && value.source?.type === "session_image") {
-      const ref = normalizeImageStoreKey(value.source.ref);
-      if (ref) keys.add(ref);
+      addKey(value.source.ref);
+    }
+    if (value.type === "image" && value.source?.type === "base64") {
+      addKey(value.ref || value.source.ref);
+    }
+    if (Array.isArray(value.imageRefs)) {
+      for (const item of value.imageRefs) {
+        addKey(item?.ref);
+      }
     }
     for (const child of Object.values(value)) {
       visit(child, depth + 1);
