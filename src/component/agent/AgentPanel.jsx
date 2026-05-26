@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
@@ -1363,16 +1363,16 @@ export default function AgentPanel() {
     };
   }, []);
 
-  function resolveSessionImageSrc(ref) {
+  const resolveSessionImageSrc = useCallback((ref) => {
     const imageRef = String(ref || "").trim();
     if (!IMAGE_REF_PATTERN.test(imageRef)) return "";
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return "";
     const cache = sessionImageRefsRef.current.get(currentSessionId);
     return cache?.refs?.get(imageRef) || "";
-  }
+  }, []);
 
-  function navigateSessionImageRef(ref, direction) {
+  const navigateSessionImageRef = useCallback((ref, direction) => {
     const imageRef = String(ref || "").trim();
     if (!/^img_\d+$/.test(imageRef)) return null;
     const currentSessionId = activeSessionIdRef.current;
@@ -1390,7 +1390,7 @@ export default function AgentPanel() {
     const next = refs[nextIndex];
     if (!next) return null;
     return { ref: next[0], src: next[1] };
-  }
+  }, []);
 
   async function loadSessionImagesIntoCache(targetSessionId, perf) {
     if (!targetSessionId) return false;
