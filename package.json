@@ -20,6 +20,7 @@
     "react-hot-toast": "^2.4.1",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
+    "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {

@@ -2211,6 +2211,7 @@ export default function AgentPanel() {
       `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
       `- To show an image ref to the user, render it with Markdown image syntax as ![image](|deRef:img_1|). Do not paste or copy base64 into your message. The host system will resolve the ref only for the visual preview.\n` +
       `- If an image-generation tool returns only a public image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
+      `- If a tool returns an audio URL and you want to show it to the user for direct playback, output exactly <audio controls src="https://example.com/audio.mp3"></audio>. Only use http or https audio URLs in this tag.\n` +
       `- Respond in the same language as the user.` +
       currentSessionSystemPrompt +
       buildSkillsSystemPrompt(agentSkills) +

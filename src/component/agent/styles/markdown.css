@@ -123,6 +123,7 @@
 .chat-bubble-copy-row {
   display: flex;
   justify-content: flex-end;
+  gap: 6px;
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid #e5e7eb;
@@ -153,6 +154,13 @@
   color: #16a34a;
 }
 
+.chat-bubble-speak-btn-active,
+.chat-bubble-speak-btn-active:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
 .chat-bubble-assistant table {
   border-collapse: collapse;
   margin: 8px 0;
@@ -174,5 +182,11 @@
 
 .chat-bubble-assistant strong {
   font-weight: 700;
+}
+
+.chat-assistant-audio {
+  display: block;
+  width: min(100%, 360px);
+  margin: 8px 0;
 }
 
