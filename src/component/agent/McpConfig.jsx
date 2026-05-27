@@ -356,6 +356,13 @@ export default function McpConfig({ onToolsChanged }) {
             </div>
             {expandedServers[s.id] && s.tools?.length > 0 && (
               <div className="mt-2 border-t border-gray-100 pt-2 flex flex-col gap-2 min-w-0">
+                <div
+                  className="text-xs text-gray-500 break-all whitespace-normal"
+                  style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+                  title={s.url}
+                >
+                  HTTP URL：{s.url || "—"}
+                </div>
                 {[...s.tools].sort((a, b) => {
                   const aNest = !!getToolSetting(s, a.name).nesting;
                   const bNest = !!getToolSetting(s, b.name).nesting;

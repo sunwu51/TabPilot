@@ -981,7 +981,8 @@ export default function AgentPanel() {
       const latestState = sessionSaveStateRef.current.get(targetSessionId);
       if (!latestState || latestState.version !== version) return;
       await saveSession(targetSessionId, messagesToSave, title, {
-        nextImageRefIndex: getSessionNextImageRefIndex(targetSessionId)
+        nextImageRefIndex: getSessionNextImageRefIndex(targetSessionId),
+        contextUsage: getSessionRuntime(targetSessionId).contextUsage || getLatestContextUsageFromMessages(messagesToSave, llmConfigInfo)
       });
       const latestSessions = await listSessions();
       setSessions(latestSessions);
@@ -3365,8 +3366,10 @@ export default function AgentPanel() {
   const pendingApprovalMeta = pendingApproval?.approvalMeta || getDangerousToolMeta(pendingApproval?.toolCall);
   const filteredSlashCommands = getFilteredSlashCommands();
   const filteredMentionTabs = getFilteredMentionTabs();
-  const contextUsageWarning = isContextUsageWarning(contextUsage, llmConfigInfo.modelContextLimitTokens);
-  const contextStatusTitle = `上下文：${formatContextUsageK(contextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
+  const displayContextUsage = contextUsage || (loading ? getLatestContextUsageFromMessages(messages, llmConfigInfo) : null);
+  const hasHistoryContextUsage = (usage) => usage?.usageStatus === "unrecognized" || Number.isFinite(Number(usage?.tokens));
+  const contextUsageWarning = isContextUsageWarning(displayContextUsage, llmConfigInfo.modelContextLimitTokens);
+  const contextStatusTitle = `上下文：${formatContextUsageK(displayContextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
   const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
   const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
   const requestBodySizeTitle = `请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`;
@@ -3517,7 +3520,15 @@ export default function AgentPanel() {
                           ))}
                         </span>
                       )}
-                      <span className="chat-history-item-time">{formatTime(s.startedAt || s.updatedAt)}</span>
+                      <span className="chat-history-item-time">
+                        {formatTime(s.startedAt || s.updatedAt)}
+                        {hasHistoryContextUsage(s.contextUsage) && (
+                          <>
+                            {" · "}
+                            上下文：{formatContextUsageK(s.contextUsage)}
+                          </>
+                        )}
+                      </span>
                     </div>
                     <button
                       className="chat-history-item-delete"
@@ -3854,7 +3865,7 @@ export default function AgentPanel() {
                 className={`chat-input-status-context${contextUsageWarning ? " chat-input-status-context-warning" : ""}`}
                 title={contextStatusTitle}
               >
-                上下文：{formatContextUsageK(contextUsage)}
+                上下文：{formatContextUsageK(displayContextUsage)}
               </span>
             </div>
             <div className="chat-input-actions">
