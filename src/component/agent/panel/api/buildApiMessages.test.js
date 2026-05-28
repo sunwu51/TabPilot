@@ -10,6 +10,59 @@ describe("buildApiMessages image options", () => {
     content: JSON.stringify({ success: true }),
     displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
   };
+  const userImageMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "look" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "dXNlcg==" } }
+    ]
+  };
+
+  it("keeps OpenAI Chat user images by default", () => {
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [userImageMessage]);
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,dXNlcg==", detail: "low" }
+        }
+      ]
+    }]);
+  });
+
+  it("keeps Anthropic user images by default", () => {
+    const result = buildApiMessages(API_TYPES.ANTHROPIC, [userImageMessage]);
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "dXNlcg==" }
+        }
+      ]
+    }]);
+  });
+
+  it("omits user images only when image input is explicitly disabled", () => {
+    expect(buildApiMessages(API_TYPES.OPENAI_CHAT, [userImageMessage], {
+      supportsImageInput: false
+    })).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "look" }]
+    }]);
+
+    expect(buildApiMessages(API_TYPES.ANTHROPIC, [userImageMessage], {
+      supportsImageInput: false
+    })).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "look" }]
+    }]);
+  });
 
   it("sends OpenAI Chat tool result images through a follow-up user message", () => {
     const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [

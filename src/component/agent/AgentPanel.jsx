@@ -2408,7 +2408,13 @@ export default function AgentPanel() {
   async function runConversation(config, targetSessionId, conversationMessages, runId) {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt();
-    const apiConversationMessages = buildApiMessages(config.apiType, conversationMessages, {
+    await loadSessionImagesIntoCache(targetSessionId);
+    if (!isCurrentRun(targetSessionId, runId)) return;
+    const requestConversationMessages = hydrateStoredImageRefsInMessages(
+      targetSessionId,
+      attachKnownImageRefsToMessages(targetSessionId, conversationMessages)
+    );
+    const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
       supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true

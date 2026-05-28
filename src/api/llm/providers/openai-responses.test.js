@@ -219,6 +219,83 @@ describe("OpenAI responses reasoning helpers", () => {
     ]);
   });
 
+  it("sends hydrated user image blocks as responses input images", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "dXNlcg==",
+              ref: "img_1"
+            }
+          }
+        ]
+      }
+    ]);
+
+    expect(result.input).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "look" },
+          { type: "input_image", image_url: "data:image/png;base64,dXNlcg==" }
+        ]
+      }
+    ]);
+  });
+
+  it("omits responses user image blocks only when image input is explicitly disabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "dXNlcg==" }
+          }
+        ]
+      }
+    ], { supportsImageInput: false });
+
+    expect(result.input).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "look" }]
+      }
+    ]);
+  });
+
+  it("does not send unhydrated session image placeholders as responses input images", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          {
+            type: "image",
+            source: { type: "session_image", ref: "img_1", media_type: "image/png" }
+          }
+        ]
+      }
+    ]);
+
+    expect(result.input).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "look" }]
+      }
+    ]);
+  });
+
   it("keeps user image support while omitting display images when tool image input is disabled", () => {
     const result = buildResponsesRequestInput([
       {
@@ -300,6 +377,58 @@ describe("OpenAI responses reasoning helpers", () => {
         call_id: "call_123",
         output: "done\n[omitted image from previous tool output]"
       }
+    ]);
+  });
+
+  it("sends hydrated tool result image refs as structured responses output images", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: "done",
+        displayImages: [{ url: "data:image/png;base64,dG9vbA==", ref: "img_2" }]
+      }
+    ], { supportsImageInput: true, supportsToolImageInput: true });
+
+    expect(result.input).toEqual([
+      {
+        type: "function_call_output",
+        call_id: "call_123",
+        output: [
+          { type: "input_text", text: "done" },
+          { type: "input_image", image_url: "data:image/png;base64,dG9vbA==", detail: "low" }
+        ]
+      }
+    ]);
+  });
+
+  it("does not send unhydrated tool result image refs as structured responses output images", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: "done",
+        displayImages: [{ url: "session-image:img_2", ref: "img_2" }]
+      }
+    ], { supportsImageInput: true, supportsToolImageInput: true });
+
+    expect(result.input).toEqual([
+      { type: "function_call_output", call_id: "call_123", output: "done" }
+    ]);
+  });
+
+  it("keeps hydrated tool result image refs out when responses tool image input is disabled", () => {
+    const result = buildResponsesRequestInput([
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: "done",
+        displayImages: [{ url: "data:image/png;base64,dG9vbA==", ref: "img_2" }]
+      }
+    ], { supportsImageInput: true, supportsToolImageInput: false });
+
+    expect(result.input).toEqual([
+      { type: "function_call_output", call_id: "call_123", output: "done" }
     ]);
   });
 
