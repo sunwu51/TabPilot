@@ -45,6 +45,7 @@ async function _openaiComplete(config, messages, options = {}) {
       messages,
       stream: false,
       max_tokens: 600,
+      enable_thinking: false,
       ...buildOpenAICacheFields(options)
     }),
   });
