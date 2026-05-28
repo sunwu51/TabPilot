@@ -981,7 +981,8 @@ export default function AgentPanel() {
       const latestState = sessionSaveStateRef.current.get(targetSessionId);
       if (!latestState || latestState.version !== version) return;
       await saveSession(targetSessionId, messagesToSave, title, {
-        nextImageRefIndex: getSessionNextImageRefIndex(targetSessionId)
+        nextImageRefIndex: getSessionNextImageRefIndex(targetSessionId),
+        contextUsage: getSessionRuntime(targetSessionId).contextUsage || getLatestContextUsageFromMessages(messagesToSave, llmConfigInfo)
       });
       const latestSessions = await listSessions();
       setSessions(latestSessions);
@@ -2211,6 +2212,7 @@ export default function AgentPanel() {
       `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
       `- To show an image ref to the user, render it with Markdown image syntax as ![image](|deRef:img_1|). Do not paste or copy base64 into your message. The host system will resolve the ref only for the visual preview.\n` +
       `- If an image-generation tool returns only a public image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
+      `- If a tool returns an audio URL and you want to show it to the user for direct playback, output exactly <audio controls src="https://example.com/audio.mp3"></audio>. Only use http or https audio URLs in this tag.\n` +
       `- Respond in the same language as the user.` +
       currentSessionSystemPrompt +
       buildSkillsSystemPrompt(agentSkills) +
@@ -2406,7 +2408,13 @@ export default function AgentPanel() {
   async function runConversation(config, targetSessionId, conversationMessages, runId) {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt();
-    const apiConversationMessages = buildApiMessages(config.apiType, conversationMessages, {
+    await loadSessionImagesIntoCache(targetSessionId);
+    if (!isCurrentRun(targetSessionId, runId)) return;
+    const requestConversationMessages = hydrateStoredImageRefsInMessages(
+      targetSessionId,
+      attachKnownImageRefsToMessages(targetSessionId, conversationMessages)
+    );
+    const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
       supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true
@@ -3364,8 +3372,10 @@ export default function AgentPanel() {
   const pendingApprovalMeta = pendingApproval?.approvalMeta || getDangerousToolMeta(pendingApproval?.toolCall);
   const filteredSlashCommands = getFilteredSlashCommands();
   const filteredMentionTabs = getFilteredMentionTabs();
-  const contextUsageWarning = isContextUsageWarning(contextUsage, llmConfigInfo.modelContextLimitTokens);
-  const contextStatusTitle = `上下文：${formatContextUsageK(contextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
+  const displayContextUsage = contextUsage || (loading ? getLatestContextUsageFromMessages(messages, llmConfigInfo) : null);
+  const hasHistoryContextUsage = (usage) => usage?.usageStatus === "unrecognized" || Number.isFinite(Number(usage?.tokens));
+  const contextUsageWarning = isContextUsageWarning(displayContextUsage, llmConfigInfo.modelContextLimitTokens);
+  const contextStatusTitle = `上下文：${formatContextUsageK(displayContextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
   const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
   const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
   const requestBodySizeTitle = `请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`;
@@ -3516,7 +3526,15 @@ export default function AgentPanel() {
                           ))}
                         </span>
                       )}
-                      <span className="chat-history-item-time">{formatTime(s.startedAt || s.updatedAt)}</span>
+                      <span className="chat-history-item-time">
+                        {formatTime(s.startedAt || s.updatedAt)}
+                        {hasHistoryContextUsage(s.contextUsage) && (
+                          <>
+                            {" · "}
+                            上下文：{formatContextUsageK(s.contextUsage)}
+                          </>
+                        )}
+                      </span>
                     </div>
                     <button
                       className="chat-history-item-delete"
@@ -3853,7 +3871,7 @@ export default function AgentPanel() {
                 className={`chat-input-status-context${contextUsageWarning ? " chat-input-status-context-warning" : ""}`}
                 title={contextStatusTitle}
               >
-                上下文：{formatContextUsageK(contextUsage)}
+                上下文：{formatContextUsageK(displayContextUsage)}
               </span>
             </div>
             <div className="chat-input-actions">

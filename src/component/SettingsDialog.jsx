@@ -54,6 +54,7 @@ const DEFAULT_SETTINGS = {
   bridgeEnabled: false,
   wsServerUrl: "",
   hideCopyButton: false,
+  ttsVoiceName: "",
   dangerousToolSkipApproval: false
 };
 
@@ -95,6 +96,8 @@ function SettingsDialogBody() {
   const [bridgeEnabled, setBridgeEnabled] = useState(DEFAULT_SETTINGS.bridgeEnabled);
   const [wsServerUrl, setWsServerUrl] = useState(DEFAULT_SETTINGS.wsServerUrl);
   const [hideCopyButton, setHideCopyButton] = useState(DEFAULT_SETTINGS.hideCopyButton);
+  const [ttsVoiceName, setTtsVoiceName] = useState(DEFAULT_SETTINGS.ttsVoiceName);
+  const [ttsVoices, setTtsVoices] = useState([]);
   const [dangerousToolSkipApproval, setDangerousToolSkipApproval] = useState(DEFAULT_SETTINGS.dangerousToolSkipApproval);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
@@ -124,9 +127,32 @@ function SettingsDialogBody() {
     { label: "Generate / Edit API", value: IMAGE_API_PROTOCOLS.GENERATE },
     { label: "Chat Completions", value: IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS }
   ];
+  const ttsVoiceOptions = buildTtsVoiceOptions(ttsVoices);
 
   useEffect(() => {
     void loadDraft();
+  }, []);
+
+  useEffect(() => {
+    const speech = typeof window !== "undefined" ? window.speechSynthesis : null;
+    if (!speech) return undefined;
+
+    const loadVoices = () => {
+      setTtsVoices(speech.getVoices());
+    };
+
+    loadVoices();
+    if (typeof speech.addEventListener === "function") {
+      speech.addEventListener("voiceschanged", loadVoices);
+      return () => speech.removeEventListener("voiceschanged", loadVoices);
+    }
+    const previous = speech.onvoiceschanged;
+    speech.onvoiceschanged = loadVoices;
+    return () => {
+      if (speech.onvoiceschanged === loadVoices) {
+        speech.onvoiceschanged = previous || null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -177,6 +203,7 @@ function SettingsDialogBody() {
       setBridgeEnabled(!!res.bridgeEnabled);
       setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : "");
       setHideCopyButton(!!res.hideCopyButton);
+      setTtsVoiceName(typeof res.ttsVoiceName === "string" ? res.ttsVoiceName : "");
       setDangerousToolSkipApproval(!!res.dangerousToolSkipApproval);
       setWsBridgeStatus({
         ...DEFAULT_WS_BRIDGE_STATUS,
@@ -229,6 +256,7 @@ function SettingsDialogBody() {
         bridgeEnabled,
         wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null,
         hideCopyButton,
+        ttsVoiceName,
         dangerousToolSkipApproval
       });
       toast.success("设置已保存");
@@ -590,8 +618,20 @@ function SettingsDialogBody() {
           </div>
           <div className="mt-2">
             <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
-              <span className="text-sm">隐藏助手消息的复制按钮</span>
+              <span className="text-sm">隐藏助手消息的操作按钮（复制 / 播报）</span>
             </Checkbox>
+          </div>
+          <Select
+            label="助手消息播报音色"
+            items={ttsVoiceOptions.map((item) => item.label)}
+            defaultIndex={Math.max(0, ttsVoiceOptions.findIndex((item) => item.value === ttsVoiceName))}
+            onSelectedItemChange={(changes) => {
+              const selected = ttsVoiceOptions.find((item) => item.label === changes.selectedItem);
+              setTtsVoiceName(selected ? selected.value : DEFAULT_SETTINGS.ttsVoiceName);
+            }}
+          />
+          <div className="settings-api-url-hint">
+            使用浏览器内置语音合成；不同系统和浏览器可用音色不同。
           </div>
           <div className="mt-2">
             <Checkbox isSelected={dangerousToolSkipApproval} onChange={setDangerousToolSkipApproval}>
@@ -748,6 +788,25 @@ function normalizeWsServerUrlInput(value) {
   } catch {
     return null;
   }
+}
+
+function buildTtsVoiceOptions(voices) {
+  const availableVoices = Array.isArray(voices) ? voices : [];
+  const chineseVoices = availableVoices.filter(voice => String(voice?.lang || "").toLowerCase().includes("zh"));
+  const visibleVoices = chineseVoices.length > 0 ? chineseVoices : availableVoices;
+  const options = visibleVoices.map(voice => {
+    const name = String(voice?.name || "").trim();
+    const lang = String(voice?.lang || "").trim();
+    const label = [name || "未命名音色", lang].filter(Boolean).join(" · ");
+    return {
+      label,
+      value: name
+    };
+  }).filter(item => item.value);
+  return [
+    { label: "自动选择", value: "" },
+    ...options
+  ];
 }
 
 function normalizeReasoningEffort(value) {

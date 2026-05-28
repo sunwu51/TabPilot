@@ -245,7 +245,7 @@ export async function loadSessionMeta(id) {
  * @param {string} id - session ID
  * @param {Array} messages - full message history
  * @param {string} [title] - updated title (auto-generated from first user message)
- * @param {{nextImageRefIndex?: number}} [options]
+ * @param {{nextImageRefIndex?: number, contextUsage?: object | null}} [options]
  */
 export async function saveSession(id, messages, title, options = {}) {
   const key = `session_${id}`;
@@ -277,9 +277,28 @@ export async function saveSession(id, messages, title, options = {}) {
 
   if (title && !entry.manualTitle) entry.title = title;
   if (!entry.startedAt && messages && messages.length > 0) entry.startedAt = Date.now();
+  if (Object.prototype.hasOwnProperty.call(options, "contextUsage")) {
+    const nextContextUsage = normalizeSessionIndexContextUsage(options.contextUsage);
+    if (nextContextUsage) {
+      entry.contextUsage = nextContextUsage;
+    } else {
+      delete entry.contextUsage;
+    }
+  }
   entry.updatedAt = Date.now();
   await chrome.storage.local.set({ sessions_index });
   return true;
+}
+
+function normalizeSessionIndexContextUsage(contextUsage) {
+  const tokens = Number(contextUsage?.tokens);
+  if (!Number.isFinite(tokens)) return null;
+  return {
+    tokens,
+    usageStatus: contextUsage?.usageStatus || "ok",
+    apiType: contextUsage?.apiType || "",
+    model: contextUsage?.model || ""
+  };
 }
 
 const SESSION_IMAGE_STORE_REF_PREFIX = "session-image:";

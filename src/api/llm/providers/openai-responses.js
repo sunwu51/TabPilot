@@ -214,7 +214,7 @@ export function buildResponsesRequestInput(messages, options = {}) {
         input.push({
           type: "message",
           role: "assistant",
-          content: normalizeResponsesMessageContent(msg.content, "assistant")
+          content: normalizeResponsesMessageContent(msg.content, "assistant", options)
         });
         continue;
       }
@@ -236,7 +236,7 @@ export function buildResponsesRequestInput(messages, options = {}) {
     input.push({
       type: "message",
       role: msg.role || "user",
-      content: normalizeResponsesMessageContent(msg.content, msg.role || "user")
+      content: normalizeResponsesMessageContent(msg.content, msg.role || "user", options)
     });
   }
 
@@ -842,7 +842,8 @@ function dedupeResponsesFunctionCalls(calls) {
   return result;
 }
 
-export function normalizeResponsesMessageContent(content, role = "user") {
+export function normalizeResponsesMessageContent(content, role = "user", options = {}) {
+  const supportsImageInput = options.supportsImageInput !== false;
   if (typeof content === "string") {
     return [{ type: role === "assistant" ? "output_text" : "input_text", text: content }];
   }
@@ -853,7 +854,21 @@ export function normalizeResponsesMessageContent(content, role = "user") {
         return [{ type: role === "assistant" ? "output_text" : "input_text", text: block.text }];
       }
       if (block.type === "image_url" && block.image_url?.url) {
+        if (!supportsImageInput) return [];
         return [{ type: "input_image", image_url: block.image_url.url }];
+      }
+      if (block.type === "input_image" && typeof block.image_url === "string") {
+        if (!supportsImageInput) return [];
+        return [{
+          type: "input_image",
+          image_url: block.image_url,
+          ...(block.detail ? { detail: block.detail } : {})
+        }];
+      }
+      if (block.type === "image") {
+        if (!supportsImageInput) return [];
+        const dataUrl = buildResponsesImageBlockDataUrl(block);
+        if (dataUrl) return [{ type: "input_image", image_url: dataUrl }];
       }
       if ((block.type === "output_text" || block.type === "input_text") && typeof block.text === "string") {
         return [{ type: block.type, text: block.text }];
@@ -866,6 +881,12 @@ export function normalizeResponsesMessageContent(content, role = "user") {
     return [{ type: role === "assistant" ? "output_text" : "input_text", text: "" }];
   }
   return [{ type: role === "assistant" ? "output_text" : "input_text", text: String(content) }];
+}
+
+function buildResponsesImageBlockDataUrl(block) {
+  if (block?.source?.type !== "base64") return "";
+  if (!block.source.media_type || !block.source.data) return "";
+  return `data:${block.source.media_type};base64,${block.source.data}`;
 }
 
 export function extractOpenAIResponsesUsage(event) {

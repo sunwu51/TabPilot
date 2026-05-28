@@ -1,11 +1,14 @@
 /* global chrome */
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeImageRefSource, normalizeMessageImageRefs } from "./imageRefs";
+
+let activeSpeechController = null;
 
 /**
  * Render a single chat message based on its role and content.
@@ -441,19 +444,40 @@ export function AssistantTextBubble({
 }) {
   const [copied, setCopied] = useState(false);
   const [hideCopyButton, setHideCopyButton] = useState(false);
+  const [ttsVoiceName, setTtsVoiceName] = useState("");
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const utteranceRef = useRef(null);
   const hasSearchHits = !!searchState?.query && findTextHits(text, searchState.query).length > 0;
+  const canSpeak = typeof window !== "undefined" && !!window.speechSynthesis && typeof SpeechSynthesisUtterance !== "undefined";
 
   useEffect(() => {
-    chrome.storage.local.get({ hideCopyButton: false }, (res) => {
+    chrome.storage.local.get({ hideCopyButton: false, ttsVoiceName: "" }, (res) => {
       setHideCopyButton(!!res.hideCopyButton);
+      setTtsVoiceName(typeof res.ttsVoiceName === "string" ? res.ttsVoiceName : "");
     });
     const handleChange = (changes) => {
       if (changes.hideCopyButton) {
         setHideCopyButton(!!changes.hideCopyButton.newValue);
       }
+      if (changes.ttsVoiceName) {
+        setTtsVoiceName(typeof changes.ttsVoiceName.newValue === "string" ? changes.ttsVoiceName.newValue : "");
+      }
     };
     chrome.storage.onChanged.addListener(handleChange);
     return () => chrome.storage.onChanged.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const speech = window.speechSynthesis;
+      if (utteranceRef.current && speech?.speaking) {
+        speech.cancel();
+      }
+      if (activeSpeechController?.utterance === utteranceRef.current) {
+        activeSpeechController = null;
+      }
+      utteranceRef.current = null;
+    };
   }, []);
 
   async function handleCopy(event) {
@@ -465,6 +489,52 @@ export function AssistantTextBubble({
     } catch (error) {
       console.error("Failed to copy message:", error);
     }
+  }
+
+  function handleSpeak(event) {
+    event.stopPropagation();
+    if (!canSpeak) return;
+    const speech = window.speechSynthesis;
+    if (isSpeaking && utteranceRef.current) {
+      speech.cancel();
+      setIsSpeaking(false);
+      if (activeSpeechController?.utterance === utteranceRef.current) {
+        activeSpeechController = null;
+      }
+      utteranceRef.current = null;
+      return;
+    }
+
+    speech.cancel();
+    activeSpeechController?.stop?.();
+    const speakText = markdownToSpeechText(text);
+    if (!speakText) return;
+    const utterance = new SpeechSynthesisUtterance(speakText);
+    const selectedVoice = resolveSpeechSynthesisVoice(speech.getVoices(), ttsVoiceName);
+    if (selectedVoice) utterance.voice = selectedVoice;
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      if (utteranceRef.current === utterance) utteranceRef.current = null;
+      if (activeSpeechController?.utterance === utterance) activeSpeechController = null;
+    };
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      if (utteranceRef.current === utterance) utteranceRef.current = null;
+      if (activeSpeechController?.utterance === utterance) activeSpeechController = null;
+    };
+    utteranceRef.current = utterance;
+    activeSpeechController = {
+      utterance,
+      stop: () => {
+        setIsSpeaking(false);
+        if (utteranceRef.current === utterance) utteranceRef.current = null;
+      }
+    };
+    speech.speak(utterance);
   }
 
   return (
@@ -492,6 +562,15 @@ export function AssistantTextBubble({
         )}
         {!hideCopyButton && (
           <div className="chat-bubble-copy-row">
+            {canSpeak && (
+              <button
+                type="button"
+                className={`chat-bubble-copy-btn ${isSpeaking ? "chat-bubble-speak-btn-active" : ""}`}
+                onClick={handleSpeak}
+              >
+                {isSpeaking ? "停止" : "播报"}
+              </button>
+            )}
             <button
               type="button"
               className={`chat-bubble-copy-btn ${copied ? "chat-bubble-copy-btn-copied" : ""}`}
@@ -858,7 +937,7 @@ function isSearchableChatMessage(message) {
 }
 
 function buildAssistantRehypePlugins() {
-  return [[rehypeHighlight, { detect: true, ignoreMissing: true }]];
+  return [rehypeRaw, [rehypeHighlight, { detect: true, ignoreMissing: true }]];
 }
 
 function normalizeInjectedUserContext(context) {
@@ -909,6 +988,7 @@ function buildAssistantMarkdownComponents({
   return {
     pre: CodeBlock,
     a: MarkdownLink,
+    audio: MarkdownAudio,
     img: (props) => (
       <MarkdownImage
         {...props}
@@ -920,6 +1000,64 @@ function buildAssistantMarkdownComponents({
       />
     )
   };
+}
+
+function MarkdownAudio({ src }) {
+  const safeSrc = normalizeMarkdownAudioSrc(src);
+  if (!safeSrc) return null;
+  return (
+    <audio
+      className="chat-assistant-audio"
+      src={safeSrc}
+      controls
+      preload="metadata"
+    />
+  );
+}
+
+function resolveSpeechSynthesisVoice(voices, preferredName) {
+  const availableVoices = Array.isArray(voices) ? voices : [];
+  const normalizedName = String(preferredName || "").trim();
+  if (normalizedName) {
+    const exactMatch = availableVoices.find(voice => voice?.name === normalizedName);
+    if (exactMatch) return exactMatch;
+  }
+  return (
+    availableVoices.find(voice => speechVoiceHasText(voice, "mainland")) ||
+    availableVoices.find(voice => String(voice?.lang || "").toLowerCase().includes("zh")) ||
+    null
+  );
+}
+
+function speechVoiceHasText(voice, text) {
+  const needle = String(text || "").toLowerCase();
+  if (!needle) return false;
+  return [voice?.name, voice?.lang, voice?.voiceURI]
+    .map(value => String(value || "").toLowerCase())
+    .some(value => value.includes(needle));
+}
+
+function markdownToSpeechText(markdown) {
+  let value = String(markdown || "");
+  if (!value.trim()) return "";
+
+  value = value.replace(/```[\s\S]*?```/g, "\n");
+  value = value.replace(/~~~[\s\S]*?~~~/g, "\n");
+  value = value.replace(/<audio\b[\s\S]*?<\/audio>/gi, "\n");
+  value = value.replace(/<[^>]+>/g, " ");
+  value = value.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");
+  value = value.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  value = value.replace(/`([^`]*)`/g, "$1");
+  value = value.replace(/^\s{0,3}#{1,6}\s*/gm, "");
+  value = value.replace(/^\s{0,3}>\s?/gm, "");
+  value = value.replace(/^\s*[-*+]\s+/gm, "");
+  value = value.replace(/^\s*\d+[.)]\s+/gm, "");
+  value = value.replace(/^\s*[-:| ]{3,}\s*$/gm, "");
+  value = value.replace(/[|*_~#>`[\]()]/g, " ");
+  value = value.replace(/https?:\/\/\S+/gi, " ");
+  value = value.replace(/[ \t]+/g, " ");
+  value = value.replace(/\n{3,}/g, "\n\n");
+  return value.trim();
 }
 
 function MarkdownImage({ src, alt, editable = false, onImageEditRequest, imageSrcResolver, imageRefNavigator, sessionId = "", ...props }) {
@@ -1345,7 +1483,26 @@ function transformMarkdownUrl(value, key, node) {
   if (key === "src" && node?.tagName === "img" && extractImageDerefRef(value)) {
     return String(value || "");
   }
+  if (key === "src" && node?.tagName === "audio") {
+    return normalizeMarkdownAudioSrc(value);
+  }
   return defaultUrlTransform(value);
+}
+
+function normalizeMarkdownAudioSrc(src) {
+  const raw = String(src || "").trim();
+  if (!raw) return "";
+
+  try {
+    const resolved = new URL(raw, window.location.href);
+    if (["http:", "https:"].includes(resolved.protocol)) {
+      return resolved.href;
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }
 
 function extractImageDerefRef(src) {

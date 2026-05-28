@@ -388,6 +388,30 @@ describe("sessions storage", () => {
     expect(entry).toMatchObject({ title: "Manual", manualTitle: true, updatedAt: 100 });
   });
 
+  it("stores latest context usage summary in the session index", async () => {
+    resetChromeMock({
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 2, manualTitle: false }]
+    });
+
+    await saveSession("a", [{ role: "user", content: "hello" }], "A", {
+      contextUsage: {
+        tokens: 12345,
+        usageStatus: "ok",
+        apiType: "openai-responses",
+        model: "gpt-test",
+        usage: { prompt_tokens: 10000, completion_tokens: 2345 }
+      }
+    });
+
+    const [entry] = await listSessions();
+    expect(entry.contextUsage).toEqual({
+      tokens: 12345,
+      usageStatus: "ok",
+      apiType: "openai-responses",
+      model: "gpt-test"
+    });
+  });
+
   it("updates and resets manual title state", async () => {
     resetChromeMock({
       sessions_index: [{ id: "a", title: "Old", updatedAt: 1, startedAt: 2, manualTitle: false }]
@@ -509,7 +533,7 @@ describe("sessions storage", () => {
         a: { windowId: "1", updatedAt: 1000 }
       }
     });
-    chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
+    globalThis.chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
     vi.spyOn(Date, "now").mockReturnValue(2000);
 
     expect(await claimSessionLock("a", 2)).toEqual({ claimed: true, conflict: null });
@@ -526,7 +550,7 @@ describe("sessions storage", () => {
         a: { windowId: "1", updatedAt: 1000 }
       }
     });
-    chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
+    globalThis.chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
     vi.spyOn(Date, "now").mockReturnValue(2000);
 
     expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();

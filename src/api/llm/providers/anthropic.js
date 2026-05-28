@@ -82,6 +82,7 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
         const trimmed = line.trim();
         if (!trimmed.startsWith("data: ")) continue;
         const data = trimmed.slice(6);
+        if (data === "[DONE]") continue;
 
         try {
           const json = JSON.parse(data);

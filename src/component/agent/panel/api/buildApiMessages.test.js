@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { API_TYPES } from "../../../../api/llm";
 import { buildApiMessages } from "./buildApiMessages";
+import { buildResponsesRequestInput } from "../../../../api/llm/providers/openai-responses";
 
 describe("buildApiMessages image options", () => {
   const toolImageMessage = {
@@ -10,6 +11,59 @@ describe("buildApiMessages image options", () => {
     content: JSON.stringify({ success: true }),
     displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
   };
+  const userImageMessage = {
+    role: "user",
+    content: [
+      { type: "text", text: "look" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "dXNlcg==" } }
+    ]
+  };
+
+  it("keeps OpenAI Chat user images by default", () => {
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [userImageMessage]);
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,dXNlcg==", detail: "low" }
+        }
+      ]
+    }]);
+  });
+
+  it("keeps Anthropic user images by default", () => {
+    const result = buildApiMessages(API_TYPES.ANTHROPIC, [userImageMessage]);
+
+    expect(result).toEqual([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "dXNlcg==" }
+        }
+      ]
+    }]);
+  });
+
+  it("omits user images only when image input is explicitly disabled", () => {
+    expect(buildApiMessages(API_TYPES.OPENAI_CHAT, [userImageMessage], {
+      supportsImageInput: false
+    })).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "look" }]
+    }]);
+
+    expect(buildApiMessages(API_TYPES.ANTHROPIC, [userImageMessage], {
+      supportsImageInput: false
+    })).toEqual([{
+      role: "user",
+      content: [{ type: "text", text: "look" }]
+    }]);
+  });
 
   it("sends OpenAI Chat tool result images through a follow-up user message", () => {
     const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [
@@ -60,6 +114,69 @@ describe("buildApiMessages image options", () => {
             type: "image_url",
             image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "low" }
           }
+        ]
+      }
+    ]);
+  });
+
+  it("keeps OpenAI Responses tool result images on the function output item", () => {
+    const apiMessages = buildApiMessages(API_TYPES.OPENAI_RESPONSES, [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      toolImageMessage
+    ], {
+      supportsImageInput: true,
+      supportsToolImageInput: true
+    });
+
+    expect(apiMessages).toEqual([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        content: JSON.stringify({ success: true }),
+        displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
+      }
+    ]);
+
+    expect(buildResponsesRequestInput(apiMessages, {
+      supportsImageInput: true,
+      supportsToolImageInput: true
+    }).input).toEqual([
+      {
+        type: "function_call",
+        id: "fc_call_1",
+        call_id: "call_1",
+        name: "image_gen",
+        arguments: "{\"prompt\":\"cat\"}"
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: [
+          { type: "input_text", text: "{\"success\":true}" },
+          { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=", detail: "low" }
         ]
       }
     ]);
