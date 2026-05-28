@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { API_TYPES } from "../../../../api/llm";
 import { buildApiMessages } from "./buildApiMessages";
+import { buildResponsesRequestInput } from "../../../../api/llm/providers/openai-responses";
 
 describe("buildApiMessages image options", () => {
   const toolImageMessage = {
@@ -113,6 +114,69 @@ describe("buildApiMessages image options", () => {
             type: "image_url",
             image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "low" }
           }
+        ]
+      }
+    ]);
+  });
+
+  it("keeps OpenAI Responses tool result images on the function output item", () => {
+    const apiMessages = buildApiMessages(API_TYPES.OPENAI_RESPONSES, [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      toolImageMessage
+    ], {
+      supportsImageInput: true,
+      supportsToolImageInput: true
+    });
+
+    expect(apiMessages).toEqual([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        content: JSON.stringify({ success: true }),
+        displayImages: [{ url: "data:image/png;base64,aGVsbG8=" }]
+      }
+    ]);
+
+    expect(buildResponsesRequestInput(apiMessages, {
+      supportsImageInput: true,
+      supportsToolImageInput: true
+    }).input).toEqual([
+      {
+        type: "function_call",
+        id: "fc_call_1",
+        call_id: "call_1",
+        name: "image_gen",
+        arguments: "{\"prompt\":\"cat\"}"
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: [
+          { type: "input_text", text: "{\"success\":true}" },
+          { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=", detail: "low" }
         ]
       }
     ]);

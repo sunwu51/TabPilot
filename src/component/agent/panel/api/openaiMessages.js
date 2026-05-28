@@ -125,8 +125,10 @@ export function buildOpenAIApiMessages(messages, options = {}) {
       apiMessages.push(buildOpenAIAssistantMessageForApi(msg, options));
       for (const toolMsg of followingToolMessages) {
         apiMessages.push(buildOpenAIToolMessageForApi(toolMsg, options));
-        const imageUserMessage = buildOpenAIToolResultImageUserMessage(toolMsg, options);
-        if (imageUserMessage) apiMessages.push(imageUserMessage);
+        if (!isOpenAIResponsesRequest(options)) {
+          const imageUserMessage = buildOpenAIToolResultImageUserMessage(toolMsg, options);
+          if (imageUserMessage) apiMessages.push(imageUserMessage);
+        }
       }
 
       i = j - 1;
@@ -158,8 +160,10 @@ export function buildOpenAIApiMessages(messages, options = {}) {
 
     if (msg.role === "tool") {
       apiMessages.push(buildOpenAIToolMessageForApi(msg, options));
-      const imageUserMessage = buildOpenAIToolResultImageUserMessage(msg, options);
-      if (imageUserMessage) apiMessages.push(imageUserMessage);
+      if (!isOpenAIResponsesRequest(options)) {
+        const imageUserMessage = buildOpenAIToolResultImageUserMessage(msg, options);
+        if (imageUserMessage) apiMessages.push(imageUserMessage);
+      }
       continue;
     }
 
@@ -170,11 +174,26 @@ export function buildOpenAIApiMessages(messages, options = {}) {
 }
 
 function buildOpenAIToolMessageForApi(msg, options = {}) {
-  return {
+  const apiMessage = {
     role: "tool",
     tool_call_id: msg.tool_call_id,
     content: buildOpenAIToolResultContent(msg, options)
   };
+  if (isOpenAIResponsesRequest(options)) {
+    copyResponsesToolImageFieldsForApi(msg, apiMessage);
+  }
+  return apiMessage;
+}
+
+function isOpenAIResponsesRequest(options = {}) {
+  return normalizeApiType(options.apiType) === API_TYPES.OPENAI_RESPONSES;
+}
+
+function copyResponsesToolImageFieldsForApi(source, target) {
+  if (source?.displayImageUrl) target.displayImageUrl = source.displayImageUrl;
+  if (Array.isArray(source?.displayImages) && source.displayImages.length > 0) {
+    target.displayImages = source.displayImages;
+  }
 }
 
 function buildImageBlockDataUrlForApi(block) {

@@ -533,7 +533,7 @@ describe("sessions storage", () => {
         a: { windowId: "1", updatedAt: 1000 }
       }
     });
-    chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
+    globalThis.chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
     vi.spyOn(Date, "now").mockReturnValue(2000);
 
     expect(await claimSessionLock("a", 2)).toEqual({ claimed: true, conflict: null });
@@ -550,7 +550,7 @@ describe("sessions storage", () => {
         a: { windowId: "1", updatedAt: 1000 }
       }
     });
-    chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
+    globalThis.chrome.windows.get.mockRejectedValueOnce(new Error("No window with id: 1."));
     vi.spyOn(Date, "now").mockReturnValue(2000);
 
     expect(await isSessionLockedByOtherWindow("a", 2)).toBeNull();
