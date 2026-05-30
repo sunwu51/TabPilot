@@ -1,28 +1,42 @@
 /* eslint-disable react/prop-types */
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@sunwu51/camel-ui";
+import { Button, Switch } from "@sunwu51/camel-ui";
 import { isImageFile, getClipboardImageFiles, imageFileToAttachmentItem } from "../messages/userMessage";
+
+const IMAGE_EDIT_MODE = {
+  ANNOTATION: "annotation",
+  MASK: "mask"
+};
 
 export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
   const [suggestion, setSuggestion] = useState("");
   const [error, setError] = useState("");
-  const [maskEnabled, setMaskEnabled] = useState(false);
+  const [editMode, setEditMode] = useState(IMAGE_EDIT_MODE.ANNOTATION);
   const [maskTouched, setMaskTouched] = useState(false);
+  const [annotationDraft, setAnnotationDraft] = useState(null);
+  const [annotations, setAnnotations] = useState([]);
+  const [annotationCount, setAnnotationCount] = useState(0);
   const [referenceImages, setReferenceImages] = useState([]);
   const [referenceImagesLoading, setReferenceImagesLoading] = useState(false);
   const canvasRef = useRef(null);
+  const annotationInputRef = useRef(null);
   const referenceImageInputRef = useRef(null);
   const drawingRef = useRef(false);
   const maskPathsRef = useRef([]);
   const activeMaskPathRef = useRef([]);
   const pendingReferenceImageBatchesRef = useRef(0);
   const maskSupported = request?.maskSupported !== false;
+  const isMaskMode = maskSupported && editMode === IMAGE_EDIT_MODE.MASK;
+  const isAnnotationMode = editMode === IMAGE_EDIT_MODE.ANNOTATION;
 
   useEffect(() => {
     setSuggestion("");
     setError("");
-    setMaskEnabled(false);
+    setEditMode(IMAGE_EDIT_MODE.ANNOTATION);
     setMaskTouched(false);
+    setAnnotationDraft(null);
+    setAnnotations([]);
+    setAnnotationCount(0);
     setReferenceImages([]);
     setReferenceImagesLoading(false);
     drawingRef.current = false;
@@ -34,13 +48,18 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
 
   useEffect(() => {
     if (maskSupported) return;
-    setMaskEnabled(false);
+    setEditMode(IMAGE_EDIT_MODE.ANNOTATION);
     setMaskTouched(false);
     maskPathsRef.current = [];
     activeMaskPathRef.current = [];
     drawingRef.current = false;
     clearMaskCanvas();
   }, [maskSupported]);
+
+  useEffect(() => {
+    if (!annotationDraft) return;
+    annotationInputRef.current?.focus();
+  }, [annotationDraft]);
 
   async function addReferenceImageFiles(files) {
     const imageFiles = Array.from(files || []).filter(isImageFile);
@@ -129,6 +148,20 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     setMaskTouched(false);
   }
 
+  function handleModeChange(nextIsMaskMode) {
+    const nextMode = nextIsMaskMode && maskSupported ? IMAGE_EDIT_MODE.MASK : IMAGE_EDIT_MODE.ANNOTATION;
+    setEditMode(nextMode);
+    if (nextMode === IMAGE_EDIT_MODE.MASK) {
+      setAnnotationDraft(null);
+    } else {
+      maskPathsRef.current = [];
+      drawingRef.current = false;
+      activeMaskPathRef.current = [];
+      clearMaskCanvas();
+      setMaskTouched(false);
+    }
+  }
+
   function getCanvasPoint(event) {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -138,6 +171,57 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
       x: (event.clientX - rect.left) * (canvas.width / rect.width),
       y: (event.clientY - rect.top) * (canvas.height / rect.height)
     };
+  }
+
+  function getImagePercentPoint(event) {
+    const imageLayer = event.currentTarget.closest?.(".image-edit-image-layer") || event.currentTarget;
+    const rect = imageLayer.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const xPercent = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
+    const yPercent = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100));
+    return { xPercent, yPercent };
+  }
+
+  function handleAnnotationClick(event) {
+    if (!isAnnotationMode || event.target.closest?.(".image-edit-annotation-editor")) return;
+    event.preventDefault();
+    const point = getImagePercentPoint(event);
+    if (!point) return;
+    setAnnotationDraft({
+      ...point,
+      text: ""
+    });
+  }
+
+  function formatAnnotationSuggestion(draft, text, index) {
+    return `${index}. (x: ${draft.xPercent.toFixed(1)}%, y: ${draft.yPercent.toFixed(1)}%) ${text.trim()}`;
+  }
+
+  function submitAnnotationDraft() {
+    const draft = annotationDraft;
+    const text = draft?.text?.trim();
+    if (!draft || !text) return;
+    const nextIndex = annotationCount + 1;
+    const nextLine = formatAnnotationSuggestion(draft, text, nextIndex);
+    setAnnotations(prev => [...prev, {
+      id: `annotation_${Date.now()}_${nextIndex}`,
+      index: nextIndex,
+      xPercent: draft.xPercent,
+      yPercent: draft.yPercent
+    }]);
+    setSuggestion(prev => {
+      const trimmedEnd = prev.trimEnd();
+      return trimmedEnd ? `${trimmedEnd}\n${nextLine}` : nextLine;
+    });
+    setAnnotationCount(nextIndex);
+    setAnnotationDraft(null);
+    if (error) setError("");
+  }
+
+  function handleAnnotationKeyDown(event) {
+    if (event.key !== "Enter" || event.nativeEvent?.isComposing) return;
+    event.preventDefault();
+    submitAnnotationDraft();
   }
 
   function renderMaskPreview() {
@@ -189,7 +273,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   }
 
   function handleMaskPointerDown(event) {
-    if (!maskEnabled) return;
+    if (!isMaskMode) return;
     event.preventDefault();
     const point = getCanvasPoint(event);
     if (!point) return;
@@ -200,7 +284,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   }
 
   function handleMaskPointerMove(event) {
-    if (!maskEnabled || !drawingRef.current) return;
+    if (!isMaskMode || !drawingRef.current) return;
     event.preventDefault();
     const point = getCanvasPoint(event);
     if (!point) return;
@@ -255,7 +339,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     }
     onConfirm?.({
       suggestion: trimmed,
-      maskDataUrl: maskEnabled && maskPathsRef.current.length > 0 ? exportMaskDataUrl() : "",
+      maskDataUrl: isMaskMode && maskPathsRef.current.length > 0 ? exportMaskDataUrl() : "",
       referenceImages
     });
   }
@@ -280,30 +364,93 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
         <div className="image-edit-dialog-body">
           <div id="image-edit-dialog-title" className="image-edit-title">编辑图片</div>
           <div className="image-edit-preview">
-            <img
-              src={request?.src}
-              alt={request?.alt || "图片"}
-              onLoad={syncMaskCanvas}
-            />
-            <canvas
-              ref={canvasRef}
-              className={`image-edit-mask-canvas${maskEnabled ? " image-edit-mask-canvas-active" : ""}`}
-              onPointerDown={handleMaskPointerDown}
-              onPointerMove={handleMaskPointerMove}
-              onPointerUp={handleMaskPointerEnd}
-              onPointerCancel={handleMaskPointerEnd}
-            />
+            <div className="image-edit-preview-content">
+              <div
+                className={`image-edit-image-layer${isAnnotationMode ? " image-edit-preview-annotation" : ""}`}
+                onClick={handleAnnotationClick}
+              >
+                <img
+                  src={request?.src}
+                  alt={request?.alt || "图片"}
+                  onLoad={syncMaskCanvas}
+                />
+                <canvas
+                  ref={canvasRef}
+                  className={`image-edit-mask-canvas${isMaskMode ? " image-edit-mask-canvas-active" : ""}`}
+                  onPointerDown={handleMaskPointerDown}
+                  onPointerMove={handleMaskPointerMove}
+                  onPointerUp={handleMaskPointerEnd}
+                  onPointerCancel={handleMaskPointerEnd}
+                />
+                {annotations.map(annotation => (
+                  <span
+                    key={annotation.id}
+                    className="image-edit-annotation-number image-edit-annotation-persisted"
+                    style={{
+                      left: `${annotation.xPercent}%`,
+                      top: `${annotation.yPercent}%`
+                    }}
+                  >
+                    {annotation.index}
+                  </span>
+                ))}
+                {annotationDraft && (
+                  <>
+                    <span
+                      className="image-edit-annotation-number image-edit-annotation-draft-number"
+                      style={{
+                        left: `${annotationDraft.xPercent}%`,
+                        top: `${annotationDraft.yPercent}%`
+                      }}
+                    >
+                      {annotationCount + 1}
+                    </span>
+                    <div
+                      className="image-edit-annotation-editor"
+                      style={{
+                        left: `${annotationDraft.xPercent}%`,
+                        top: `${annotationDraft.yPercent}%`
+                      }}
+                    >
+                      <div className="image-edit-annotation-input-wrap">
+                        <input
+                          ref={annotationInputRef}
+                          value={annotationDraft.text}
+                          onChange={(event) => setAnnotationDraft(prev => prev ? { ...prev, text: event.target.value } : prev)}
+                          onKeyDown={handleAnnotationKeyDown}
+                          placeholder="描述更改，回车发送"
+                        />
+                        <button
+                          type="button"
+                          className="image-edit-annotation-close"
+                          onClick={() => setAnnotationDraft(null)}
+                          aria-label="取消标注"
+                          title="取消标注"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
           {maskSupported && (
             <div className="image-edit-mask-row">
-              <label className="image-edit-mask-toggle">
-                <input
-                  type="checkbox"
-                  checked={maskEnabled}
-                  onChange={(event) => setMaskEnabled(event.target.checked)}
-                />
-                <span>局部修改</span>
-              </label>
+              <div className="image-edit-mode-switch">
+                <span className={!isMaskMode ? "image-edit-mode-label-active" : ""}>标注模式</span>
+                <Switch
+                  isSelected={isMaskMode}
+                  onChange={handleModeChange}
+                  round
+                  aria-label={isMaskMode ? "切换到标注模式" : "切换到蒙版模式"}
+                  className="image-edit-mask-toggle"
+                  style={{ flexShrink: 0, display: "inline-flex", alignItems: "center" }}
+                >
+                  <span className={isMaskMode ? "image-edit-mode-label-active" : ""}>蒙版模式</span>
+                </Switch>
+              </div>
               <button
                 type="button"
                 className="image-edit-mask-clear"
