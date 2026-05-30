@@ -3,8 +3,9 @@
 /* eslint-disable react/prop-types */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import { installWarnFilter } from "./warnFilter";
 import { STASH_STORAGE_KEY } from "./api/llm";
@@ -400,17 +401,79 @@ function StashEditor({ draft, setDraft, onSave, onCancel }) {
   );
 }
 
-function MarkdownPreview({ markdown }) {
+export function MarkdownPreview({ markdown }) {
   return (
     <article className="stash-markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        rehypePlugins={buildStashRehypePlugins()}
+        components={buildStashMarkdownComponents()}
+        urlTransform={transformStashMarkdownUrl}
       >
         {markdown || ""}
       </ReactMarkdown>
     </article>
   );
+}
+
+function buildStashRehypePlugins() {
+  return [rehypeRaw, [rehypeHighlight, { detect: true, ignoreMissing: true }]];
+}
+
+function buildStashMarkdownComponents() {
+  return {
+    audio: StashMarkdownAudio,
+    video: StashMarkdownVideo
+  };
+}
+
+function StashMarkdownAudio({ src }) {
+  const safeSrc = normalizeStashMediaSrc(src);
+  if (!safeSrc) return null;
+  return (
+    <audio
+      className="stash-markdown-media stash-markdown-audio"
+      src={safeSrc}
+      controls
+      preload="metadata"
+    />
+  );
+}
+
+function StashMarkdownVideo({ src }) {
+  const safeSrc = normalizeStashMediaSrc(src);
+  if (!safeSrc) return null;
+  return (
+    <video
+      className="stash-markdown-media stash-markdown-video"
+      src={safeSrc}
+      controls
+      preload="metadata"
+    />
+  );
+}
+
+function transformStashMarkdownUrl(value, key, node) {
+  if (key === "src" && ["audio", "video"].includes(node?.tagName)) {
+    return normalizeStashMediaSrc(value);
+  }
+  return defaultUrlTransform(value);
+}
+
+export function normalizeStashMediaSrc(src) {
+  const raw = String(src || "").trim();
+  if (!raw) return "";
+
+  try {
+    const resolved = new URL(raw, window.location.href);
+    if (["http:", "https:"].includes(resolved.protocol)) {
+      return resolved.href;
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }
 
 function normalizeStashMap(raw) {
@@ -487,4 +550,7 @@ function toLocalDatetimeInputValue(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-createRoot(document.getElementById("root")).render(<StashPage />);
+const root = document.getElementById("root");
+if (root) {
+  createRoot(root).render(<StashPage />);
+}

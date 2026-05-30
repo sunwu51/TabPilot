@@ -348,6 +348,23 @@
   padding: 0;
 }
 
+.stash-markdown-media {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+}
+
+.stash-markdown-audio {
+  width: min(420px, 100%);
+}
+
+.stash-markdown-video {
+  width: min(720px, 100%);
+  max-height: 60vh;
+  border-radius: 6px;
+  background: #111827;
+}
+
 .stash-markdown table {
   display: block;
   width: 100%;
