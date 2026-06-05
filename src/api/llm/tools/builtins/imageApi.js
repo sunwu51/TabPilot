@@ -1,5 +1,8 @@
 /* global chrome */
 
+import { isConfiguredImageProfile, resolveActiveImageConfig } from "../../core/modelProfiles";
+import { ensureSettingsMigrated } from "../../../settings/migrations";
+
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const IMAGE_API_PROTOCOLS = {
   GENERATE: "generate",
@@ -14,7 +17,9 @@ const IMAGE_DEREF_PATTERN = /^\|deRef:(img_[A-Za-z0-9_-]+)\|$/;
 const IMAGE_REF_PATTERN = /^img_[A-Za-z0-9_-]+$/;
 
 export function isImageApiConfigured(config = {}) {
-  return !!String(config?.imageBaseUrl || "").trim() && !!String(config?.imageApiKey || "").trim();
+  const activeConfig = resolveActiveImageConfig(config);
+  if (activeConfig.error) return false;
+  return isConfiguredImageProfile(activeConfig);
 }
 
 export function resolveImageApiRequestUrl(baseUrl, endpoint) {
@@ -58,7 +63,8 @@ export function normalizeImageApiProtocol(value) {
 }
 
 export async function executeImageGeneration(args = {}) {
-  const config = await readImageApiConfig();
+  const config = await readImageApiConfig(args);
+  if (config.error) return { error: config.error };
   const validationError = validateImageApiConfig(config);
   if (validationError) return validationError;
 
@@ -77,13 +83,16 @@ export async function executeImageGeneration(args = {}) {
   return buildImageToolResult(result.payload, {
     endpoint: "generations",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     outputFormat: body.output_format
   });
 }
 
 export async function executeImageEdit(args = {}) {
-  const config = await readImageApiConfig();
+  const config = await readImageApiConfig(args);
+  if (config.error) return { error: config.error };
   const validationError = validateImageApiConfig(config);
   if (validationError) return validationError;
 
@@ -121,6 +130,8 @@ export async function executeImageEdit(args = {}) {
   return buildImageToolResult(result.payload, {
     endpoint: "edits",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     inputImageCount: images.length,
     hasMask: !!mask,
@@ -148,13 +159,22 @@ function normalizeEditImages(args = {}) {
   });
 }
 
-async function readImageApiConfig() {
+async function readImageApiConfig(args = {}) {
+  await ensureSettingsMigrated();
   const { llmConfig } = await chrome.storage.local.get({ llmConfig: {} });
+  const config = resolveActiveImageConfig(llmConfig, args.image_model_id);
+  if (config.error) return { error: config.error };
+  const selectedProfile = config?.selectedImageProfile || null;
+  const imageModel = String(config?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   return {
-    imageBaseUrl: String(llmConfig?.imageBaseUrl || "").trim(),
-    imageApiKey: String(llmConfig?.imageApiKey || "").trim(),
-    imageModel: String(llmConfig?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL,
-    imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol)
+    imageBaseUrl: String(config?.imageBaseUrl || "").trim(),
+    imageApiKey: String(config?.imageApiKey || "").trim(),
+    imageModel,
+    imageModelId: String(selectedProfile?.id || config?.activeImageModelId || "").trim(),
+    imageModelName: imageModel,
+    imageApiProtocol: normalizeImageApiProtocol(config?.imageApiProtocol),
+    imageModels: config?.imageModels || [],
+    activeImageModelId: config?.activeImageModelId || ""
   };
 }
 
@@ -169,7 +189,7 @@ function validateImageApiConfig(config) {
 }
 
 function buildImageRequestBody(args, config, requiredFields) {
-  const model = String(args.model || config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
+  const model = String(config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   const body = {
     model,
     prompt: requiredFields.prompt
@@ -197,6 +217,8 @@ async function executeChatCompletionsImageGeneration(args, config, { prompt }) {
   return buildImageToolResult(result.payload, {
     endpoint: "chat_completions",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     outputFormat: args.output_format
   });
@@ -223,6 +245,8 @@ async function executeChatCompletionsImageEdit(args, config, { prompt, images })
   return buildImageToolResult(result.payload, {
     endpoint: "chat_completions",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     inputImageCount: images.length,
     outputFormat: args.output_format
@@ -230,7 +254,7 @@ async function executeChatCompletionsImageEdit(args, config, { prompt, images })
 }
 
 function buildChatCompletionsImageRequestBody(args, config, { prompt, images = [] }) {
-  const model = String(args.model || config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
+  const model = String(config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   const userContent = [
     { type: "text", text: prompt },
     ...images
@@ -365,6 +389,8 @@ function buildImageToolResult(payload, meta) {
     imageCount: normalizedImages.length,
     images: normalizedImages
   };
+  if (meta.imageModelId) result.imageModelId = meta.imageModelId;
+  if (meta.imageModelName) result.imageModelName = meta.imageModelName;
   if (meta.inputImageCount) result.inputImageCount = meta.inputImageCount;
   if (meta.hasMask) result.maskApplied = true;
   const revisedPrompt = findFirstString(...normalizedImages.map(image => image.revisedPrompt));
@@ -391,6 +417,9 @@ function extractImagePayloads(payload) {
       if (Array.isArray(message.content)) candidates.push(...message.content);
       if (message.image) candidates.push(message.image);
       if (message.image_url) candidates.push(message.image_url);
+      if (typeof message.content === "string") {
+        candidates.push(...extractDataUrlCandidatesFromText(message.content));
+      }
     }
   }
   if (payload?.image) candidates.push(payload.image);
@@ -596,4 +625,25 @@ function findFirstString(...values) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+const MARKDOWN_IMAGE_DATA_URL_PATTERN = /!\[[^\]]*\]\((data:image\/[^;]+;base64,[^\)]+)\)/gi;
+const BARE_DATA_URL_PATTERN = /(data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+)/g;
+
+function extractDataUrlCandidatesFromText(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  const results = [];
+  let match;
+  // First pass: extract markdown-wrapped data URLs ![...](data:image/...;base64,...)
+  while ((match = MARKDOWN_IMAGE_DATA_URL_PATTERN.exec(raw)) !== null) {
+    results.push({ url: match[1] });
+  }
+  // Second pass: extract bare data URLs if no markdown-wrapped ones were found
+  if (results.length === 0) {
+    while ((match = BARE_DATA_URL_PATTERN.exec(raw)) !== null) {
+      results.push({ url: match[1].replace(/\s+/g, "") });
+    }
+  }
+  return results;
 }

@@ -240,6 +240,64 @@ describe("built-in tool execution", () => {
     }
   });
 
+  it("uses image_model_id to select a configured Image API profile", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [
+        { b64_json: "aW1n" }
+      ]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        activeImageModelId: "img_default",
+        imageModels: [
+          {
+            id: "img_default",
+            name: "Default image",
+            imageBaseUrl: "https://default.example/v1",
+            imageApiKey: "default-token",
+            imageApiProtocol: "generate",
+            imageModel: "default-image-model"
+          },
+          {
+            id: "img_alt01",
+            name: "Alt image",
+            imageBaseUrl: "https://alt.example/v1",
+            imageApiKey: "alt-token",
+            imageApiProtocol: "generate",
+            imageModel: "alt-image-model"
+          }
+        ]
+      }
+    });
+
+    try {
+      const result = await executeTool("image_gen", {
+        prompt: "Draw a cat",
+        image_model_id: "img_alt01"
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "generations",
+        model: "alt-image-model",
+        imageModelId: "img_alt01",
+        imageModelName: "alt-image-model",
+        dataUrl: "data:image/png;base64,aW1n"
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://alt.example/v1/images/generations",
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({ Authorization: "Bearer alt-token" })
+        })
+      );
+      expect(JSON.parse(globalThis.fetch.mock.calls[0][1].body).model).toBe("alt-image-model");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("calls the configured chat/completions image endpoint and reads OpenRouter-style images", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
@@ -300,6 +358,36 @@ describe("built-in tool execution", () => {
         ],
         size: "1024x1024"
       });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("ignores free-form image model overrides from tool args", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ b64_json: "aGVsbG8=" }]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "img-token",
+        imageModel: "configured-image-model"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_gen", {
+        prompt: "Draw a cat",
+        model: "made-up-model"
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        model: "configured-image-model"
+      });
+      const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+      expect(body.model).toBe("configured-image-model");
     } finally {
       globalThis.fetch = originalFetch;
     }

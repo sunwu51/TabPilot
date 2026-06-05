@@ -4,6 +4,10 @@ import {
   exportSettingsBackup,
   importSettingsBackupFromText
 } from "./backup";
+import {
+  SETTINGS_SCHEMA_VERSION,
+  SETTINGS_SCHEMA_VERSION_KEY
+} from "./migrations";
 
 const getChrome = () => globalThis.chrome;
 
@@ -19,124 +23,168 @@ describe("settings backup", () => {
     };
   });
 
-  it("exports only whitelisted settings", async () => {
-    getChrome().storage.local.get.mockResolvedValueOnce({
-      llmConfig: { apiKey: "secret" },
-      reuse: true,
-      mcpServers: [{ url: "https://example.com" }]
-    });
+  it("exports only whitelisted settings after storage migration", async () => {
+    getChrome().storage.local.get
+      .mockResolvedValueOnce({
+        [SETTINGS_SCHEMA_VERSION_KEY]: SETTINGS_SCHEMA_VERSION,
+        llmConfig: {}
+      })
+      .mockResolvedValueOnce({
+        llmConfig: {
+          activeLlmModelId: "llm_a",
+          llmModels: [{ id: "llm_a", model: "gpt-test", baseUrl: "https://api.example/v1", apiKey: "secret" }]
+        },
+        reuse: true,
+        mcpServers: [{ url: "https://example.com" }]
+      });
 
     const backup = await exportSettingsBackup();
 
-    expect(getChrome().storage.local.get).toHaveBeenCalledWith(SETTINGS_BACKUP_KEYS);
+    expect(getChrome().storage.local.get).toHaveBeenNthCalledWith(2, SETTINGS_BACKUP_KEYS);
     expect(backup.settings).toEqual({
-      llmConfig: { apiKey: "secret" },
+      llmConfig: {
+        activeLlmModelId: "llm_a",
+        llmModels: [{ id: "llm_a", model: "gpt-test", baseUrl: "https://api.example/v1", apiKey: "secret" }]
+      },
       reuse: true
     });
   });
 
-  it("exports image API config inside llmConfig", async () => {
-    getChrome().storage.local.get.mockResolvedValueOnce({
-      llmConfig: {
-        imageBaseUrl: "https://api.openai.com/v1",
-        imageApiKey: "img-secret",
-        imageApiProtocol: "chat_completions",
-        imageModel: "gpt-image-2",
-        supportsToolImageInput: false
-      }
-    });
-
-    const backup = await exportSettingsBackup();
-
-    expect(backup.settings.llmConfig).toEqual({
-      imageBaseUrl: "https://api.openai.com/v1",
-      imageApiKey: "img-secret",
-      imageApiProtocol: "chat_completions",
-      imageModel: "gpt-image-2",
-      supportsToolImageInput: false
-    });
-  });
-
-  it("merges imported llmConfig fields without clearing missing fields", async () => {
-    getChrome().storage.local.get.mockResolvedValueOnce({
-      llmConfig: {
-        apiType: "anthropic",
-        baseUrl: "https://api.example/messages",
-        apiKey: "old",
-        model: "old-model"
-      }
-    });
+  it("imports legacy singleton model config as the new profile schema", async () => {
+    getChrome().storage.local.get
+      .mockResolvedValueOnce({
+        [SETTINGS_SCHEMA_VERSION_KEY]: SETTINGS_SCHEMA_VERSION,
+        llmConfig: {}
+      })
+      .mockResolvedValueOnce({
+        llmConfig: {
+          modelContextLimitTokens: 400000,
+          firstPacketTimeoutSeconds: 30
+        }
+      });
 
     const result = await importSettingsBackupFromText(JSON.stringify({
       settings: {
         llmConfig: {
-          apiKey: "new"
+          apiType: "anthropic",
+          baseUrl: "https://api.example/messages",
+          apiKey: "old",
+          model: "old-model",
+          imageBaseUrl: "https://api.openai.com/v1",
+          imageApiKey: "img-secret",
+          imageApiProtocol: "chat_completions",
+          imageModel: "gpt-image-2",
+          supportsImageInput: true,
+          supportsToolImageInput: true
         },
         mcpServers: [{ url: "ignored" }]
       }
     }));
 
-    expect(result.updatedKeys).toEqual(["llmConfig"]);
-    expect(getChrome().storage.local.set).toHaveBeenCalledWith({
-      llmConfig: {
-        apiType: "anthropic",
-        baseUrl: "https://api.example/messages",
-        apiKey: "new",
-        model: "old-model"
-      }
-    });
+    expect(result.updatedKeys).toEqual(["llmConfig", SETTINGS_SCHEMA_VERSION_KEY]);
+    expect(getChrome().storage.local.set).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        llmConfig: expect.objectContaining({
+          activeLlmModelId: "llm_legacy",
+          llmModels: [
+            expect.objectContaining({
+              id: "llm_legacy",
+              name: "old-model",
+              apiType: "anthropic",
+              baseUrl: "https://api.example/messages",
+              apiKey: "old",
+              model: "old-model"
+            })
+          ],
+          modelContextLimitTokens: 400000,
+          firstPacketTimeoutSeconds: 30,
+          supportsImageInput: true,
+          supportsToolImageInput: true,
+          reasoningEffort: "default",
+          omitThinkingFromRequests: false,
+          activeImageModelId: expect.stringMatching(/^img_gpt_image_2_[a-f0-9]{6}$/),
+          imageModels: [
+            expect.objectContaining({
+              id: expect.stringMatching(/^img_gpt_image_2_[a-f0-9]{6}$/),
+              name: "gpt-image-2",
+              imageBaseUrl: "https://api.openai.com/v1",
+              imageApiKey: "img-secret",
+              imageApiProtocol: "chat_completions",
+              imageModel: "gpt-image-2"
+            })
+          ]
+        })
+      })
+    );
   });
 
-  it("imports the image API protocol field", async () => {
-    getChrome().storage.local.get.mockResolvedValueOnce({
-      llmConfig: {
-        imageBaseUrl: "https://api.openai.com/v1",
-        imageApiKey: "old",
-        imageModel: "gpt-image-2"
-      }
-    });
-
-    const result = await importSettingsBackupFromText(JSON.stringify({
-      settings: {
+  it("merges imported new profile fields without writing legacy fields", async () => {
+    getChrome().storage.local.get
+      .mockResolvedValueOnce({
+        [SETTINGS_SCHEMA_VERSION_KEY]: SETTINGS_SCHEMA_VERSION,
+        llmConfig: {}
+      })
+      .mockResolvedValueOnce({
         llmConfig: {
-          imageApiProtocol: "chat_completions"
+          activeLlmModelId: "llm_old",
+          llmModels: [
+            {
+              id: "llm_old",
+              name: "old-model",
+              apiType: "openai-chat-completions",
+              baseUrl: "https://old.example/v1",
+              apiKey: "old",
+              model: "old-model"
+            }
+          ],
+          supportsImageInput: true,
+          supportsToolImageInput: true
         }
-      }
-    }));
-
-    expect(result.updatedKeys).toEqual(["llmConfig"]);
-    expect(getChrome().storage.local.set).toHaveBeenCalledWith({
-      llmConfig: {
-        imageBaseUrl: "https://api.openai.com/v1",
-        imageApiKey: "old",
-        imageModel: "gpt-image-2",
-        imageApiProtocol: "chat_completions"
-      }
-    });
-  });
-
-  it("imports the tool image input support field", async () => {
-    getChrome().storage.local.get.mockResolvedValueOnce({
-      llmConfig: {
-        supportsImageInput: true,
-        supportsToolImageInput: true
-      }
-    });
+      });
 
     const result = await importSettingsBackupFromText(JSON.stringify({
       settings: {
         llmConfig: {
+          activeLlmModelId: "llm_new",
+          llmModels: [
+            {
+              id: "llm_new",
+              name: "new-model",
+              apiType: "openai-responses",
+              baseUrl: "https://new.example/v1/responses",
+              apiKey: "new",
+              model: "new-model"
+            }
+          ],
           supportsToolImageInput: false
         }
       }
     }));
 
-    expect(result.updatedKeys).toEqual(["llmConfig"]);
-    expect(getChrome().storage.local.set).toHaveBeenCalledWith({
+    expect(result.updatedKeys).toEqual(["llmConfig", SETTINGS_SCHEMA_VERSION_KEY]);
+    expect(getChrome().storage.local.set).toHaveBeenLastCalledWith({
       llmConfig: {
+        activeLlmModelId: "llm_new",
+        llmModels: [
+          {
+            id: "llm_new",
+            name: "new-model",
+            apiType: "openai-responses",
+            baseUrl: "https://new.example/v1/responses",
+            apiKey: "new",
+            model: "new-model"
+          }
+        ],
+        modelContextLimitTokens: 200000,
+        firstPacketTimeoutSeconds: 20,
         supportsImageInput: true,
-        supportsToolImageInput: false
-      }
+        supportsToolImageInput: false,
+        reasoningEffort: "default",
+        omitThinkingFromRequests: false,
+        activeImageModelId: "",
+        imageModels: []
+      },
+      [SETTINGS_SCHEMA_VERSION_KEY]: SETTINGS_SCHEMA_VERSION
     });
   });
 

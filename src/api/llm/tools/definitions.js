@@ -664,7 +664,7 @@ export const TOOLS = [
       type: "object",
       properties: {
         prompt: { type: "string", description: "Required image generation prompt." },
-        model: { type: "string", description: "Optional image model override. Defaults to the configured Image model." },
+        image_model_id: { type: "string", description: "Optional configured Image model profile id, such as img_a3f09c. Use this to choose a specific configured image provider/model entry for this tool call. If omitted, the default Image model from settings is used." },
         size: { type: "string", description: "Optional output size, such as auto, 1024x1024, 1024x1536, or 1536x1024." },
         quality: { type: "string", enum: ["auto", "low", "medium", "high"], description: "Optional rendering quality. Defaults to the provider/model default." },
         background: { type: "string", enum: ["auto", "opaque", "transparent"], description: "Optional background mode when supported by the model." },
@@ -694,7 +694,7 @@ export const TOOLS = [
           description: "Legacy additional reference images used with `image`. Use exact placeholders like |deRef:img_2| when available."
         },
         mask: { type: "string", description: "Optional mask image for the first input image only. Use exact placeholders like |deRef:img_3| when available. For OpenAI Images API masks, the first image and mask should have the same dimensions and the mask should include alpha." },
-        model: { type: "string", description: "Optional image model override. Defaults to the configured Image model." },
+        image_model_id: { type: "string", description: "Optional configured Image model profile id, such as img_a3f09c. Use this to choose a specific configured image provider/model entry for this tool call. If omitted, the default Image model from settings is used." },
         size: { type: "string", description: "Optional output size, such as auto, 1024x1024, 1024x1536, or 1536x1024." },
         quality: { type: "string", enum: ["auto", "low", "medium", "high"], description: "Optional rendering quality. Defaults to the provider/model default." },
         background: { type: "string", enum: ["auto", "opaque", "transparent"], description: "Optional background mode when supported by the model." },

@@ -178,6 +178,109 @@ html, body, #root {
   margin-top: 0.5rem;
 }
 
+.dialog-dialog .settings-model-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 32px;
+  margin-top: 0.15rem;
+}
+
+.dialog-dialog .settings-model-empty {
+  color: #6b7280;
+  font-size: 0.8125rem;
+}
+
+.dialog-dialog .settings-model-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: #f9fafb;
+  color: #374151;
+  font-size: 0.8125rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+.dialog-dialog .settings-model-badge:hover {
+  border-color: #6b7280;
+  background: #fff;
+  color: #111827;
+}
+
+.dialog-dialog .settings-model-badge-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  box-shadow: inset 0 0 0 1px #2563eb;
+  font-weight: 700;
+}
+
+.dialog-dialog .settings-image-model-badge.settings-model-badge-active {
+  border-color: #059669;
+  background: #ecfdf5;
+  color: #047857;
+  box-shadow: inset 0 0 0 1px #059669;
+}
+
+.dialog-dialog .settings-model-badge-name {
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-dialog .settings-model-badge-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #991b1b;
+  border-radius: 999px;
+  background: #fff;
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.dialog-dialog .settings-model-badge:hover .settings-model-badge-remove,
+.dialog-dialog .settings-model-badge-remove:focus {
+  display: inline-flex;
+}
+
+.dialog-dialog .settings-model-add-toggle,
+.dialog-dialog .settings-model-add-button {
+  align-self: flex-start;
+  min-height: 28px !important;
+  padding: 0.25rem 0.65rem !important;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.dialog-dialog .settings-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+  padding: 0.55rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
 .dialog-dialog .settings-hidden-file-input {
   display: none;
 }

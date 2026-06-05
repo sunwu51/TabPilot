@@ -1,6 +1,8 @@
 /* global chrome */
 import { resolveLlmRequestUrl } from "../core/endpoint";
 import { API_TYPES, getDefaultApiType, normalizeApiType } from "../core/config";
+import { syncActiveModelFields } from "../core/modelProfiles";
+import { ensureSettingsMigrated } from "../../settings/migrations";
 
 /**
  * Lightweight non-streaming, no-tools LLM text completion.
@@ -188,11 +190,13 @@ async function _anthropicComplete(config, messages) {
  * Returns null if not configured.
  */
 export async function getLLMConfigForMemory() {
+  await ensureSettingsMigrated();
   const { llmConfig } = await chrome.storage.local.get({
-    llmConfig: { apiType: getDefaultApiType(), baseUrl: "", apiKey: "", model: "" },
+    llmConfig: { activeLlmModelId: "", llmModels: [] },
   });
-  if (!llmConfig?.apiKey || !llmConfig?.baseUrl || !llmConfig?.model) {
+  const activeConfig = syncActiveModelFields(llmConfig);
+  if (!activeConfig?.apiKey || !activeConfig?.baseUrl || !activeConfig?.model) {
     return null;
   }
-  return llmConfig;
+  return activeConfig;
 }
