@@ -1,10 +1,9 @@
 /* global chrome */
-import { TOOLS, executeTool, isImageApiConfigured, isImageToolName } from "../llm";
+import { TOOLS, executeTool, isImageApiConfigured, isImageToolName, getBuiltinToolTimeoutSeconds } from "../llm";
 import { DEFAULT_WS_BRIDGE_STATUS, WS_BRIDGE_STATUS_STORAGE_KEY } from "./wsBridgeStatus";
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
-const TOOL_CALL_TIMEOUT_MS = 60000;
 const WS_STORAGE_KEY = "wsServerUrl";
 const BRIDGE_ENABLED_STORAGE_KEY = "bridgeEnabled";
 const WS_BRIDGE_STALE_HEARTBEAT_MS = 90000;
@@ -549,8 +548,9 @@ async function executeToolCall(id, params) {
   let isError = false;
 
   try {
+    const timeoutMs = Math.max(1, getBuiltinToolTimeoutSeconds(name)) * 1000;
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Tool execution timed out")), TOOL_CALL_TIMEOUT_MS)
+      setTimeout(() => reject(new Error(`Tool execution timed out after ${timeoutMs / 1000}s: ${name}`)), timeoutMs)
     );
     result = await Promise.race([executeTool(name, args, []), timeoutPromise]);
   } catch (e) {

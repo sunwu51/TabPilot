@@ -1,5 +1,10 @@
 /* global chrome */
 import { getDefaultApiType, normalizeApiType, normalizeModelContextLimitTokens } from "../llm";
+import {
+  normalizeImageModelProfiles,
+  normalizeLlmModelProfiles,
+  syncActiveModelFields
+} from "../llm";
 
 export const SETTINGS_BACKUP_VERSION = 1;
 
@@ -18,6 +23,8 @@ const LLM_CONFIG_KEYS = [
   "baseUrl",
   "apiKey",
   "model",
+  "activeLlmModelId",
+  "llmModels",
   "modelContextLimitTokens",
   "firstPacketTimeoutSeconds",
   "supportsImageInput",
@@ -27,7 +34,9 @@ const LLM_CONFIG_KEYS = [
   "imageBaseUrl",
   "imageApiKey",
   "imageApiProtocol",
-  "imageModel"
+  "imageModel",
+  "activeImageModelId",
+  "imageModels"
 ];
 
 export async function exportSettingsBackup() {
@@ -68,10 +77,14 @@ export async function importSettingsBackupFromText(text) {
   }
   if (patch.llmConfig) {
     const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const shouldSyncProfiles = hasProfilePatch(patch.llmConfig);
     patch.llmConfig = {
       ...(llmConfig && typeof llmConfig === "object" && !Array.isArray(llmConfig) ? llmConfig : {}),
       ...patch.llmConfig
     };
+    if (shouldSyncProfiles) {
+      patch.llmConfig = syncActiveModelFields(patch.llmConfig);
+    }
   }
   await chrome.storage.local.set(patch);
   return { updatedKeys: Object.keys(patch) };
@@ -109,10 +122,22 @@ function normalizeLlmConfigPatch(value) {
   addStringPatch(patch, source, "baseUrl");
   addStringPatch(patch, source, "apiKey");
   addStringPatch(patch, source, "model");
+  addStringPatch(patch, source, "activeLlmModelId");
+  if (Object.prototype.hasOwnProperty.call(source, "llmModels")) {
+    const { profiles, activeId } = normalizeLlmModelProfiles(source);
+    patch.llmModels = profiles;
+    if (!patch.activeLlmModelId) patch.activeLlmModelId = activeId;
+  }
   addStringPatch(patch, source, "imageBaseUrl");
   addStringPatch(patch, source, "imageApiKey");
   addStringPatch(patch, source, "imageApiProtocol");
   addStringPatch(patch, source, "imageModel");
+  addStringPatch(patch, source, "activeImageModelId");
+  if (Object.prototype.hasOwnProperty.call(source, "imageModels")) {
+    const { profiles, activeId } = normalizeImageModelProfiles(source);
+    patch.imageModels = profiles;
+    if (!patch.activeImageModelId) patch.activeImageModelId = activeId;
+  }
   if (Object.prototype.hasOwnProperty.call(source, "modelContextLimitTokens")) {
     patch.modelContextLimitTokens = normalizeModelContextLimitTokens(source.modelContextLimitTokens);
   }
@@ -135,6 +160,13 @@ function pickPresentKeys(source, keys) {
     }
   }
   return result;
+}
+
+function hasProfilePatch(llmConfig) {
+  return Object.prototype.hasOwnProperty.call(llmConfig, "llmModels")
+    || Object.prototype.hasOwnProperty.call(llmConfig, "activeLlmModelId")
+    || Object.prototype.hasOwnProperty.call(llmConfig, "imageModels")
+    || Object.prototype.hasOwnProperty.call(llmConfig, "activeImageModelId");
 }
 
 function addStringPatch(patch, source, key) {

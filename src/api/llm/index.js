@@ -7,6 +7,16 @@ export {
   normalizeApiType,
   normalizeModelContextLimitTokens
 } from "./core/config";
+export {
+  createModelProfileId,
+  isConfiguredImageProfile,
+  normalizeImageModelProfiles,
+  normalizeImageProfileProtocol,
+  normalizeLlmModelProfiles,
+  resolveActiveImageConfig,
+  resolveActiveLlmConfig,
+  syncActiveModelFields
+} from "./core/modelProfiles";
 export { getLongToolArgumentFields, isLongToolArgumentName } from "./core/longToolArgs";
 export { STASH_STORAGE_KEY } from "./core/constants";
 export {
@@ -20,7 +30,7 @@ export {
   isImageToolName,
   isMcpToolCallName
 } from "./tools/definitions";
-export { executeTool, captureFullPageScreenshotToTab, openHelloWorldPlayground } from "./tools/executor";
+export { executeTool, captureFullPageScreenshotToTab, openHelloWorldPlayground, getBuiltinToolTimeoutSeconds } from "./tools/executor";
 export { triggerBrowserDownload, hasDownloadsPermission, DOWNLOADS_PERMISSION_REQUIRED } from "./tools/builtins/downloadHelper";
 export {
   DEFAULT_IMAGE_MODEL,

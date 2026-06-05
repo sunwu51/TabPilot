@@ -8,9 +8,12 @@ import {
   IMAGE_API_PROTOCOLS,
   getDefaultApiType,
   isImageApiConfigured,
+  normalizeImageModelProfiles,
   normalizeApiType,
   normalizeImageApiProtocol,
+  normalizeLlmModelProfiles,
   normalizeModelContextLimitTokens,
+  syncActiveModelFields,
   streamChat,
   executeTool,
   findMcpToolByCallName,
@@ -177,6 +180,28 @@ function resolveSupportsToolImageInput(llmConfig = {}) {
   return true;
 }
 
+function buildLlmConfigInfo(llmConfig = {}) {
+  const syncedConfig = syncActiveModelFields(llmConfig);
+  const llmProfiles = normalizeLlmModelProfiles(syncedConfig);
+  const imageProfiles = normalizeImageModelProfiles(syncedConfig);
+  return {
+    apiType: normalizeApiType(syncedConfig.apiType || getDefaultApiType()),
+    model: syncedConfig.model || "",
+    modelContextLimitTokens: normalizeModelContextLimitTokens(syncedConfig.modelContextLimitTokens),
+    supportsImageInput: syncedConfig.supportsImageInput === true,
+    supportsToolImageInput: resolveSupportsToolImageInput(syncedConfig),
+    reasoningEffort: normalizeReasoningEffort(syncedConfig.reasoningEffort),
+    omitThinkingFromRequests: syncedConfig.omitThinkingFromRequests === true,
+    imageApiProtocol: normalizeImageApiProtocol(syncedConfig.imageApiProtocol),
+    imageModel: syncedConfig.imageModel || DEFAULT_IMAGE_MODEL,
+    imageToolsEnabled: isImageApiConfigured(syncedConfig),
+    llmModels: llmProfiles.profiles,
+    activeLlmModelId: llmProfiles.activeId,
+    imageModels: imageProfiles.profiles,
+    activeImageModelId: imageProfiles.activeId
+  };
+}
+
 function createRestoredAttachmentId() {
   return `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -328,8 +353,14 @@ export default function AgentPanel() {
     reasoningEffort: "default",
     omitThinkingFromRequests: false,
     imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
-    imageToolsEnabled: false
+    imageModel: DEFAULT_IMAGE_MODEL,
+    imageToolsEnabled: false,
+    llmModels: [],
+    activeLlmModelId: "",
+    imageModels: [],
+    activeImageModelId: ""
   });
+  const [modelMenuOpen, setModelMenuOpen] = useState(null);
   const [contextUsage, setContextUsage] = useState(null);
   const [requestBodySize, setRequestBodySize] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
@@ -357,6 +388,7 @@ export default function AgentPanel() {
   const messagesScrollerRef = useRef(null);
   const messagesContentRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const modelMenuRef = useRef(null);
   const shouldAutoFollowBottomRef = useRef(true);
   const resizeObserverRef = useRef(null);
   const inputRef = useRef(null);
@@ -664,23 +696,33 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
+    if (!modelMenuOpen) return undefined;
+
+    function handlePointerDown(event) {
+      if (modelMenuRef.current?.contains(event.target)) return;
+      setModelMenuOpen(null);
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") setModelMenuOpen(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [modelMenuOpen]);
+
+  useEffect(() => {
     void refreshLlmConfigInfo();
 
     function handleStorageChanged(changes, areaName) {
       if (areaName !== "local") return;
       if (areaName === "local" && changes.llmConfig) {
         const nextConfig = changes.llmConfig.newValue || {};
-        setLlmConfigInfo({
-          apiType: normalizeApiType(nextConfig.apiType || getDefaultApiType()),
-          model: nextConfig.model || "",
-          modelContextLimitTokens: normalizeModelContextLimitTokens(nextConfig.modelContextLimitTokens),
-          supportsImageInput: nextConfig.supportsImageInput === true,
-          supportsToolImageInput: resolveSupportsToolImageInput(nextConfig),
-          reasoningEffort: normalizeReasoningEffort(nextConfig.reasoningEffort),
-          omitThinkingFromRequests: nextConfig.omitThinkingFromRequests === true,
-          imageApiProtocol: normalizeImageApiProtocol(nextConfig.imageApiProtocol),
-          imageToolsEnabled: isImageApiConfigured(nextConfig)
-        });
+        setLlmConfigInfo(buildLlmConfigInfo(nextConfig));
       }
       if (changes.sessions_index) {
         const nextSessions = Array.isArray(changes.sessions_index.newValue)
@@ -816,17 +858,7 @@ export default function AgentPanel() {
     const { llmConfig } = await chrome.storage.local.get({
       llmConfig: { apiType: getDefaultApiType(), model: "" }
     });
-    setLlmConfigInfo({
-      apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
-      model: llmConfig?.model || "",
-      modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
-      supportsImageInput: llmConfig?.supportsImageInput === true,
-      supportsToolImageInput: resolveSupportsToolImageInput(llmConfig),
-      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
-      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
-      imageToolsEnabled: isImageApiConfigured(llmConfig)
-    });
+    setLlmConfigInfo(buildLlmConfigInfo(llmConfig));
   }
 
   async function getCurrentWindowId() {
@@ -2240,29 +2272,32 @@ export default function AgentPanel() {
       },
       betaFeaturesEnabled: true
     });
-    setLlmConfigInfo({
-      apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
-      model: llmConfig?.model || "",
-      modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
-      supportsImageInput: llmConfig?.supportsImageInput === true,
-      supportsToolImageInput: resolveSupportsToolImageInput(llmConfig),
-      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
-      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
-      imageToolsEnabled: isImageApiConfigured(llmConfig)
-    });
+    const syncedConfig = syncActiveModelFields(llmConfig);
+    setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
     return {
-      ...llmConfig,
-      apiType: normalizeApiType(llmConfig?.apiType || getDefaultApiType()),
-      modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig?.modelContextLimitTokens),
-      supportsImageInput: llmConfig?.supportsImageInput === true,
-      supportsToolImageInput: resolveSupportsToolImageInput(llmConfig),
-      reasoningEffort: normalizeReasoningEffort(llmConfig?.reasoningEffort),
-      omitThinkingFromRequests: llmConfig?.omitThinkingFromRequests === true,
-      imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol),
-      imageToolsEnabled: isImageApiConfigured(llmConfig),
+      ...syncedConfig,
+      apiType: normalizeApiType(syncedConfig?.apiType || getDefaultApiType()),
+      modelContextLimitTokens: normalizeModelContextLimitTokens(syncedConfig?.modelContextLimitTokens),
+      supportsImageInput: syncedConfig?.supportsImageInput === true,
+      supportsToolImageInput: resolveSupportsToolImageInput(syncedConfig),
+      reasoningEffort: normalizeReasoningEffort(syncedConfig?.reasoningEffort),
+      omitThinkingFromRequests: syncedConfig?.omitThinkingFromRequests === true,
+      imageApiProtocol: normalizeImageApiProtocol(syncedConfig?.imageApiProtocol),
+      imageToolsEnabled: isImageApiConfigured(syncedConfig),
       enableBetaFeatures: betaFeaturesEnabled !== false
     };
+  }
+
+  async function switchActiveModel(kind, id) {
+    const targetId = String(id || "").trim();
+    if (!targetId) return;
+    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const nextConfig = syncActiveModelFields({
+      ...llmConfig,
+      ...(kind === "image" ? { activeImageModelId: targetId } : { activeLlmModelId: targetId })
+    });
+    await chrome.storage.local.set({ llmConfig: nextConfig });
+    setModelMenuOpen(null);
   }
 
   function handleSkillsServerUrlChange(serverUrl) {
@@ -3856,9 +3891,64 @@ export default function AgentPanel() {
               disabled={!!pendingApproval}
             />
             <div className="chat-input-status-line">
-              <span className="chat-input-status-model" title={`模型：${formatModelName(llmConfigInfo.model)}`}>
-                模型：{formatModelName(llmConfigInfo.model)}
-              </span>
+              <div className="chat-input-model-switchers" ref={modelMenuRef}>
+                <div className="chat-input-model-switcher">
+                  <button
+                    type="button"
+                    className="chat-input-model-button"
+                    onClick={() => setModelMenuOpen(prev => prev === "llm" ? null : "llm")}
+                    title={`模型：${formatModelName(llmConfigInfo.model)}`}
+                  >
+                    模型：{formatModelName(llmConfigInfo.model)}
+                    <span className="chat-input-model-caret">⌃</span>
+                  </button>
+                  {modelMenuOpen === "llm" && (
+                    <div className="chat-input-model-menu">
+                      {llmConfigInfo.llmModels.length === 0 ? (
+                        <div className="chat-input-model-menu-empty">未配置模型</div>
+                      ) : llmConfigInfo.llmModels.map(item => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`chat-input-model-menu-item${item.id === llmConfigInfo.activeLlmModelId ? " chat-input-model-menu-item-active" : ""}`}
+                          onClick={() => void switchActiveModel("llm", item.id)}
+                          title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
+                        >
+                          <span>{item.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="chat-input-model-switcher">
+                  <button
+                    type="button"
+                    className="chat-input-model-button chat-input-image-model-button"
+                    onClick={() => setModelMenuOpen(prev => prev === "image" ? null : "image")}
+                    title={`图片：${formatModelName(llmConfigInfo.imageModel)}`}
+                  >
+                    图片：{formatModelName(llmConfigInfo.imageModel)}
+                    <span className="chat-input-model-caret">⌃</span>
+                  </button>
+                  {modelMenuOpen === "image" && (
+                    <div className="chat-input-model-menu">
+                      {llmConfigInfo.imageModels.length === 0 ? (
+                        <div className="chat-input-model-menu-empty">未配置图片模型</div>
+                      ) : llmConfigInfo.imageModels.map(item => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={`chat-input-model-menu-item${item.id === llmConfigInfo.activeImageModelId ? " chat-input-model-menu-item-active" : ""}`}
+                          onClick={() => void switchActiveModel("image", item.id)}
+                          title={`${item.name}\n${item.imageApiProtocol}\n${item.imageBaseUrl}`}
+                        >
+                          <span>{item.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
               {showRequestBodySize && (
                 <span
                   className={`chat-input-status-request-body${requestBodySizeWarning ? " chat-input-status-request-body-warning" : ""}`}

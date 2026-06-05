@@ -18,6 +18,9 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   const [annotationCount, setAnnotationCount] = useState(0);
   const [referenceImages, setReferenceImages] = useState([]);
   const [referenceImagesLoading, setReferenceImagesLoading] = useState(false);
+  const [imageBox, setImageBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
+  const imageLayerRef = useRef(null);
+  const imageRef = useRef(null);
   const canvasRef = useRef(null);
   const annotationInputRef = useRef(null);
   const referenceImageInputRef = useRef(null);
@@ -39,6 +42,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     setAnnotationCount(0);
     setReferenceImages([]);
     setReferenceImagesLoading(false);
+    setImageBox({ left: 0, top: 0, width: 0, height: 0 });
     drawingRef.current = false;
     maskPathsRef.current = [];
     activeMaskPathRef.current = [];
@@ -60,6 +64,16 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     if (!annotationDraft) return;
     annotationInputRef.current?.focus();
   }, [annotationDraft]);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    const imageLayer = imageLayerRef.current;
+    if (!image || !imageLayer || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => syncMaskCanvas());
+    observer.observe(image);
+    observer.observe(imageLayer);
+    return () => observer.disconnect();
+  }, [request?.src]);
 
   async function addReferenceImageFiles(files) {
     const imageFiles = Array.from(files || []).filter(isImageFile);
@@ -120,14 +134,25 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   }
 
   function syncMaskCanvas(event) {
-    const image = event.currentTarget;
+    const image = event?.currentTarget || imageRef.current;
+    const imageLayer = imageLayerRef.current;
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!image || !canvas) return;
     const width = Math.max(1, image.naturalWidth || image.clientWidth || 1);
     const height = Math.max(1, image.naturalHeight || image.clientHeight || 1);
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
+    }
+    if (imageLayer) {
+      const imageRect = image.getBoundingClientRect();
+      const layerRect = imageLayer.getBoundingClientRect();
+      setImageBox({
+        left: imageRect.left - layerRect.left,
+        top: imageRect.top - layerRect.top,
+        width: imageRect.width,
+        height: imageRect.height
+      });
     }
     renderMaskPreview();
   }
@@ -167,6 +192,14 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return null;
+    if (
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom
+    ) {
+      return null;
+    }
     return {
       x: (event.clientX - rect.left) * (canvas.width / rect.width),
       y: (event.clientY - rect.top) * (canvas.height / rect.height)
@@ -174,12 +207,45 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   }
 
   function getImagePercentPoint(event) {
-    const imageLayer = event.currentTarget.closest?.(".image-edit-image-layer") || event.currentTarget;
-    const rect = imageLayer.getBoundingClientRect();
+    const image = imageRef.current;
+    const imageRect = image?.getBoundingClientRect();
+    const layerRect = imageLayerRef.current?.getBoundingClientRect();
+    const rect = imageRect?.width && imageRect?.height ? imageRect : layerRect;
     if (!rect.width || !rect.height) return null;
+    if (
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom
+    ) {
+      return null;
+    }
     const xPercent = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
     const yPercent = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100));
     return { xPercent, yPercent };
+  }
+
+  function getImageOverlayStyle() {
+    if (!imageBox.width || !imageBox.height) return undefined;
+    return {
+      left: `${imageBox.left}px`,
+      top: `${imageBox.top}px`,
+      width: `${imageBox.width}px`,
+      height: `${imageBox.height}px`
+    };
+  }
+
+  function getAnnotationPositionStyle(point) {
+    if (!imageBox.width || !imageBox.height) {
+      return {
+        left: `${point.xPercent}%`,
+        top: `${point.yPercent}%`
+      };
+    }
+    return {
+      left: `${imageBox.left + (imageBox.width * point.xPercent) / 100}px`,
+      top: `${imageBox.top + (imageBox.height * point.yPercent) / 100}px`
+    };
   }
 
   function handleAnnotationClick(event) {
@@ -366,10 +432,12 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
           <div className="image-edit-preview">
             <div className="image-edit-preview-content">
               <div
+                ref={imageLayerRef}
                 className={`image-edit-image-layer${isAnnotationMode ? " image-edit-preview-annotation" : ""}`}
                 onClick={handleAnnotationClick}
               >
                 <img
+                  ref={imageRef}
                   src={request?.src}
                   alt={request?.alt || "图片"}
                   onLoad={syncMaskCanvas}
@@ -377,6 +445,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
                 <canvas
                   ref={canvasRef}
                   className={`image-edit-mask-canvas${isMaskMode ? " image-edit-mask-canvas-active" : ""}`}
+                  style={getImageOverlayStyle()}
                   onPointerDown={handleMaskPointerDown}
                   onPointerMove={handleMaskPointerMove}
                   onPointerUp={handleMaskPointerEnd}
@@ -386,10 +455,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
                   <span
                     key={annotation.id}
                     className="image-edit-annotation-number image-edit-annotation-persisted"
-                    style={{
-                      left: `${annotation.xPercent}%`,
-                      top: `${annotation.yPercent}%`
-                    }}
+                    style={getAnnotationPositionStyle(annotation)}
                   >
                     {annotation.index}
                   </span>
@@ -398,19 +464,13 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
                   <>
                     <span
                       className="image-edit-annotation-number image-edit-annotation-draft-number"
-                      style={{
-                        left: `${annotationDraft.xPercent}%`,
-                        top: `${annotationDraft.yPercent}%`
-                      }}
+                      style={getAnnotationPositionStyle(annotationDraft)}
                     >
                       {annotationCount + 1}
                     </span>
                     <div
                       className="image-edit-annotation-editor"
-                      style={{
-                        left: `${annotationDraft.xPercent}%`,
-                        top: `${annotationDraft.yPercent}%`
-                      }}
+                      style={getAnnotationPositionStyle(annotationDraft)}
                     >
                       <div className="image-edit-annotation-input-wrap">
                         <input

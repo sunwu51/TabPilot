@@ -305,6 +305,36 @@ describe("built-in tool execution", () => {
     }
   });
 
+  it("ignores free-form image model overrides from tool args", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ b64_json: "aGVsbG8=" }]
+    }), { status: 200 }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        imageBaseUrl: "https://api.openai.com/v1",
+        imageApiKey: "img-token",
+        imageModel: "configured-image-model"
+      }
+    });
+
+    try {
+      const result = await executeTool("image_gen", {
+        prompt: "Draw a cat",
+        model: "made-up-model"
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        model: "configured-image-model"
+      });
+      const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+      expect(body.model).toBe("configured-image-model");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("calls the configured Image API edit endpoint with multipart image and mask", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({

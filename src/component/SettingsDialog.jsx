@@ -10,12 +10,16 @@ import {
   IMAGE_API_PROTOCOLS,
   MODEL_CONTEXT_LIMIT_OPTIONS,
   captureFullPageScreenshotToTab,
+  createModelProfileId,
   getDefaultApiType,
   normalizeApiType,
+  normalizeImageModelProfiles,
   normalizeImageApiProtocol,
+  normalizeLlmModelProfiles,
   normalizeModelContextLimitTokens,
   openHelloWorldPlayground,
-  resolveImageApiRequestUrl
+  resolveImageApiRequestUrl,
+  syncActiveModelFields
 } from "../api/llm";
 import {
   downloadSettingsBackup,
@@ -36,6 +40,8 @@ const DEFAULT_SETTINGS = {
     baseUrl: "",
     apiKey: "",
     model: "",
+    activeLlmModelId: "",
+    llmModels: [],
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
@@ -45,7 +51,9 @@ const DEFAULT_SETTINGS = {
     imageBaseUrl: "",
     imageApiKey: "",
     imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
-    imageModel: DEFAULT_IMAGE_MODEL
+    imageModel: DEFAULT_IMAGE_MODEL,
+    activeImageModelId: "",
+    imageModels: []
   },
   mcpToolTimeoutSeconds: 60,
   reuse: false,
@@ -79,6 +87,9 @@ function SettingsDialogBody() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
+  const [llmModels, setLlmModels] = useState(DEFAULT_SETTINGS.llmConfig.llmModels);
+  const [activeLlmModelId, setActiveLlmModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeLlmModelId);
+  const [llmModelFormOpen, setLlmModelFormOpen] = useState(false);
   const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
@@ -89,6 +100,9 @@ function SettingsDialogBody() {
   const [imageApiKey, setImageApiKey] = useState(DEFAULT_SETTINGS.llmConfig.imageApiKey);
   const [imageApiProtocol, setImageApiProtocol] = useState(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
   const [imageModel, setImageModel] = useState(DEFAULT_SETTINGS.llmConfig.imageModel);
+  const [imageModels, setImageModels] = useState(DEFAULT_SETTINGS.llmConfig.imageModels);
+  const [activeImageModelId, setActiveImageModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeImageModelId);
+  const [imageModelFormOpen, setImageModelFormOpen] = useState(false);
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
@@ -178,10 +192,16 @@ function SettingsDialogBody() {
         [WS_BRIDGE_STATUS_STORAGE_KEY]: DEFAULT_WS_BRIDGE_STATUS
       });
       const nextLlmConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
-      setApiType(normalizeApiType(nextLlmConfig.apiType || DEFAULT_SETTINGS.llmConfig.apiType));
-      setBaseUrl(nextLlmConfig.baseUrl || "");
-      setApiKey(nextLlmConfig.apiKey || "");
-      setModel(nextLlmConfig.model || "");
+      const normalizedLlmProfiles = normalizeLlmModelProfiles(nextLlmConfig);
+      const normalizedImageProfiles = normalizeImageModelProfiles(nextLlmConfig);
+      setLlmModels(normalizedLlmProfiles.profiles);
+      setActiveLlmModelId(normalizedLlmProfiles.activeId);
+      setImageModels(normalizedImageProfiles.profiles);
+      setActiveImageModelId(normalizedImageProfiles.activeId);
+      setApiType(DEFAULT_SETTINGS.llmConfig.apiType);
+      setBaseUrl("");
+      setApiKey("");
+      setModel("");
       setModelContextLimitTokens(normalizeModelContextLimitTokens(nextLlmConfig.modelContextLimitTokens));
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
@@ -192,10 +212,12 @@ function SettingsDialogBody() {
       ));
       setReasoningEffort(normalizeReasoningEffort(nextLlmConfig.reasoningEffort));
       setOmitThinkingFromRequests(nextLlmConfig.omitThinkingFromRequests === true);
-      setImageBaseUrl(nextLlmConfig.imageBaseUrl || "");
-      setImageApiKey(nextLlmConfig.imageApiKey || "");
-      setImageApiProtocol(normalizeImageApiProtocol(nextLlmConfig.imageApiProtocol));
-      setImageModel(nextLlmConfig.imageModel || DEFAULT_IMAGE_MODEL);
+      setImageBaseUrl("");
+      setImageApiKey("");
+      setImageApiProtocol(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+      setImageModel("");
+      setLlmModelFormOpen(false);
+      setImageModelFormOpen(false);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
@@ -232,12 +254,13 @@ function SettingsDialogBody() {
         return;
       }
 
-      await chrome.storage.local.set({
-        llmConfig: {
+      const nextLlmConfig = syncActiveModelFields({
           apiType,
           baseUrl,
           apiKey,
           model,
+          activeLlmModelId,
+          llmModels,
           modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
@@ -247,8 +270,13 @@ function SettingsDialogBody() {
           imageBaseUrl,
           imageApiKey,
           imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
-          imageModel: imageModel || DEFAULT_IMAGE_MODEL
-        },
+          imageModel,
+          activeImageModelId,
+          imageModels
+      });
+
+      await chrome.storage.local.set({
+        llmConfig: nextLlmConfig,
         mcpToolTimeoutSeconds: Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds),
         reuse,
         extractTextLimit,
@@ -276,6 +304,76 @@ function SettingsDialogBody() {
   function handleCancel() {
     void loadDraft();
     closeDialog();
+  }
+
+  function handleAddLlmModel() {
+    const trimmedBaseUrl = String(baseUrl || "").trim();
+    const trimmedApiKey = String(apiKey || "").trim();
+    const trimmedModel = String(model || "").trim();
+    if (!trimmedBaseUrl || !trimmedApiKey || !trimmedModel) {
+      toast.error("API 地址、API Key 和模型不能为空");
+      return;
+    }
+    const profile = {
+      id: createModelProfileId("llm"),
+      name: trimmedModel,
+      apiType: normalizeApiType(apiType),
+      baseUrl: trimmedBaseUrl,
+      apiKey: trimmedApiKey,
+      model: trimmedModel
+    };
+    setLlmModels(prev => [...prev, profile]);
+    if (!activeLlmModelId) setActiveLlmModelId(profile.id);
+    setApiType(DEFAULT_SETTINGS.llmConfig.apiType);
+    setBaseUrl("");
+    setApiKey("");
+    setModel("");
+    setFormKey(prev => prev + 1);
+  }
+
+  function handleRemoveLlmModel(id) {
+    setLlmModels(prev => {
+      const next = prev.filter(item => item.id !== id);
+      if (activeLlmModelId === id) {
+        setActiveLlmModelId(next[0]?.id || "");
+      }
+      return next;
+    });
+  }
+
+  function handleAddImageModel() {
+    const trimmedBaseUrl = String(imageBaseUrl || "").trim();
+    const trimmedApiKey = String(imageApiKey || "").trim();
+    const trimmedModel = String(imageModel || "").trim();
+    if (!trimmedBaseUrl || !trimmedApiKey || !trimmedModel) {
+      toast.error("Image API 地址、Token 和模型不能为空");
+      return;
+    }
+    const profile = {
+      id: createModelProfileId("img"),
+      name: trimmedModel,
+      imageBaseUrl: trimmedBaseUrl,
+      imageApiKey: trimmedApiKey,
+      imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
+      imageModel: trimmedModel
+    };
+    setImageModels(prev => [...prev, profile]);
+    if (!activeImageModelId) setActiveImageModelId(profile.id);
+    setImageBaseUrl("");
+    setImageApiKey("");
+    setImageApiProtocol(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+    setImageModel("");
+    setFormKey(prev => prev + 1);
+  }
+
+  function handleRemoveImageModel(id) {
+    setImageModels(prev => {
+      const next = prev.filter(item => item.id !== id);
+      if (activeImageModelId === id) {
+        setActiveImageModelId(next[0]?.id || "");
+      }
+      return next;
+    });
   }
 
   async function handleClearReusePolicies() {
@@ -369,94 +467,141 @@ function SettingsDialogBody() {
       <div className="settings-dialog-scroll">
         <div className="settings-card">
           <div className="settings-card-title">LLM 配置</div>
-          <Select
-            label="API 类型"
-            items={["OpenAI Chat Completions", "OpenAI Responses", "Anthropic"]}
-            defaultIndex={apiType === API_TYPES.OPENAI_RESPONSES ? 1 : (apiType === API_TYPES.ANTHROPIC ? 2 : 0)}
-            onSelectedItemChange={(changes) => {
-              const selected = changes.selectedItem;
-              if (selected === "Anthropic") {
-                setApiType(API_TYPES.ANTHROPIC);
-              } else if (selected === "OpenAI Responses") {
-                setApiType(API_TYPES.OPENAI_RESPONSES);
-              } else {
-                setApiType(API_TYPES.OPENAI_CHAT_COMPLETIONS);
-              }
-            }}
-          />
-          <Input
-            label="API 地址"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={baseUrl}
-            onChange={setBaseUrl}
-            placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
-          />
-          <div className="settings-api-url-hint">
-            最终 URL 为 {resolvedApiUrl || "—"}
-          </div>
-          <div className="settings-secret-field">
-            <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-api-key">API Key</label>
-            <div className="settings-secret-input-wrapper">
-              <input
-                id="settings-api-key"
-                className="settings-secret-input !min-h-8"
-                type={showApiKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={apiType === API_TYPES.ANTHROPIC ? "sk-ant-..." : "sk-..."}
-                autoComplete="off"
-                spellCheck={false}
-              />
+          <div className="settings-model-badges" aria-label="已保存 LLM 模型">
+            {llmModels.length === 0 ? (
+              <span className="settings-model-empty">暂无模型</span>
+            ) : llmModels.map(item => (
               <button
+                key={item.id}
                 type="button"
-                className="settings-secret-toggle"
-                onClick={() => setShowApiKey((prev) => !prev)}
-                aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
-                title={showApiKey ? "隐藏" : "显示"}
+                className={`settings-model-badge${item.id === activeLlmModelId ? " settings-model-badge-active" : ""}`}
+                onClick={() => setActiveLlmModelId(item.id)}
+                title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
               >
-                {showApiKey ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                    />
-                  </svg>
-                )}
+                <span className="settings-model-badge-name">{item.name}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="settings-model-badge-remove"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveLlmModel(item.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleRemoveLlmModel(item.id);
+                  }}
+                  aria-label={`删除 ${item.name}`}
+                  title="删除"
+                >
+                  ×
+                </span>
               </button>
-            </div>
+            ))}
           </div>
-          <Input
-            label="模型"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={model}
-            onChange={setModel}
-            placeholder={apiType === API_TYPES.ANTHROPIC ? "claude-sonnet-4-20250514" : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-4.1-mini" : "deepseek-v4-flash")}
-          />
+          <Button
+            className="settings-model-add-toggle bg-[var(--w-indigo)]"
+            onPress={() => setLlmModelFormOpen(prev => !prev)}
+          >
+            {llmModelFormOpen ? "收起添加模型" : "添加模型"}
+          </Button>
+          {llmModelFormOpen && (
+            <div className="settings-model-form">
+              <Select
+                label="API 类型"
+                items={["OpenAI Chat Completions", "OpenAI Responses", "Anthropic"]}
+                defaultIndex={apiType === API_TYPES.OPENAI_RESPONSES ? 1 : (apiType === API_TYPES.ANTHROPIC ? 2 : 0)}
+                onSelectedItemChange={(changes) => {
+                  const selected = changes.selectedItem;
+                  if (selected === "Anthropic") {
+                    setApiType(API_TYPES.ANTHROPIC);
+                  } else if (selected === "OpenAI Responses") {
+                    setApiType(API_TYPES.OPENAI_RESPONSES);
+                  } else {
+                    setApiType(API_TYPES.OPENAI_CHAT_COMPLETIONS);
+                  }
+                }}
+              />
+              <Input
+                label="API 地址"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={baseUrl}
+                onChange={setBaseUrl}
+                placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
+              />
+              <div className="settings-api-url-hint">
+                最终 URL 为 {resolvedApiUrl || "—"}
+              </div>
+              <div className="settings-secret-field">
+                <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-api-key">API Key</label>
+                <div className="settings-secret-input-wrapper">
+                  <input
+                    id="settings-api-key"
+                    className="settings-secret-input !min-h-8"
+                    type={showApiKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={apiType === API_TYPES.ANTHROPIC ? "sk-ant-..." : "sk-..."}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-secret-toggle"
+                    onClick={() => setShowApiKey((prev) => !prev)}
+                    aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                    title={showApiKey ? "隐藏" : "显示"}
+                  >
+                    {showApiKey ? (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <Input
+                label="模型"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={model}
+                onChange={setModel}
+                placeholder={apiType === API_TYPES.ANTHROPIC ? "claude-sonnet-4-20250514" : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-4.1-mini" : "deepseek-v4-flash")}
+              />
+              <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={handleAddLlmModel}>
+                添加
+              </Button>
+            </div>
+          )}
           <Select
             label="模型上下文大小（用于上下文告警）"
             items={MODEL_CONTEXT_LIMIT_OPTIONS.map((item) => item.label)}
@@ -529,90 +674,137 @@ function SettingsDialogBody() {
             )}
           </div>
           <div className="settings-inline-section-title">Image API 配置</div>
-          <Select
-            label="Image API 规范"
-            items={imageProtocolOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
-            onSelectedItemChange={(changes) => {
-              const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
-              setImageApiProtocol(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
-            }}
-          />
-          <Input
-            label="Image API 地址"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={imageBaseUrl}
-            onChange={setImageBaseUrl}
-            placeholder="https://api.openai.com/v1"
-          />
-          <div className="settings-api-url-hint">
-            {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
-              ? `Chat Completions ${resolvedImageChatUrl || "—"}`
-              : `生成 ${resolvedImageGenUrl || "—"}；编辑 ${resolvedImageEditUrl || "—"}`}
-          </div>
-          <div className="settings-secret-field">
-            <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-image-api-key">Image API Token</label>
-            <div className="settings-secret-input-wrapper">
-              <input
-                id="settings-image-api-key"
-                className="settings-secret-input !min-h-8"
-                type={showImageApiKey ? "text" : "password"}
-                value={imageApiKey}
-                onChange={(e) => setImageApiKey(e.target.value)}
-                placeholder="sk-..."
-                autoComplete="off"
-                spellCheck={false}
-              />
+          <div className="settings-model-badges" aria-label="已保存图片模型">
+            {imageModels.length === 0 ? (
+              <span className="settings-model-empty">暂无图片模型</span>
+            ) : imageModels.map(item => (
               <button
+                key={item.id}
                 type="button"
-                className="settings-secret-toggle"
-                onClick={() => setShowImageApiKey((prev) => !prev)}
-                aria-label={showImageApiKey ? "隐藏 Image API Token" : "显示 Image API Token"}
-                title={showImageApiKey ? "隐藏" : "显示"}
+                className={`settings-model-badge settings-image-model-badge${item.id === activeImageModelId ? " settings-model-badge-active" : ""}`}
+                onClick={() => setActiveImageModelId(item.id)}
+                title={`${item.name}\n${item.imageApiProtocol}\n${item.imageBaseUrl}`}
               >
-                {showImageApiKey ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                    />
-                  </svg>
-                )}
+                <span className="settings-model-badge-name">{item.name}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="settings-model-badge-remove"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveImageModel(item.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleRemoveImageModel(item.id);
+                  }}
+                  aria-label={`删除 ${item.name}`}
+                  title="删除"
+                >
+                  ×
+                </span>
               </button>
-            </div>
+            ))}
           </div>
-          <Input
-            label="Image 模型"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={imageModel}
-            onChange={setImageModel}
-            placeholder={DEFAULT_IMAGE_MODEL}
-          />
+          <Button
+            className="settings-model-add-toggle bg-[var(--w-green)]"
+            onPress={() => setImageModelFormOpen(prev => !prev)}
+          >
+            {imageModelFormOpen ? "收起添加图片模型" : "添加图片模型"}
+          </Button>
+          {imageModelFormOpen && (
+            <div className="settings-model-form">
+              <Select
+                label="Image API 规范"
+                items={imageProtocolOptions.map((item) => item.label)}
+                defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
+                onSelectedItemChange={(changes) => {
+                  const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
+                  setImageApiProtocol(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+                }}
+              />
+              <Input
+                label="Image API 地址"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={imageBaseUrl}
+                onChange={setImageBaseUrl}
+                placeholder="https://api.openai.com/v1"
+              />
+              <div className="settings-api-url-hint">
+                {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
+                  ? `Chat Completions ${resolvedImageChatUrl || "—"}`
+                  : `生成 ${resolvedImageGenUrl || "—"}；编辑 ${resolvedImageEditUrl || "—"}`}
+              </div>
+              <div className="settings-secret-field">
+                <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-image-api-key">Image API Token</label>
+                <div className="settings-secret-input-wrapper">
+                  <input
+                    id="settings-image-api-key"
+                    className="settings-secret-input !min-h-8"
+                    type={showImageApiKey ? "text" : "password"}
+                    value={imageApiKey}
+                    onChange={(e) => setImageApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-secret-toggle"
+                    onClick={() => setShowImageApiKey((prev) => !prev)}
+                    aria-label={showImageApiKey ? "隐藏 Image API Token" : "显示 Image API Token"}
+                    title={showImageApiKey ? "隐藏" : "显示"}
+                  >
+                    {showImageApiKey ? (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <Input
+                label="Image 模型"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={imageModel}
+                onChange={setImageModel}
+                placeholder={DEFAULT_IMAGE_MODEL}
+              />
+              <Button className="settings-model-add-button bg-[var(--w-green)]" onPress={handleAddImageModel}>
+                添加
+              </Button>
+            </div>
+          )}
           <div className="settings-api-url-hint">
             配置完整后会向模型开放 image_gen 和 image_edit 内置工具；Chat Completions 规范不支持 mask；工具结果只在本地预览/缓存图片。
           </div>

@@ -1,5 +1,7 @@
 /* global chrome */
 
+import { isConfiguredImageProfile, resolveActiveImageConfig } from "../../core/modelProfiles";
+
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const IMAGE_API_PROTOCOLS = {
   GENERATE: "generate",
@@ -14,6 +16,9 @@ const IMAGE_DEREF_PATTERN = /^\|deRef:(img_[A-Za-z0-9_-]+)\|$/;
 const IMAGE_REF_PATTERN = /^img_[A-Za-z0-9_-]+$/;
 
 export function isImageApiConfigured(config = {}) {
+  const activeConfig = resolveActiveImageConfig(config);
+  if (activeConfig.error) return false;
+  if (isConfiguredImageProfile(activeConfig)) return true;
   return !!String(config?.imageBaseUrl || "").trim() && !!String(config?.imageApiKey || "").trim();
 }
 
@@ -58,7 +63,8 @@ export function normalizeImageApiProtocol(value) {
 }
 
 export async function executeImageGeneration(args = {}) {
-  const config = await readImageApiConfig();
+  const config = await readImageApiConfig(args);
+  if (config.error) return { error: config.error };
   const validationError = validateImageApiConfig(config);
   if (validationError) return validationError;
 
@@ -83,7 +89,8 @@ export async function executeImageGeneration(args = {}) {
 }
 
 export async function executeImageEdit(args = {}) {
-  const config = await readImageApiConfig();
+  const config = await readImageApiConfig(args);
+  if (config.error) return { error: config.error };
   const validationError = validateImageApiConfig(config);
   if (validationError) return validationError;
 
@@ -148,13 +155,17 @@ function normalizeEditImages(args = {}) {
   });
 }
 
-async function readImageApiConfig() {
+async function readImageApiConfig(args = {}) {
   const { llmConfig } = await chrome.storage.local.get({ llmConfig: {} });
+  const config = resolveActiveImageConfig(llmConfig, args.image_model_id);
+  if (config.error) return { error: config.error };
   return {
-    imageBaseUrl: String(llmConfig?.imageBaseUrl || "").trim(),
-    imageApiKey: String(llmConfig?.imageApiKey || "").trim(),
-    imageModel: String(llmConfig?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL,
-    imageApiProtocol: normalizeImageApiProtocol(llmConfig?.imageApiProtocol)
+    imageBaseUrl: String(config?.imageBaseUrl || "").trim(),
+    imageApiKey: String(config?.imageApiKey || "").trim(),
+    imageModel: String(config?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL,
+    imageApiProtocol: normalizeImageApiProtocol(config?.imageApiProtocol),
+    imageModels: config?.imageModels || [],
+    activeImageModelId: config?.activeImageModelId || ""
   };
 }
 
@@ -169,7 +180,7 @@ function validateImageApiConfig(config) {
 }
 
 function buildImageRequestBody(args, config, requiredFields) {
-  const model = String(args.model || config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
+  const model = String(config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   const body = {
     model,
     prompt: requiredFields.prompt
@@ -230,7 +241,7 @@ async function executeChatCompletionsImageEdit(args, config, { prompt, images })
 }
 
 function buildChatCompletionsImageRequestBody(args, config, { prompt, images = [] }) {
-  const model = String(args.model || config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
+  const model = String(config.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   const userContent = [
     { type: "text", text: prompt },
     ...images

@@ -84,15 +84,125 @@
   min-height: 15px;
 }
 
-.chat-input-status-line span {
+.chat-input-status-line > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.chat-input-status-model {
+.chat-input-model-switchers {
   flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.chat-input-model-switcher {
+  position: relative;
+  min-width: 0;
+  max-width: 50%;
+}
+
+.chat-input-model-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  min-height: 20px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.chat-input-model-button:hover,
+.chat-input-model-button:focus {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.chat-input-image-model-button:hover,
+.chat-input-image-model-button:focus {
+  border-color: #059669;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.chat-input-model-button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-input-model-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.chat-input-model-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 5px);
+  z-index: 20;
+  min-width: 160px;
+  max-width: min(280px, 70vw);
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 4px;
+  background: #fff;
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.14);
+}
+
+.chat-input-model-menu-item {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: transparent;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-input-model-menu-item span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-input-model-menu-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.chat-input-model-menu-item-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.chat-input-model-menu-empty {
+  padding: 6px 8px;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .chat-input-status-context {
