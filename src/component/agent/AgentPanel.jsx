@@ -202,6 +202,26 @@ function buildLlmConfigInfo(llmConfig = {}) {
   };
 }
 
+export function buildImageModelSystemPrompt(llmConfig = {}) {
+  const syncedConfig = syncActiveModelFields(llmConfig);
+  if (!isImageApiConfigured(syncedConfig)) return "";
+  const imageProfiles = normalizeImageModelProfiles(syncedConfig);
+  if (imageProfiles.profiles.length === 0) return "";
+
+  const lines = imageProfiles.profiles.map((profile) => {
+    const tags = [];
+    if (profile.id === imageProfiles.activeId) tags.push("default");
+    const model = String(profile.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
+    return `- id=${profile.id}: modelName=${model}${tags.length ? `; ${tags.join(", ")}` : ""}`;
+  });
+
+  return (
+    `\nConfigured Image model profiles for image_gen/image_edit:\n` +
+    `${lines.join("\n")}\n` +
+    `When using image_gen or image_edit, set image_model_id to one of these profile ids if the user asks for a specific image model/provider/style or if one profile is clearly more appropriate. Omit image_model_id to use the default profile.\n`
+  );
+}
+
 function createRestoredAttachmentId() {
   return `att_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -699,7 +719,9 @@ export default function AgentPanel() {
     if (!modelMenuOpen) return undefined;
 
     function handlePointerDown(event) {
-      if (modelMenuRef.current?.contains(event.target)) return;
+      const modelMenuRoot = modelMenuRef.current;
+      const interactiveModelMenuTarget = event.target?.closest?.(".chat-input-model-button, .chat-input-model-menu");
+      if (interactiveModelMenuTarget && modelMenuRoot?.contains(interactiveModelMenuTarget)) return;
       setModelMenuOpen(null);
     }
 
@@ -2146,9 +2168,10 @@ export default function AgentPanel() {
 
   // ==================== LLM Chat Logic ====================
 
-  async function buildSystemPrompt() {
+  async function buildSystemPrompt(config = {}) {
     const memoryBlock = await formatProfileForSystemPrompt().catch(() => "");
     const platformBlock = buildPlatformSystemPrompt(platformInfo);
+    const imageModelBlock = buildImageModelSystemPrompt(config);
     const currentSessionSystemPrompt = sessionSystemPrompt.trim()
       ? `\n\nAdditional system instructions for this conversation:\n${sessionSystemPrompt.trim()}\n`
       : "";
@@ -2244,6 +2267,7 @@ export default function AgentPanel() {
       `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
       `- To show an image ref to the user, render it with Markdown image syntax as ![image](|deRef:img_1|). Do not paste or copy base64 into your message. The host system will resolve the ref only for the visual preview.\n` +
       `- If an image-generation tool returns only a public image URL, render it directly for the user with Markdown image syntax, for example ![image](https://example.com/image.png).\n` +
+      imageModelBlock +
       `- If a tool returns an audio URL and you want to show it to the user for direct playback, output exactly <audio controls src="https://example.com/audio.mp3"></audio>. Only use http or https audio URLs in this tag.\n` +
       `- Respond in the same language as the user.` +
       currentSessionSystemPrompt +
@@ -2298,6 +2322,16 @@ export default function AgentPanel() {
     });
     await chrome.storage.local.set({ llmConfig: nextConfig });
     setModelMenuOpen(null);
+  }
+
+  function toggleModelMenu(kind) {
+    setShowAttachMenu(false);
+    setModelMenuOpen(prev => prev === kind ? null : kind);
+  }
+
+  function toggleAttachMenu() {
+    setModelMenuOpen(null);
+    setShowAttachMenu(prev => !prev);
   }
 
   function handleSkillsServerUrlChange(serverUrl) {
@@ -2442,7 +2476,7 @@ export default function AgentPanel() {
 
   async function runConversation(config, targetSessionId, conversationMessages, runId) {
     if (!isCurrentRun(targetSessionId, runId)) return;
-    const systemPrompt = await buildSystemPrompt();
+    const systemPrompt = await buildSystemPrompt(config);
     await loadSessionImagesIntoCache(targetSessionId);
     if (!isCurrentRun(targetSessionId, runId)) return;
     const requestConversationMessages = hydrateStoredImageRefsInMessages(
@@ -3896,7 +3930,7 @@ export default function AgentPanel() {
                   <button
                     type="button"
                     className="chat-input-model-button"
-                    onClick={() => setModelMenuOpen(prev => prev === "llm" ? null : "llm")}
+                    onClick={() => toggleModelMenu("llm")}
                     title={`模型：${formatModelName(llmConfigInfo.model)}`}
                   >
                     模型：{formatModelName(llmConfigInfo.model)}
@@ -3924,10 +3958,10 @@ export default function AgentPanel() {
                   <button
                     type="button"
                     className="chat-input-model-button chat-input-image-model-button"
-                    onClick={() => setModelMenuOpen(prev => prev === "image" ? null : "image")}
-                    title={`图片：${formatModelName(llmConfigInfo.imageModel)}`}
+                    onClick={() => toggleModelMenu("image")}
+                    title={`默认图片：${formatModelName(llmConfigInfo.imageModel)}`}
                   >
-                    图片：{formatModelName(llmConfigInfo.imageModel)}
+                    默认图片：{formatModelName(llmConfigInfo.imageModel)}
                     <span className="chat-input-model-caret">⌃</span>
                   </button>
                   {modelMenuOpen === "image" && (
@@ -3981,7 +4015,7 @@ export default function AgentPanel() {
               </div>
               <div className="chat-input-actions-right">
                 <div className="chat-attach-wrapper" ref={attachWrapperRef}>
-                  <Button className="!text-xs chat-attach-btn" onPress={() => setShowAttachMenu(v => !v)} isDisabled={loading || !!pendingApproval}>📎</Button>
+                  <Button className="!text-xs chat-attach-btn" onPress={toggleAttachMenu} isDisabled={loading || !!pendingApproval}>📎</Button>
                   {showAttachMenu && (
                     <div className="chat-attach-menu">
                       {llmConfigInfo.supportsImageInput && (

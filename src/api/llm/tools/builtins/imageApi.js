@@ -83,6 +83,8 @@ export async function executeImageGeneration(args = {}) {
   return buildImageToolResult(result.payload, {
     endpoint: "generations",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     outputFormat: body.output_format
   });
@@ -128,6 +130,8 @@ export async function executeImageEdit(args = {}) {
   return buildImageToolResult(result.payload, {
     endpoint: "edits",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     inputImageCount: images.length,
     hasMask: !!mask,
@@ -159,10 +163,14 @@ async function readImageApiConfig(args = {}) {
   const { llmConfig } = await chrome.storage.local.get({ llmConfig: {} });
   const config = resolveActiveImageConfig(llmConfig, args.image_model_id);
   if (config.error) return { error: config.error };
+  const selectedProfile = config?.selectedImageProfile || null;
+  const imageModel = String(config?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   return {
     imageBaseUrl: String(config?.imageBaseUrl || "").trim(),
     imageApiKey: String(config?.imageApiKey || "").trim(),
-    imageModel: String(config?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL,
+    imageModel,
+    imageModelId: String(selectedProfile?.id || config?.activeImageModelId || "").trim(),
+    imageModelName: imageModel,
     imageApiProtocol: normalizeImageApiProtocol(config?.imageApiProtocol),
     imageModels: config?.imageModels || [],
     activeImageModelId: config?.activeImageModelId || ""
@@ -208,6 +216,8 @@ async function executeChatCompletionsImageGeneration(args, config, { prompt }) {
   return buildImageToolResult(result.payload, {
     endpoint: "chat_completions",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     outputFormat: args.output_format
   });
@@ -234,6 +244,8 @@ async function executeChatCompletionsImageEdit(args, config, { prompt, images })
   return buildImageToolResult(result.payload, {
     endpoint: "chat_completions",
     model: body.model,
+    imageModelId: config.imageModelId,
+    imageModelName: config.imageModelName,
     prompt,
     inputImageCount: images.length,
     outputFormat: args.output_format
@@ -376,6 +388,8 @@ function buildImageToolResult(payload, meta) {
     imageCount: normalizedImages.length,
     images: normalizedImages
   };
+  if (meta.imageModelId) result.imageModelId = meta.imageModelId;
+  if (meta.imageModelName) result.imageModelName = meta.imageModelName;
   if (meta.inputImageCount) result.inputImageCount = meta.inputImageCount;
   if (meta.hasMask) result.maskApplied = true;
   const revisedPrompt = findFirstString(...normalizedImages.map(image => image.revisedPrompt));

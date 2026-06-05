@@ -29,7 +29,7 @@ vi.mock("./McpConfig", () => ({ default: () => null }));
 vi.mock("./UserProfilePanel", () => ({ default: () => null }));
 vi.mock("./SkillsConfig", () => ({ default: () => null }));
 
-import AgentPanel from "./AgentPanel";
+import AgentPanel, { buildImageModelSystemPrompt } from "./AgentPanel";
 import { getChromeStorageSnapshot, resetChromeMock } from "../../../test/setup";
 
 describe("AgentPanel initial session restore", () => {
@@ -41,6 +41,40 @@ describe("AgentPanel initial session restore", () => {
     Element.prototype.scrollIntoView = vi.fn();
     globalThis.requestAnimationFrame = (callback) => setTimeout(() => callback(0), 0);
     globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+  });
+
+  it("builds image model profile guidance for the system prompt", () => {
+    const prompt = buildImageModelSystemPrompt({
+      activeImageModelId: "img_a3f09c",
+      imageModels: [
+        {
+          id: "img_a3f09c",
+          name: "OpenAI image",
+          imageBaseUrl: "https://api.openai.com/v1",
+          imageApiKey: "token",
+          imageApiProtocol: "generate",
+          imageModel: "gpt-image-2"
+        },
+        {
+          id: "img_b4d101",
+          name: "Poster model",
+          imageBaseUrl: "https://image.example/v1",
+          imageApiKey: "token",
+          imageApiProtocol: "chat_completions",
+          imageModel: "poster-image"
+        }
+      ]
+    });
+
+    expect(prompt).toContain("Configured Image model profiles");
+    expect(prompt).toContain("id=img_a3f09c: modelName=gpt-image-2; default");
+    expect(prompt).toContain("id=img_b4d101: modelName=poster-image");
+    expect(prompt).toContain("image_model_id");
+    expect(prompt).not.toContain("OpenAI image");
+    expect(prompt).not.toContain("Poster model");
+    expect(prompt).not.toContain("chat_completions");
+    expect(prompt).not.toContain("token");
+    expect(prompt).not.toContain("api.openai.com");
   });
 
   it("hydrates stored session images when restoring the last active session on mount", async () => {

@@ -126,4 +126,15 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("image_gen");
     expect(BUILTIN_TOOL_NAMES).toContain("image_edit");
   });
+
+  it("describes image_model_id as a configured image profile selector", () => {
+    const imageGen = getTools(API_TYPES.OPENAI_RESPONSES, [], { imageToolsEnabled: true })
+      .find(tool => tool.name === "image_gen");
+    const imageEdit = getTools(API_TYPES.OPENAI_RESPONSES, [], { imageToolsEnabled: true })
+      .find(tool => tool.name === "image_edit");
+
+    expect(imageGen.parameters.properties.image_model_id.description).toContain("configured Image model profile id");
+    expect(imageGen.parameters.properties.image_model_id.description).toContain("img_a3f09c");
+    expect(imageEdit.parameters.properties.image_model_id.description).toContain("configured Image model profile id");
+  });
 });

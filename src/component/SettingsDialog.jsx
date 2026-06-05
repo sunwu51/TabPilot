@@ -306,7 +306,39 @@ function SettingsDialogBody() {
     closeDialog();
   }
 
-  function handleAddLlmModel() {
+  function handleToggleLlmModelForm() {
+    setLlmModelFormOpen(prev => {
+      const nextOpen = !prev;
+      if (nextOpen) {
+        const activeProfile = llmModels.find(item => item.id === activeLlmModelId);
+        if (activeProfile) {
+          setApiType(normalizeApiType(activeProfile.apiType));
+          setBaseUrl(activeProfile.baseUrl || "");
+          setApiKey(activeProfile.apiKey || "");
+          setModel(activeProfile.model || "");
+        }
+      }
+      return nextOpen;
+    });
+  }
+
+  function handleToggleImageModelForm() {
+    setImageModelFormOpen(prev => {
+      const nextOpen = !prev;
+      if (nextOpen) {
+        const activeProfile = imageModels.find(item => item.id === activeImageModelId);
+        if (activeProfile) {
+          setImageBaseUrl(activeProfile.imageBaseUrl || "");
+          setImageApiKey(activeProfile.imageApiKey || "");
+          setImageApiProtocol(normalizeImageApiProtocol(activeProfile.imageApiProtocol));
+          setImageModel(activeProfile.imageModel || "");
+        }
+      }
+      return nextOpen;
+    });
+  }
+
+  async function handleAddLlmModel() {
     const trimmedBaseUrl = String(baseUrl || "").trim();
     const trimmedApiKey = String(apiKey || "").trim();
     const trimmedModel = String(model || "").trim();
@@ -322,12 +354,30 @@ function SettingsDialogBody() {
       apiKey: trimmedApiKey,
       model: trimmedModel
     };
-    setLlmModels(prev => [...prev, profile]);
-    if (!activeLlmModelId) setActiveLlmModelId(profile.id);
+    try {
+      const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
+      const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
+      const storedProfiles = normalizeLlmModelProfiles(storedConfig);
+      const nextModels = [...storedProfiles.profiles, profile];
+      const nextActiveLlmModelId = storedProfiles.activeId || profile.id;
+      const nextLlmConfig = syncActiveModelFields({
+        ...storedConfig,
+        llmModels: nextModels,
+        activeLlmModelId: nextActiveLlmModelId
+      });
+      await chrome.storage.local.set({ llmConfig: nextLlmConfig });
+      setLlmModels(prev => [...prev, profile]);
+      if (!activeLlmModelId) setActiveLlmModelId(profile.id);
+      toast.success("模型已添加");
+    } catch (error) {
+      toast.error(`添加模型失败: ${error?.message || String(error)}`);
+      return;
+    }
     setApiType(DEFAULT_SETTINGS.llmConfig.apiType);
     setBaseUrl("");
     setApiKey("");
     setModel("");
+    setLlmModelFormOpen(false);
     setFormKey(prev => prev + 1);
   }
 
@@ -341,7 +391,7 @@ function SettingsDialogBody() {
     });
   }
 
-  function handleAddImageModel() {
+  async function handleAddImageModel() {
     const trimmedBaseUrl = String(imageBaseUrl || "").trim();
     const trimmedApiKey = String(imageApiKey || "").trim();
     const trimmedModel = String(imageModel || "").trim();
@@ -357,12 +407,30 @@ function SettingsDialogBody() {
       imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
       imageModel: trimmedModel
     };
-    setImageModels(prev => [...prev, profile]);
-    if (!activeImageModelId) setActiveImageModelId(profile.id);
+    try {
+      const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
+      const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
+      const storedProfiles = normalizeImageModelProfiles(storedConfig);
+      const nextModels = [...storedProfiles.profiles, profile];
+      const nextActiveImageModelId = storedProfiles.activeId || profile.id;
+      const nextLlmConfig = syncActiveModelFields({
+        ...storedConfig,
+        imageModels: nextModels,
+        activeImageModelId: nextActiveImageModelId
+      });
+      await chrome.storage.local.set({ llmConfig: nextLlmConfig });
+      setImageModels(prev => [...prev, profile]);
+      if (!activeImageModelId) setActiveImageModelId(profile.id);
+      toast.success("图片模型已添加");
+    } catch (error) {
+      toast.error(`添加图片模型失败: ${error?.message || String(error)}`);
+      return;
+    }
     setImageBaseUrl("");
     setImageApiKey("");
     setImageApiProtocol(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
     setImageModel("");
+    setImageModelFormOpen(false);
     setFormKey(prev => prev + 1);
   }
 
@@ -503,7 +571,7 @@ function SettingsDialogBody() {
           </div>
           <Button
             className="settings-model-add-toggle bg-[var(--w-indigo)]"
-            onPress={() => setLlmModelFormOpen(prev => !prev)}
+            onPress={handleToggleLlmModelForm}
           >
             {llmModelFormOpen ? "收起添加模型" : "添加模型"}
           </Button>
@@ -710,7 +778,7 @@ function SettingsDialogBody() {
           </div>
           <Button
             className="settings-model-add-toggle bg-[var(--w-green)]"
-            onPress={() => setImageModelFormOpen(prev => !prev)}
+            onPress={handleToggleImageModelForm}
           >
             {imageModelFormOpen ? "收起添加图片模型" : "添加图片模型"}
           </Button>

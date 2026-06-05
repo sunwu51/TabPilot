@@ -11,8 +11,12 @@ export const IMAGE_CHAT_COMPLETIONS_PROTOCOL = "chat_completions";
 
 export function createModelProfileId(prefix = "model") {
   const cryptoObj = typeof crypto !== "undefined" ? crypto : null;
-  if (cryptoObj?.randomUUID) return `${prefix}_${cryptoObj.randomUUID()}`;
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  if (cryptoObj?.getRandomValues) {
+    const bytes = new Uint8Array(3);
+    cryptoObj.getRandomValues(bytes);
+    return `${prefix}_${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return `${prefix}_${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0")}`;
 }
 
 export function normalizeImageProfileProtocol(value) {
