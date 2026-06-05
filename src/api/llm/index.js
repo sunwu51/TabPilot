@@ -9,10 +9,12 @@ export {
 } from "./core/config";
 export {
   createModelProfileId,
+  createImageModelProfileId,
   isConfiguredImageProfile,
   normalizeImageModelProfiles,
   normalizeImageProfileProtocol,
   normalizeLlmModelProfiles,
+  normalizeStoredModelConfig,
   resolveActiveImageConfig,
   resolveActiveLlmConfig,
   syncActiveModelFields

@@ -25,6 +25,7 @@ import {
     releaseSessionLock,
     releaseSessionLocksForWindow
 } from "./api/agent/sessions";
+import { ensureSettingsMigrated } from "./api/settings/migrations";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -1220,15 +1221,18 @@ chrome.windows?.onRemoved?.addListener((windowId) => {
 
 chrome.runtime.onInstalled.addListener(() => {
     chrome.alarms?.create("ws-bridge-health", { periodInMinutes: 1 });
+    void ensureSettingsMigrated();
     void restoreScheduledJobs();
     void startWsBridge();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+    void ensureSettingsMigrated();
     void restoreScheduledJobs();
     void startWsBridge();
 });
 
+void ensureSettingsMigrated();
 void restoreScheduledJobs();
 void startWsBridge();
 

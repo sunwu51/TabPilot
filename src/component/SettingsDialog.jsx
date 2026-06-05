@@ -11,21 +11,23 @@ import {
   MODEL_CONTEXT_LIMIT_OPTIONS,
   captureFullPageScreenshotToTab,
   createModelProfileId,
+  createImageModelProfileId,
   getDefaultApiType,
   normalizeApiType,
   normalizeImageModelProfiles,
   normalizeImageApiProtocol,
   normalizeLlmModelProfiles,
   normalizeModelContextLimitTokens,
+  normalizeStoredModelConfig,
   openHelloWorldPlayground,
-  resolveImageApiRequestUrl,
-  syncActiveModelFields
+  resolveImageApiRequestUrl
 } from "../api/llm";
 import {
   downloadSettingsBackup,
   exportSettingsBackup,
   importSettingsBackupFromText
 } from "../api/settings/backup";
+import { ensureSettingsMigrated } from "../api/settings/migrations";
 import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/browser/tabReuse";
 import {
   DEFAULT_WS_BRIDGE_STATUS,
@@ -36,10 +38,6 @@ import {
 
 const DEFAULT_SETTINGS = {
   llmConfig: {
-    apiType: getDefaultApiType(),
-    baseUrl: "",
-    apiKey: "",
-    model: "",
     activeLlmModelId: "",
     llmModels: [],
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
@@ -48,10 +46,6 @@ const DEFAULT_SETTINGS = {
     supportsToolImageInput: false,
     reasoningEffort: "default",
     omitThinkingFromRequests: false,
-    imageBaseUrl: "",
-    imageApiKey: "",
-    imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
-    imageModel: DEFAULT_IMAGE_MODEL,
     activeImageModelId: "",
     imageModels: []
   },
@@ -79,14 +73,26 @@ export default function SettingsDialog() {
 }
 
 const ADVANCED_USAGE_URL = "https://my.feishu.cn/wiki/EyDcwiBaliWlDNkRVv0cOAVHnUd?from=from_copylink";
+const DEFAULT_LLM_MODEL_DRAFT = {
+  apiType: getDefaultApiType(),
+  baseUrl: "",
+  apiKey: "",
+  model: ""
+};
+const DEFAULT_IMAGE_MODEL_DRAFT = {
+  imageBaseUrl: "",
+  imageApiKey: "",
+  imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
+  imageModel: ""
+};
 
 function SettingsDialogBody() {
-  const [apiType, setApiType] = useState(DEFAULT_SETTINGS.llmConfig.apiType);
-  const [baseUrl, setBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.baseUrl);
-  const [apiKey, setApiKey] = useState(DEFAULT_SETTINGS.llmConfig.apiKey);
+  const [apiType, setApiType] = useState(DEFAULT_LLM_MODEL_DRAFT.apiType);
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_LLM_MODEL_DRAFT.baseUrl);
+  const [apiKey, setApiKey] = useState(DEFAULT_LLM_MODEL_DRAFT.apiKey);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showImageApiKey, setShowImageApiKey] = useState(false);
-  const [model, setModel] = useState(DEFAULT_SETTINGS.llmConfig.model);
+  const [model, setModel] = useState(DEFAULT_LLM_MODEL_DRAFT.model);
   const [llmModels, setLlmModels] = useState(DEFAULT_SETTINGS.llmConfig.llmModels);
   const [activeLlmModelId, setActiveLlmModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeLlmModelId);
   const [llmModelFormOpen, setLlmModelFormOpen] = useState(false);
@@ -96,10 +102,10 @@ function SettingsDialogBody() {
   const [supportsToolImageInput, setSupportsToolImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsToolImageInput);
   const [reasoningEffort, setReasoningEffort] = useState(DEFAULT_SETTINGS.llmConfig.reasoningEffort);
   const [omitThinkingFromRequests, setOmitThinkingFromRequests] = useState(DEFAULT_SETTINGS.llmConfig.omitThinkingFromRequests);
-  const [imageBaseUrl, setImageBaseUrl] = useState(DEFAULT_SETTINGS.llmConfig.imageBaseUrl);
-  const [imageApiKey, setImageApiKey] = useState(DEFAULT_SETTINGS.llmConfig.imageApiKey);
-  const [imageApiProtocol, setImageApiProtocol] = useState(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
-  const [imageModel, setImageModel] = useState(DEFAULT_SETTINGS.llmConfig.imageModel);
+  const [imageBaseUrl, setImageBaseUrl] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageBaseUrl);
+  const [imageApiKey, setImageApiKey] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageApiKey);
+  const [imageApiProtocol, setImageApiProtocol] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
+  const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageModel);
   const [imageModels, setImageModels] = useState(DEFAULT_SETTINGS.llmConfig.imageModels);
   const [activeImageModelId, setActiveImageModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeImageModelId);
   const [imageModelFormOpen, setImageModelFormOpen] = useState(false);
@@ -187,18 +193,20 @@ function SettingsDialogBody() {
   async function loadDraft() {
     setLoading(true);
     try {
+      await ensureSettingsMigrated();
       const res = await chrome.storage.local.get({
         ...DEFAULT_SETTINGS,
         [WS_BRIDGE_STATUS_STORAGE_KEY]: DEFAULT_WS_BRIDGE_STATUS
       });
-      const nextLlmConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
-      const normalizedLlmProfiles = normalizeLlmModelProfiles(nextLlmConfig);
-      const normalizedImageProfiles = normalizeImageModelProfiles(nextLlmConfig);
+      const rawLlmConfig = res.llmConfig || {};
+      const nextLlmConfig = { ...DEFAULT_SETTINGS.llmConfig, ...rawLlmConfig };
+      const normalizedLlmProfiles = normalizeLlmModelProfiles(rawLlmConfig);
+      const normalizedImageProfiles = normalizeImageModelProfiles(rawLlmConfig);
       setLlmModels(normalizedLlmProfiles.profiles);
       setActiveLlmModelId(normalizedLlmProfiles.activeId);
       setImageModels(normalizedImageProfiles.profiles);
       setActiveImageModelId(normalizedImageProfiles.activeId);
-      setApiType(DEFAULT_SETTINGS.llmConfig.apiType);
+      setApiType(DEFAULT_LLM_MODEL_DRAFT.apiType);
       setBaseUrl("");
       setApiKey("");
       setModel("");
@@ -214,7 +222,7 @@ function SettingsDialogBody() {
       setOmitThinkingFromRequests(nextLlmConfig.omitThinkingFromRequests === true);
       setImageBaseUrl("");
       setImageApiKey("");
-      setImageApiProtocol(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+      setImageApiProtocol(DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
       setImageModel("");
       setLlmModelFormOpen(false);
       setImageModelFormOpen(false);
@@ -254,11 +262,7 @@ function SettingsDialogBody() {
         return;
       }
 
-      const nextLlmConfig = syncActiveModelFields({
-          apiType,
-          baseUrl,
-          apiKey,
-          model,
+      const nextLlmConfig = normalizeStoredModelConfig({
           activeLlmModelId,
           llmModels,
           modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
@@ -267,10 +271,7 @@ function SettingsDialogBody() {
           supportsToolImageInput: supportsImageInput && supportsToolImageInput,
           reasoningEffort: normalizeReasoningEffort(reasoningEffort),
           omitThinkingFromRequests,
-          imageBaseUrl,
-          imageApiKey,
           imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
-          imageModel,
           activeImageModelId,
           imageModels
       });
@@ -356,11 +357,12 @@ function SettingsDialogBody() {
     };
     try {
       const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
-      const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
-      const storedProfiles = normalizeLlmModelProfiles(storedConfig);
+      const rawStoredConfig = res.llmConfig || {};
+      const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...rawStoredConfig };
+      const storedProfiles = normalizeLlmModelProfiles(rawStoredConfig);
       const nextModels = [...storedProfiles.profiles, profile];
       const nextActiveLlmModelId = storedProfiles.activeId || profile.id;
-      const nextLlmConfig = syncActiveModelFields({
+      const nextLlmConfig = normalizeStoredModelConfig({
         ...storedConfig,
         llmModels: nextModels,
         activeLlmModelId: nextActiveLlmModelId
@@ -373,7 +375,7 @@ function SettingsDialogBody() {
       toast.error(`添加模型失败: ${error?.message || String(error)}`);
       return;
     }
-    setApiType(DEFAULT_SETTINGS.llmConfig.apiType);
+    setApiType(DEFAULT_LLM_MODEL_DRAFT.apiType);
     setBaseUrl("");
     setApiKey("");
     setModel("");
@@ -400,7 +402,7 @@ function SettingsDialogBody() {
       return;
     }
     const profile = {
-      id: createModelProfileId("img"),
+      id: createImageModelProfileId(trimmedModel),
       name: trimmedModel,
       imageBaseUrl: trimmedBaseUrl,
       imageApiKey: trimmedApiKey,
@@ -409,11 +411,12 @@ function SettingsDialogBody() {
     };
     try {
       const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
-      const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...(res.llmConfig || {}) };
-      const storedProfiles = normalizeImageModelProfiles(storedConfig);
+      const rawStoredConfig = res.llmConfig || {};
+      const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...rawStoredConfig };
+      const storedProfiles = normalizeImageModelProfiles(rawStoredConfig);
       const nextModels = [...storedProfiles.profiles, profile];
       const nextActiveImageModelId = storedProfiles.activeId || profile.id;
-      const nextLlmConfig = syncActiveModelFields({
+      const nextLlmConfig = normalizeStoredModelConfig({
         ...storedConfig,
         imageModels: nextModels,
         activeImageModelId: nextActiveImageModelId
@@ -428,7 +431,7 @@ function SettingsDialogBody() {
     }
     setImageBaseUrl("");
     setImageApiKey("");
-    setImageApiProtocol(DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+    setImageApiProtocol(DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
     setImageModel("");
     setImageModelFormOpen(false);
     setFormKey(prev => prev + 1);
@@ -790,7 +793,7 @@ function SettingsDialogBody() {
                 defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
                 onSelectedItemChange={(changes) => {
                   const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
-                  setImageApiProtocol(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.imageApiProtocol);
+                  setImageApiProtocol(selected ? selected.value : DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
                 }}
               />
               <Input

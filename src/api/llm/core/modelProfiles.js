@@ -10,13 +10,32 @@ export const DEFAULT_IMAGE_API_PROTOCOL = "generate";
 export const IMAGE_CHAT_COMPLETIONS_PROTOCOL = "chat_completions";
 
 export function createModelProfileId(prefix = "model") {
+  return `${prefix}_${generateHex()}`;
+}
+
+export function createImageModelProfileId(modelName = "") {
+  const slug = slugify(modelName);
+  const hex = generateHex();
+  return slug ? `img_${slug}_${hex}` : `img_${hex}`;
+}
+
+function slugify(text) {
+  return String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
+function generateHex() {
   const cryptoObj = typeof crypto !== "undefined" ? crypto : null;
   if (cryptoObj?.getRandomValues) {
     const bytes = new Uint8Array(3);
     cryptoObj.getRandomValues(bytes);
-    return `${prefix}_${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
   }
-  return `${prefix}_${Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0")}`;
+  return Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, "0");
 }
 
 export function normalizeImageProfileProtocol(value) {
@@ -28,17 +47,6 @@ export function normalizeLlmModelProfiles(llmConfig = {}) {
   const profiles = rawProfiles
     .map((item, index) => normalizeLlmModelProfile(item, index))
     .filter(Boolean);
-
-  if (profiles.length === 0 && hasLegacyLlmModel(llmConfig)) {
-    profiles.push(normalizeLlmModelProfile({
-      id: "llm_legacy",
-      name: llmConfig.model || "默认模型",
-      apiType: llmConfig.apiType,
-      baseUrl: llmConfig.baseUrl,
-      apiKey: llmConfig.apiKey,
-      model: llmConfig.model
-    }, 0));
-  }
 
   const activeId = profiles.some(item => item.id === llmConfig.activeLlmModelId)
     ? llmConfig.activeLlmModelId
@@ -52,17 +60,6 @@ export function normalizeImageModelProfiles(llmConfig = {}) {
     .map((item, index) => normalizeImageModelProfile(item, index))
     .filter(Boolean);
 
-  if (profiles.length === 0 && hasLegacyImageModel(llmConfig)) {
-    profiles.push(normalizeImageModelProfile({
-      id: "img_legacy",
-      name: llmConfig.imageModel || DEFAULT_IMAGE_MODEL_PROFILE,
-      imageBaseUrl: llmConfig.imageBaseUrl,
-      imageApiKey: llmConfig.imageApiKey,
-      imageApiProtocol: llmConfig.imageApiProtocol,
-      imageModel: llmConfig.imageModel
-    }, 0));
-  }
-
   const activeId = profiles.some(item => item.id === llmConfig.activeImageModelId)
     ? llmConfig.activeImageModelId
     : (profiles[0]?.id || "");
@@ -75,10 +72,10 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
     ...llmConfig,
     llmModels: profiles,
     activeLlmModelId: activeId,
-    apiType: normalizeApiType(activeProfile?.apiType || llmConfig.apiType || getDefaultApiType()),
-    baseUrl: activeProfile?.baseUrl ?? llmConfig.baseUrl ?? "",
-    apiKey: activeProfile?.apiKey ?? llmConfig.apiKey ?? "",
-    model: activeProfile?.model ?? llmConfig.model ?? "",
+    apiType: normalizeApiType(activeProfile?.apiType || getDefaultApiType()),
+    baseUrl: activeProfile?.baseUrl ?? "",
+    apiKey: activeProfile?.apiKey ?? "",
+    model: activeProfile?.model ?? "",
     modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig.modelContextLimitTokens),
     firstPacketTimeoutSeconds: Math.max(1, Number(llmConfig.firstPacketTimeoutSeconds) || 20),
     supportsImageInput: llmConfig.supportsImageInput === true,
@@ -108,10 +105,10 @@ export function resolveActiveImageConfig(llmConfig = {}, imageModelId = "") {
     ...llmConfig,
     imageModels: profiles,
     activeImageModelId: profile?.id || activeId,
-    imageBaseUrl: profile?.imageBaseUrl ?? llmConfig.imageBaseUrl ?? "",
-    imageApiKey: profile?.imageApiKey ?? llmConfig.imageApiKey ?? "",
-    imageApiProtocol: normalizeImageProfileProtocol(profile?.imageApiProtocol || llmConfig.imageApiProtocol),
-    imageModel: profile?.imageModel || llmConfig.imageModel || DEFAULT_IMAGE_MODEL_PROFILE,
+    imageBaseUrl: profile?.imageBaseUrl || "",
+    imageApiKey: profile?.imageApiKey || "",
+    imageApiProtocol: normalizeImageProfileProtocol(profile?.imageApiProtocol),
+    imageModel: profile ? (profile.imageModel || DEFAULT_IMAGE_MODEL_PROFILE) : "",
     selectedImageProfile: profile || null
   };
 }
@@ -127,6 +124,23 @@ export function syncActiveModelFields(llmConfig = {}) {
     imageApiKey: activeImageConfig.imageApiKey,
     imageApiProtocol: activeImageConfig.imageApiProtocol,
     imageModel: activeImageConfig.imageModel
+  };
+}
+
+export function normalizeStoredModelConfig(llmConfig = {}) {
+  const llmProfiles = normalizeLlmModelProfiles(llmConfig);
+  const imageProfiles = normalizeImageModelProfiles(llmConfig);
+  return {
+    activeLlmModelId: llmProfiles.activeId,
+    llmModels: llmProfiles.profiles,
+    modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig.modelContextLimitTokens),
+    firstPacketTimeoutSeconds: Math.max(1, Number(llmConfig.firstPacketTimeoutSeconds) || 20),
+    supportsImageInput: llmConfig.supportsImageInput === true,
+    supportsToolImageInput: llmConfig.supportsImageInput === true && llmConfig.supportsToolImageInput === true,
+    reasoningEffort: llmConfig.reasoningEffort || "default",
+    omitThinkingFromRequests: llmConfig.omitThinkingFromRequests === true,
+    activeImageModelId: imageProfiles.activeId,
+    imageModels: imageProfiles.profiles
   };
 }
 
@@ -167,10 +181,3 @@ function normalizeImageModelProfile(item, index) {
   };
 }
 
-function hasLegacyLlmModel(llmConfig) {
-  return !!String(llmConfig?.baseUrl || llmConfig?.apiKey || llmConfig?.model || "").trim();
-}
-
-function hasLegacyImageModel(llmConfig) {
-  return !!String(llmConfig?.imageBaseUrl || llmConfig?.imageApiKey || llmConfig?.imageModel || "").trim();
-}

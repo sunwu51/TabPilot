@@ -13,6 +13,7 @@ import {
   normalizeImageApiProtocol,
   normalizeLlmModelProfiles,
   normalizeModelContextLimitTokens,
+  normalizeStoredModelConfig,
   syncActiveModelFields,
   streamChat,
   executeTool,
@@ -20,6 +21,7 @@ import {
   hasDownloadsPermission,
   isMcpToolCallName
 } from "../../api/llm";
+import { ensureSettingsMigrated } from "../../api/settings/migrations";
 import {
   generateSessionId,
   listSessions,
@@ -877,8 +879,9 @@ export default function AgentPanel() {
   }
 
   async function refreshLlmConfigInfo() {
+    await ensureSettingsMigrated();
     const { llmConfig } = await chrome.storage.local.get({
-      llmConfig: { apiType: getDefaultApiType(), model: "" }
+      llmConfig: { activeLlmModelId: "", llmModels: [], activeImageModelId: "", imageModels: [] }
     });
     setLlmConfigInfo(buildLlmConfigInfo(llmConfig));
   }
@@ -2277,22 +2280,19 @@ export default function AgentPanel() {
   }
 
   async function getLLMConfig() {
+    await ensureSettingsMigrated();
     const { llmConfig, betaFeaturesEnabled } = await chrome.storage.local.get({
       llmConfig: {
-        apiType: getDefaultApiType(),
-        baseUrl: "",
-        apiKey: "",
-        model: "",
+        activeLlmModelId: "",
+        llmModels: [],
         modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
         firstPacketTimeoutSeconds: 20,
         supportsImageInput: false,
         supportsToolImageInput: false,
         reasoningEffort: "default",
         omitThinkingFromRequests: false,
-        imageBaseUrl: "",
-        imageApiKey: "",
-        imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
-        imageModel: DEFAULT_IMAGE_MODEL
+        activeImageModelId: "",
+        imageModels: []
       },
       betaFeaturesEnabled: true
     });
@@ -2315,8 +2315,9 @@ export default function AgentPanel() {
   async function switchActiveModel(kind, id) {
     const targetId = String(id || "").trim();
     if (!targetId) return;
+    await ensureSettingsMigrated();
     const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
-    const nextConfig = syncActiveModelFields({
+    const nextConfig = normalizeStoredModelConfig({
       ...llmConfig,
       ...(kind === "image" ? { activeImageModelId: targetId } : { activeLlmModelId: targetId })
     });

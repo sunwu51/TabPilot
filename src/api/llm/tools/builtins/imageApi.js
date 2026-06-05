@@ -1,6 +1,7 @@
 /* global chrome */
 
 import { isConfiguredImageProfile, resolveActiveImageConfig } from "../../core/modelProfiles";
+import { ensureSettingsMigrated } from "../../../settings/migrations";
 
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const IMAGE_API_PROTOCOLS = {
@@ -18,8 +19,7 @@ const IMAGE_REF_PATTERN = /^img_[A-Za-z0-9_-]+$/;
 export function isImageApiConfigured(config = {}) {
   const activeConfig = resolveActiveImageConfig(config);
   if (activeConfig.error) return false;
-  if (isConfiguredImageProfile(activeConfig)) return true;
-  return !!String(config?.imageBaseUrl || "").trim() && !!String(config?.imageApiKey || "").trim();
+  return isConfiguredImageProfile(activeConfig);
 }
 
 export function resolveImageApiRequestUrl(baseUrl, endpoint) {
@@ -160,6 +160,7 @@ function normalizeEditImages(args = {}) {
 }
 
 async function readImageApiConfig(args = {}) {
+  await ensureSettingsMigrated();
   const { llmConfig } = await chrome.storage.local.get({ llmConfig: {} });
   const config = resolveActiveImageConfig(llmConfig, args.image_model_id);
   if (config.error) return { error: config.error };
@@ -416,6 +417,9 @@ function extractImagePayloads(payload) {
       if (Array.isArray(message.content)) candidates.push(...message.content);
       if (message.image) candidates.push(message.image);
       if (message.image_url) candidates.push(message.image_url);
+      if (typeof message.content === "string") {
+        candidates.push(...extractDataUrlCandidatesFromText(message.content));
+      }
     }
   }
   if (payload?.image) candidates.push(payload.image);
@@ -621,4 +625,25 @@ function findFirstString(...values) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+const MARKDOWN_IMAGE_DATA_URL_PATTERN = /!\[[^\]]*\]\((data:image\/[^;]+;base64,[^\)]+)\)/gi;
+const BARE_DATA_URL_PATTERN = /(data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+)/g;
+
+function extractDataUrlCandidatesFromText(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return [];
+  const results = [];
+  let match;
+  // First pass: extract markdown-wrapped data URLs ![...](data:image/...;base64,...)
+  while ((match = MARKDOWN_IMAGE_DATA_URL_PATTERN.exec(raw)) !== null) {
+    results.push({ url: match[1] });
+  }
+  // Second pass: extract bare data URLs if no markdown-wrapped ones were found
+  if (results.length === 0) {
+    while ((match = BARE_DATA_URL_PATTERN.exec(raw)) !== null) {
+      results.push({ url: match[1].replace(/\s+/g, "") });
+    }
+  }
+  return results;
 }

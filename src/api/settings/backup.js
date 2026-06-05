@@ -1,10 +1,11 @@
 /* global chrome */
-import { getDefaultApiType, normalizeApiType, normalizeModelContextLimitTokens } from "../llm";
+import { normalizeStoredModelConfig } from "../llm/core/modelProfiles";
 import {
-  normalizeImageModelProfiles,
-  normalizeLlmModelProfiles,
-  syncActiveModelFields
-} from "../llm";
+  ensureSettingsMigrated,
+  migrateModelProfilesV2,
+  SETTINGS_SCHEMA_VERSION,
+  SETTINGS_SCHEMA_VERSION_KEY
+} from "./migrations";
 
 export const SETTINGS_BACKUP_VERSION = 1;
 
@@ -40,6 +41,7 @@ const LLM_CONFIG_KEYS = [
 ];
 
 export async function exportSettingsBackup() {
+  await ensureSettingsMigrated();
   const values = await chrome.storage.local.get(SETTINGS_BACKUP_KEYS);
   return {
     format: "tab-manager-settings",
@@ -76,15 +78,13 @@ export async function importSettingsBackupFromText(text) {
     return { updatedKeys: [] };
   }
   if (patch.llmConfig) {
+    await ensureSettingsMigrated();
     const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
-    const shouldSyncProfiles = hasProfilePatch(patch.llmConfig);
-    patch.llmConfig = {
+    patch.llmConfig = normalizeStoredModelConfig({
       ...(llmConfig && typeof llmConfig === "object" && !Array.isArray(llmConfig) ? llmConfig : {}),
       ...patch.llmConfig
-    };
-    if (shouldSyncProfiles) {
-      patch.llmConfig = syncActiveModelFields(patch.llmConfig);
-    }
+    });
+    patch[SETTINGS_SCHEMA_VERSION_KEY] = SETTINGS_SCHEMA_VERSION;
   }
   await chrome.storage.local.set(patch);
   return { updatedKeys: Object.keys(patch) };
@@ -113,33 +113,16 @@ function normalizeSettingsPatch(source) {
 
 function normalizeLlmConfigPatch(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const patch = {};
   const source = pickPresentKeys(value, LLM_CONFIG_KEYS);
+  const migrated = migrateModelProfilesV2(source);
+  const patch = {};
 
-  if (Object.prototype.hasOwnProperty.call(source, "apiType")) {
-    patch.apiType = normalizeApiType(source.apiType || getDefaultApiType());
-  }
-  addStringPatch(patch, source, "baseUrl");
-  addStringPatch(patch, source, "apiKey");
-  addStringPatch(patch, source, "model");
-  addStringPatch(patch, source, "activeLlmModelId");
-  if (Object.prototype.hasOwnProperty.call(source, "llmModels")) {
-    const { profiles, activeId } = normalizeLlmModelProfiles(source);
-    patch.llmModels = profiles;
-    if (!patch.activeLlmModelId) patch.activeLlmModelId = activeId;
-  }
-  addStringPatch(patch, source, "imageBaseUrl");
-  addStringPatch(patch, source, "imageApiKey");
-  addStringPatch(patch, source, "imageApiProtocol");
-  addStringPatch(patch, source, "imageModel");
-  addStringPatch(patch, source, "activeImageModelId");
-  if (Object.prototype.hasOwnProperty.call(source, "imageModels")) {
-    const { profiles, activeId } = normalizeImageModelProfiles(source);
-    patch.imageModels = profiles;
-    if (!patch.activeImageModelId) patch.activeImageModelId = activeId;
-  }
+  addPresentPatch(patch, source, migrated, "activeLlmModelId");
+  addPresentPatch(patch, source, migrated, "llmModels", { legacyKeys: ["baseUrl", "apiKey", "model"] });
+  addPresentPatch(patch, source, migrated, "activeImageModelId");
+  addPresentPatch(patch, source, migrated, "imageModels", { legacyKeys: ["imageBaseUrl", "imageApiKey", "imageModel"] });
   if (Object.prototype.hasOwnProperty.call(source, "modelContextLimitTokens")) {
-    patch.modelContextLimitTokens = normalizeModelContextLimitTokens(source.modelContextLimitTokens);
+    patch.modelContextLimitTokens = migrated.modelContextLimitTokens;
   }
   addNumberPatch(patch, source, "firstPacketTimeoutSeconds", { min: 1, integer: true });
   addBooleanPatch(patch, source, "supportsImageInput");
@@ -162,16 +145,11 @@ function pickPresentKeys(source, keys) {
   return result;
 }
 
-function hasProfilePatch(llmConfig) {
-  return Object.prototype.hasOwnProperty.call(llmConfig, "llmModels")
-    || Object.prototype.hasOwnProperty.call(llmConfig, "activeLlmModelId")
-    || Object.prototype.hasOwnProperty.call(llmConfig, "imageModels")
-    || Object.prototype.hasOwnProperty.call(llmConfig, "activeImageModelId");
-}
-
-function addStringPatch(patch, source, key) {
-  if (!Object.prototype.hasOwnProperty.call(source, key)) return;
-  patch[key] = typeof source[key] === "string" ? source[key] : String(source[key] ?? "");
+function addPresentPatch(patch, source, normalized, key, { legacyKeys = [] } = {}) {
+  const hasNewKey = Object.prototype.hasOwnProperty.call(source, key);
+  const hasLegacyKey = legacyKeys.some(item => Object.prototype.hasOwnProperty.call(source, item));
+  if (!hasNewKey && !hasLegacyKey) return;
+  patch[key] = normalized[key];
 }
 
 function addBooleanPatch(patch, source, key) {
