@@ -627,7 +627,7 @@ function findFirstString(...values) {
   return "";
 }
 
-const MARKDOWN_IMAGE_DATA_URL_PATTERN = /!\[[^\]]*\]\((data:image\/[^;]+;base64,[^\)]+)\)/gi;
+const MARKDOWN_IMAGE_DATA_URL_PATTERN = /!\[[^\]]*\]\((data:image\/[^;]+;base64,[^)]+)\)/gi;
 const BARE_DATA_URL_PATTERN = /(data:image\/[^;]+;base64,[A-Za-z0-9+/=\s]+)/g;
 
 function extractDataUrlCandidatesFromText(text) {

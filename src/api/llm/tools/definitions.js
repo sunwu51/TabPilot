@@ -644,6 +644,126 @@ export const TOOLS = [
     }
   },
   {
+    name: "postdog_list_folders",
+    description: "List Postdog folders used to organize saved API requests.",
+    schema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "postdog_save_folder",
+    description: "Create or update a Postdog folder. Folder preScript runs before each request's preScript; folder postScript runs after each request's postScript.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Optional existing folder id to update." },
+        name: { type: "string", description: "Folder name." },
+        parentId: { type: "string", description: "Optional parent folder id. Current UI keeps folder management simple." },
+        preScript: { type: "string", description: "Optional script run before requests in this folder." },
+        postScript: { type: "string", description: "Optional script run after requests in this folder." }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "postdog_list_requests",
+    description: "List saved Postdog API requests. Use this before running or editing a request unless the user gave an exact request id.",
+    schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional search text matched against request name, method, or URL." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "postdog_get_request",
+    description: "Get full details for one saved Postdog request, including headers, query params, body, and scripts.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Saved Postdog request id." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "postdog_save_request",
+    description: "Create or update a Postdog API request. Scripts can read/write environment variables with postdog.env.get/set/unset; variables are referenced as {{name}} in URL, headers, query, and body. Built-in template functions include {{$guid()}}, {{$now()}}, and {{$timestamp()}}.",
+    schema: {
+      type: "object",
+      properties: {
+        request: {
+          type: "object",
+          description: "Request object with optional id, name, folderId, method, url, headers, query, body, preScript, and postScript."
+        }
+      },
+      required: ["request"]
+    }
+  },
+  {
+    name: "postdog_run_request",
+    description: "Run a saved or inline Postdog request. Pre-script runs before fetch; post-script runs after fetch and can save values such as objId into the active environment for later requests. Returns a runId that can be used with postdog_get_history_run.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Saved request id to run." },
+        request: { type: "object", description: "Optional inline request object to save and run when id is not provided." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "postdog_list_history",
+    description: "List recent Postdog run history summaries. Provide requestId to list runIds for one request. Use postdog_get_history_run to fetch full request/response details.",
+    schema: {
+      type: "object",
+      properties: {
+        requestId: { type: "string", description: "Optional saved request id to filter history." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "postdog_get_history_run",
+    description: "Get one Postdog run detail by runId, including execution time, duration, status code, request URL/headers/body, response headers/body, tests, and logs.",
+    schema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Run id returned by postdog_run_request or postdog_list_history." }
+      },
+      required: ["runId"]
+    }
+  },
+  {
+    name: "postdog_list_environments",
+    description: "List Postdog environments and the active environment. Secret values are redacted.",
+    schema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "postdog_save_environment",
+    description: "Create or update a Postdog environment. Variables are simple key/value pairs; secret variables are redacted from tool results.",
+    schema: {
+      type: "object",
+      properties: {
+        environment: {
+          type: "object",
+          description: "Environment object with optional id, required name, and variables array of {key,value,enabled,secret}."
+        }
+      },
+      required: ["environment"]
+    }
+  },
+  {
+    name: "postdog_set_active_environment",
+    description: "Set the active Postdog environment used for variable substitution and script env writes.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Environment id." }
+      },
+      required: ["id"]
+    }
+  },
+  {
     name: "html_playground",
     description: "Generate and open a standalone HTML playground page for previewing HTML/CSS/JS. Use this when the user asks to open, preview, display, share, or generate a playground/page/demo/report, including simple pages that do not explicitly mention HTML. This is also suitable for generating visual reports; when drawing charts, you can import Chart.js from a CDN in the HTML and render line charts, bar charts, pie charts, and other data visualizations. If the chart is simple enough, native inline SVG is also acceptable. Do not use this tool to render very large text-only content.",
     schema: {

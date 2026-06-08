@@ -127,6 +127,18 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("image_edit");
   });
 
+  it("exposes Postdog tools for saved API request workflows", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES);
+
+    expect(names).toContain("postdog_list_requests");
+    expect(names).toContain("postdog_run_request");
+    expect(names).toContain("postdog_list_history");
+    expect(names).toContain("postdog_get_history_run");
+    expect(names).not.toContain("postdog_import");
+    expect(names).not.toContain("postdog_export");
+    expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
+  });
+
   it("describes image_model_id as a configured image profile selector", () => {
     const imageGen = getTools(API_TYPES.OPENAI_RESPONSES, [], { imageToolsEnabled: true })
       .find(tool => tool.name === "image_gen");

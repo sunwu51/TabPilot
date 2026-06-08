@@ -1,6 +1,6 @@
 /* global chrome */
 import { resolveLlmRequestUrl } from "../core/endpoint";
-import { API_TYPES, getDefaultApiType, normalizeApiType } from "../core/config";
+import { API_TYPES, normalizeApiType } from "../core/config";
 import { syncActiveModelFields } from "../core/modelProfiles";
 import { ensureSettingsMigrated } from "../../settings/migrations";
 

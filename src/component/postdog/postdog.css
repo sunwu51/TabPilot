@@ -1,0 +1,865 @@
+.postdog-page {
+  display: grid;
+  grid-template-columns: var(--postdog-sidebar-width, 230px) 6px minmax(0, 1fr);
+  height: 100vh;
+  min-height: 0;
+  background: #f8fafc;
+  color: #111827;
+}
+
+.postdog-sidebar {
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid #d1d5db;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.postdog-sidebar-resizer {
+  position: relative;
+  cursor: col-resize;
+  background: #f1f5f9;
+  border-right: 1px solid #d1d5db;
+}
+
+.postdog-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+}
+
+.postdog-sidebar-resizer:hover,
+.postdog-resizing-sidebar .postdog-sidebar-resizer {
+  background: #dbeafe;
+}
+
+.postdog-sidebar-resizer:hover::after,
+.postdog-resizing-sidebar .postdog-sidebar-resizer::after {
+  background: #2563eb;
+}
+
+.postdog-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.postdog-toolbar,
+.postdog-row,
+.postdog-request-bar,
+.postdog-folder-title,
+.postdog-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.postdog-env-add-button {
+  flex: 0 0 48px;
+  min-width: 48px;
+  white-space: nowrap;
+}
+
+.postdog-toolbar {
+  margin-bottom: 8px;
+}
+
+.postdog-folder {
+  margin: 8px 0;
+}
+
+.postdog-folder-title {
+  justify-content: space-between;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 2px;
+}
+
+.postdog-folder-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 0;
+  text-align: left;
+}
+
+.postdog-folder-toggle span {
+  width: 10px;
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.postdog-folder-toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.postdog-folder-add,
+.postdog-folder-delete {
+  flex: 0 0 auto;
+}
+
+.postdog-folder-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.postdog-folder-script {
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  background: #f9fafb;
+  margin: 2px 0 4px;
+  padding: 5px;
+}
+
+.postdog-folder-script summary {
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.postdog-folder-script label {
+  display: block;
+  margin-top: 6px;
+  color: #4b5563;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.postdog-folder-script textarea {
+  min-height: 96px;
+  margin-top: 3px;
+  font-size: 11px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.postdog-folder-add,
+.postdog-folder-delete,
+.postdog-kv-row button,
+.postdog-add-row {
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  border-radius: 4px;
+  min-height: 24px;
+  padding: 0 7px;
+  color: #374151;
+}
+
+.postdog-folder-delete {
+  color: #991b1b;
+}
+
+.postdog-folder-delete:hover {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.postdog-request-item {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 6px;
+  align-items: start;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 6px;
+  text-align: left;
+  color: #111827;
+}
+
+.postdog-request-item:hover,
+.postdog-request-item.postdog-selected {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.postdog-request-item span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  padding-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.postdog-request-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: 1.25;
+  font-size: 12px;
+}
+
+.postdog-main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.postdog-request-bar {
+  position: sticky;
+  top: 64px;
+  z-index: 2;
+  padding-bottom: 8px;
+  background: #f8fafc;
+}
+
+.postdog-meta-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+  gap: 10px;
+  align-items: end;
+  padding-bottom: 8px;
+  background: #f8fafc;
+}
+
+.postdog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.postdog-request-bar .postdog-method-select {
+  width: 76px;
+  flex: 0 0 76px;
+}
+
+.postdog-request-bar .postdog-url-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.postdog-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.45fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.postdog-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.postdog-editor,
+.postdog-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.postdog-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.postdog-script-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.postdog-script-section summary {
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.postdog-script-section textarea {
+  border-width: 1px 0 0 0;
+  border-radius: 0 0 6px 6px;
+  min-height: 160px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.postdog-sidepanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.postdog-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.postdog-page input,
+.postdog-page select,
+.postdog-page textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 6px 8px;
+}
+
+.postdog-page textarea {
+  min-height: 86px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.postdog-page label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b5563;
+}
+
+.postdog-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.postdog-kv.compact .postdog-kv-row {
+  grid-template-columns: minmax(0, 1fr) 52px 42px 28px;
+  grid-template-areas:
+    "key enabled secret remove"
+    "value value value value";
+  align-items: start;
+  border: 1px solid #eef2f7;
+  border-radius: 6px;
+  padding: 5px;
+  background: #fbfdff;
+}
+
+.postdog-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.2fr) 56px 46px 28px;
+  gap: 4px;
+  align-items: center;
+}
+
+.postdog-kv.compact .postdog-kv-row input:first-child {
+  grid-area: key;
+}
+
+.postdog-kv.compact .postdog-kv-row input:nth-child(2) {
+  grid-area: value;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.postdog-kv.compact .postdog-kv-row .postdog-checkbox:nth-of-type(1) {
+  grid-area: enabled;
+  justify-content: center;
+}
+
+.postdog-kv.compact .postdog-kv-row .postdog-checkbox:nth-of-type(2) {
+  grid-area: secret;
+  justify-content: center;
+}
+
+.postdog-kv.compact .postdog-kv-row button {
+  grid-area: remove;
+}
+
+.postdog-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+
+.postdog-checkbox input {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+}
+
+.postdog-add-row {
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+.postdog-response pre {
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #111827;
+}
+
+.postdog-response-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.postdog-run-id {
+  color: #6b7280;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.postdog-response-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.postdog-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 28px;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.postdog-status.ok {
+  background: #16a34a;
+}
+
+.postdog-status.redirect {
+  background: #2563eb;
+}
+
+.postdog-status.error {
+  background: #dc2626;
+}
+
+.postdog-status.unknown {
+  background: #6b7280;
+}
+
+.postdog-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 8px;
+}
+
+.postdog-tab-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.postdog-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
+.postdog-tabs button.active {
+  border-bottom-color: #2563eb;
+  color: #111827;
+}
+
+.postdog-tabs .postdog-copy-body-button {
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  margin-bottom: 2px;
+}
+
+.postdog-tabs .postdog-copy-body-button:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #111827;
+}
+
+.postdog-response-content {
+  min-height: 180px;
+}
+
+.postdog-request-snapshot {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  margin-bottom: 8px;
+}
+
+.postdog-request-snapshot summary {
+  cursor: pointer;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 9px;
+}
+
+.postdog-request-snapshot-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #e5e7eb;
+  padding: 7px 9px;
+  min-width: 0;
+}
+
+.postdog-request-snapshot-line strong {
+  color: #2563eb;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.postdog-request-snapshot-line span {
+  color: #374151;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.postdog-request-snapshot pre {
+  max-height: 180px;
+  margin: 0;
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #111827;
+  overflow: auto;
+  padding: 8px 9px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.postdog-empty-response {
+  color: #6b7280;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.postdog-header-table {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.postdog-header-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.32fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border-bottom: 1px solid #f3f4f6;
+  padding: 6px 0;
+}
+
+.postdog-header-row span {
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.postdog-header-row code {
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.postdog-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.postdog-history-item {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 7px;
+  text-align: left;
+  color: #111827;
+}
+
+.postdog-history-item:hover,
+.postdog-history-item.active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.postdog-history-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.postdog-history-main strong {
+  color: #4b5563;
+  font-size: 11px;
+}
+
+.postdog-history-status {
+  display: inline-flex;
+  min-width: 38px;
+  min-height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.postdog-history-status.ok {
+  background: #16a34a;
+}
+
+.postdog-history-status.redirect {
+  background: #2563eb;
+}
+
+.postdog-history-status.error {
+  background: #dc2626;
+}
+
+.postdog-history-status.unknown {
+  background: #6b7280;
+}
+
+.postdog-history-time {
+  color: #6b7280;
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+
+.postdog-history-url {
+  color: #374151;
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.postdog-json-preview {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  padding: 8px;
+}
+
+.postdog-json-preview-title {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.postdog-json-tree {
+  max-height: 520px;
+  overflow: auto;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px;
+}
+
+.postdog-json-node summary {
+  cursor: pointer;
+  list-style-position: outside;
+  white-space: nowrap;
+}
+
+.postdog-json-children {
+  margin-left: 18px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.postdog-json-leaf {
+  margin-left: 18px;
+  white-space: nowrap;
+}
+
+.postdog-json-key {
+  color: #93c5fd;
+}
+
+.postdog-json-string {
+  color: #86efac;
+}
+
+.postdog-json-number {
+  color: #fbbf24;
+}
+
+.postdog-json-bool {
+  color: #c4b5fd;
+}
+
+.postdog-json-null,
+.postdog-json-muted {
+  color: #94a3b8;
+}
+
+.postdog-json-punc {
+  color: #e5e7eb;
+}
+
+.postdog-tests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.postdog-pass,
+.postdog-fail {
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.postdog-pass {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.postdog-fail {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.postdog-script-logs {
+  margin-bottom: 8px;
+  border: 1px solid #dbe4f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.postdog-script-logs summary {
+  cursor: pointer;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.postdog-script-log-list {
+  display: grid;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+
+.postdog-script-log {
+  display: grid;
+  grid-template-columns: 72px 52px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.postdog-script-log span {
+  color: #64748b;
+}
+
+.postdog-script-log strong {
+  color: #2563eb;
+}
+
+.postdog-script-log.warn strong {
+  color: #b45309;
+}
+
+.postdog-script-log.error strong {
+  color: #dc2626;
+}
+
+.postdog-script-log code {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #0f172a;
+}
+
+.postdog-footer {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .postdog-page {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .postdog-sidebar-resizer {
+    display: none;
+  }
+
+  .postdog-sidebar {
+    max-height: 170px;
+    border-right: 0;
+    border-bottom: 1px solid #d1d5db;
+  }
+
+  .postdog-grid {
+    grid-template-columns: 1fr;
+  }
+}

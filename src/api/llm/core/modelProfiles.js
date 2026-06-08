@@ -1,5 +1,4 @@
 import {
-  DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
   getDefaultApiType,
   normalizeApiType,
   normalizeModelContextLimitTokens
@@ -180,4 +179,3 @@ function normalizeImageModelProfile(item, index) {
     imageModel
   };
 }
-

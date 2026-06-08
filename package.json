@@ -21,7 +21,8 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "rehype-raw": "^7.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "sval": "^0.6.12"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

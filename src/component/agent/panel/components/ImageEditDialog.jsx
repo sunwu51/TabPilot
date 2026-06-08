@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Switch } from "@sunwu51/camel-ui";
 import { isImageFile, getClipboardImageFiles, imageFileToAttachmentItem } from "../messages/userMessage";
 
@@ -7,6 +7,25 @@ const IMAGE_EDIT_MODE = {
   ANNOTATION: "annotation",
   MASK: "mask"
 };
+
+function drawClosedMaskPath(ctx, path, { fillStyle, strokeStyle }) {
+  if (!Array.isArray(path) || path.length < 3) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 2;
+  ctx.fillStyle = fillStyle;
+  ctx.strokeStyle = strokeStyle;
+  ctx.beginPath();
+  ctx.moveTo(path[0].x, path[0].y);
+  for (let i = 1; i < path.length; i++) {
+    ctx.lineTo(path[i].x, path[i].y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
 
 export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
   const [suggestion, setSuggestion] = useState("");
@@ -64,16 +83,6 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     if (!annotationDraft) return;
     annotationInputRef.current?.focus();
   }, [annotationDraft]);
-
-  useEffect(() => {
-    const image = imageRef.current;
-    const imageLayer = imageLayerRef.current;
-    if (!image || !imageLayer || typeof ResizeObserver === "undefined") return undefined;
-    const observer = new ResizeObserver(() => syncMaskCanvas());
-    observer.observe(image);
-    observer.observe(imageLayer);
-    return () => observer.disconnect();
-  }, [request?.src]);
 
   async function addReferenceImageFiles(files) {
     const imageFiles = Array.from(files || []).filter(isImageFile);
@@ -133,7 +142,36 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     setReferenceImages(prev => prev.filter(item => item.id !== id));
   }
 
-  function syncMaskCanvas(event) {
+  const renderMaskPreview = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (const path of maskPathsRef.current) {
+      drawClosedMaskPath(ctx, path, {
+        fillStyle: "rgba(239, 68, 68, 0.28)",
+        strokeStyle: "rgba(220, 38, 38, 0.75)"
+      });
+    }
+
+    const activePath = activeMaskPathRef.current;
+    if (activePath.length < 2) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(220, 38, 38, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(activePath[0].x, activePath[0].y);
+    for (let i = 1; i < activePath.length; i++) {
+      ctx.lineTo(activePath[i].x, activePath[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }, []);
+
+  const syncMaskCanvas = useCallback((event) => {
     const image = event?.currentTarget || imageRef.current;
     const imageLayer = imageLayerRef.current;
     const canvas = canvasRef.current;
@@ -155,7 +193,17 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
       });
     }
     renderMaskPreview();
-  }
+  }, [renderMaskPreview]);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    const imageLayer = imageLayerRef.current;
+    if (!image || !imageLayer || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => syncMaskCanvas());
+    observer.observe(image);
+    observer.observe(imageLayer);
+    return () => observer.disconnect();
+  }, [request?.src, syncMaskCanvas]);
 
   function clearMaskCanvas() {
     const canvas = canvasRef.current;
@@ -288,54 +336,6 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     if (event.key !== "Enter" || event.nativeEvent?.isComposing) return;
     event.preventDefault();
     submitAnnotationDraft();
-  }
-
-  function renderMaskPreview() {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    for (const path of maskPathsRef.current) {
-      drawClosedMaskPath(ctx, path, {
-        fillStyle: "rgba(239, 68, 68, 0.28)",
-        strokeStyle: "rgba(220, 38, 38, 0.75)"
-      });
-    }
-
-    const activePath = activeMaskPathRef.current;
-    if (activePath.length < 2) return;
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(220, 38, 38, 0.9)";
-    ctx.beginPath();
-    ctx.moveTo(activePath[0].x, activePath[0].y);
-    for (let i = 1; i < activePath.length; i++) {
-      ctx.lineTo(activePath[i].x, activePath[i].y);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawClosedMaskPath(ctx, path, { fillStyle, strokeStyle }) {
-    if (!Array.isArray(path) || path.length < 3) return;
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = 2;
-    ctx.fillStyle = fillStyle;
-    ctx.strokeStyle = strokeStyle;
-    ctx.beginPath();
-    ctx.moveTo(path[0].x, path[0].y);
-    for (let i = 1; i < path.length; i++) {
-      ctx.lineTo(path[i].x, path[i].y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
   }
 
   function handleMaskPointerDown(event) {
@@ -586,4 +586,3 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
     </div>
   );
 }
-
