@@ -445,6 +445,13 @@ html, body, #root {
   border-bottom: 1px solid #e5e7eb;
 }
 
+.settings-card-title-inline {
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .dialog-dialog .settings-quick-entry-divider {
   width: 100%;
   margin: 0.75rem 0 0.25rem;

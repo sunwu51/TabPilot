@@ -13,10 +13,14 @@ import {
 } from "./_shared";
 
 function _parseDataUrl(dataUrl) {
-  if (typeof dataUrl !== "string") return null;
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-  const [, mediaType, base64Data] = match;
+  const raw = typeof dataUrl === "string" ? dataUrl : "";
+  if (!raw.startsWith("data:")) return null;
+  const marker = ";base64,";
+  const markerIndex = raw.indexOf(marker);
+  if (markerIndex <= "data:".length) return null;
+  const mediaType = raw.slice("data:".length, markerIndex);
+  const base64Data = raw.slice(markerIndex + marker.length);
+  if (!mediaType || !base64Data) return null;
   const padding = base64Data.endsWith("==") ? 2 : (base64Data.endsWith("=") ? 1 : 0);
   return {
     mediaType,

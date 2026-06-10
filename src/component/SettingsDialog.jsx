@@ -500,6 +500,16 @@ function SettingsDialogBody() {
     }
   }
 
+  async function handleOpenPostdog() {
+    try {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("postdog.html") });
+      closeDialog();
+      toast.success("已打开 Postdog");
+    } catch (error) {
+      toast.error(error?.message || "打开 Postdog 失败");
+    }
+  }
+
   async function handleExportSettings() {
     try {
       const backup = await exportSettingsBackup();
@@ -973,8 +983,15 @@ function SettingsDialogBody() {
             >
               stash
             </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleOpenPostdog}
+            >
+              Postdog
+            </Button>
           </div>
           <hr className="settings-quick-entry-divider" />
+          <div className="settings-card-title settings-card-title-inline">高级功能</div>
           <div className="settings-tab-action-row settings-tab-action-row-secondary">
             <Button
               className="!min-h-7 !px-3 !py-0 !text-xs"

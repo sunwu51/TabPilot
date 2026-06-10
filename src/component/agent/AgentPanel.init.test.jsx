@@ -29,7 +29,7 @@ vi.mock("./McpConfig", () => ({ default: () => null }));
 vi.mock("./UserProfilePanel", () => ({ default: () => null }));
 vi.mock("./SkillsConfig", () => ({ default: () => null }));
 
-import AgentPanel, { buildImageModelSystemPrompt } from "./AgentPanel";
+import AgentPanel, { buildImageModelSystemPrompt, buildToolExecutionBatches, runToolExecutionBatches } from "./AgentPanel";
 import { getChromeStorageSnapshot, resetChromeMock } from "../../../test/setup";
 
 describe("AgentPanel initial session restore", () => {
@@ -75,6 +75,61 @@ describe("AgentPanel initial session restore", () => {
     expect(prompt).not.toContain("chat_completions");
     expect(prompt).not.toContain("token");
     expect(prompt).not.toContain("api.openai.com");
+  });
+
+  it("batches only consecutive image tools for parallel execution", () => {
+    const batches = buildToolExecutionBatches([
+      { id: "call_1", name: "image_gen" },
+      { id: "call_2", name: "image_edit" },
+      { id: "call_3", name: "tab_list" },
+      { id: "call_4", name: "image_gen" },
+      { id: "call_5", name: "download_search" }
+    ]);
+
+    expect(batches).toEqual([
+      {
+        parallel: true,
+        toolCalls: [
+          { id: "call_1", name: "image_gen" },
+          { id: "call_2", name: "image_edit" }
+        ]
+      },
+      { parallel: false, toolCalls: [{ id: "call_3", name: "tab_list" }] },
+      { parallel: true, toolCalls: [{ id: "call_4", name: "image_gen" }] },
+      { parallel: false, toolCalls: [{ id: "call_5", name: "download_search" }] }
+    ]);
+  });
+
+  it("starts image tools together and applies each result as it finishes", async () => {
+    const started = [];
+    const applied = [];
+    const resolvers = new Map();
+    const runPromise = runToolExecutionBatches([
+      { id: "call_1", name: "image_gen" },
+      { id: "call_2", name: "image_gen" }
+    ], (toolCall) => {
+      started.push(toolCall.id);
+      return new Promise(resolve => {
+        resolvers.set(toolCall.id, () => resolve({ id: toolCall.id, name: toolCall.name, result: { success: true } }));
+      });
+    }, (toolResult) => {
+      applied.push(toolResult.id);
+    });
+
+    await Promise.resolve();
+    expect(started).toEqual(["call_1", "call_2"]);
+    expect(applied).toEqual([]);
+
+    resolvers.get("call_2")();
+    await Promise.resolve();
+    expect(applied).toEqual(["call_2"]);
+
+    resolvers.get("call_1")();
+    await expect(runPromise).resolves.toEqual([
+      { id: "call_1", name: "image_gen", result: { success: true } },
+      { id: "call_2", name: "image_gen", result: { success: true } }
+    ]);
+    expect(applied).toEqual(["call_2", "call_1"]);
   });
 
   it("hydrates stored session images when restoring the last active session on mount", async () => {

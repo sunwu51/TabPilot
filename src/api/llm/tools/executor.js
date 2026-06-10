@@ -62,6 +62,19 @@ import {
 } from "./builtins/stash";
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
+import {
+  _execPostdogGetHistoryRun,
+  _execPostdogGetRequest,
+  _execPostdogListEnvironments,
+  _execPostdogListFolders,
+  _execPostdogListHistory,
+  _execPostdogListRequests,
+  _execPostdogRunRequest,
+  _execPostdogSaveEnvironment,
+  _execPostdogSaveFolder,
+  _execPostdogSaveRequest,
+  _execPostdogSetActiveEnvironment
+} from "./builtins/postdog";
 
 export { captureFullPageScreenshotToTab, openHelloWorldPlayground };
 
@@ -172,6 +185,18 @@ const BUILTIN_TOOL_HANDLERS = {
   download: (args) => _execDownload(args),
   download_list: (args) => _execDownloadList(args),
   download_search: (args) => _execDownloadSearch(args),
+
+  postdog_list_folders: () => _execPostdogListFolders(),
+  postdog_save_folder: (args) => _execPostdogSaveFolder(args),
+  postdog_list_requests: (args) => _execPostdogListRequests(args),
+  postdog_get_request: (args) => _execPostdogGetRequest(args),
+  postdog_save_request: (args) => _execPostdogSaveRequest(args),
+  postdog_run_request: (args) => _execPostdogRunRequest(args),
+  postdog_list_history: (args) => _execPostdogListHistory(args),
+  postdog_get_history_run: (args) => _execPostdogGetHistoryRun(args),
+  postdog_list_environments: () => _execPostdogListEnvironments(),
+  postdog_save_environment: (args) => _execPostdogSaveEnvironment(args),
+  postdog_set_active_environment: (args) => _execPostdogSetActiveEnvironment(args),
 
   image_gen: (args) => executeImageGeneration(args),
   image_edit: (args) => executeImageEdit(args),

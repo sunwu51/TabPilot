@@ -26,6 +26,27 @@ import {
     releaseSessionLocksForWindow
 } from "./api/agent/sessions";
 import { ensureSettingsMigrated } from "./api/settings/migrations";
+import {
+    deletePostdogEnvironment,
+    deletePostdogFolder,
+    deletePostdogRequest,
+    listPostdogEnvironments,
+    listPostdogFolders,
+    listPostdogHistory,
+    listPostdogHistorySummaries,
+    listPostdogRequests,
+    getActivePostdogEnvironment,
+    getPostdogHistoryRun,
+    getPostdogRequest,
+    savePostdogEnvironment,
+    savePostdogFolder,
+    savePostdogRequest,
+    serializePostdogEnvironmentForAi,
+    serializePostdogRequestForAi,
+    setActivePostdogEnvironment
+} from "./api/postdog";
+import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
+import { runPostdogRequest } from "./api/postdog/runtime";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -745,6 +766,96 @@ async function replayMacroSteps(macro, options = {}) {
     return { success: true, tabId: tab.id, report };
 }
 
+async function handlePostdogManagerMessage(action, payload = {}) {
+    switch (action) {
+        case "list_all": {
+            const [folders, requests, environments, activeEnvironment, history] = await Promise.all([
+                listPostdogFolders(),
+                listPostdogRequests(),
+                listPostdogEnvironments(),
+                getActivePostdogEnvironment(),
+                listPostdogHistory()
+            ]);
+            return { success: true, data: { folders, requests, environments, activeEnvironmentId: activeEnvironment?.id || "", history } };
+        }
+        case "list_folders":
+            return { success: true, data: await listPostdogFolders() };
+        case "save_folder":
+            return { success: true, data: await savePostdogFolder(payload.folder || payload) };
+        case "delete_folder":
+            return { success: true, data: await deletePostdogFolder(payload.id) };
+        case "list_requests":
+            return { success: true, data: await listPostdogRequests() };
+        case "list_requests_for_ai": {
+            const requests = await listPostdogRequests();
+            const query = String(payload.query || "").trim().toLowerCase();
+            const filtered = query
+                ? requests.filter(item => `${item.name} ${item.method} ${item.url}`.toLowerCase().includes(query))
+                : requests;
+            return { success: true, data: filtered.map(serializePostdogRequestForAi) };
+        }
+        case "get_request":
+            return { success: true, data: await getPostdogRequest(payload.id) };
+        case "save_request":
+            return { success: true, data: await savePostdogRequest(payload.request || payload) };
+        case "delete_request":
+            return { success: true, data: await deletePostdogRequest(payload.id) };
+        case "run_request":
+            return { success: true, data: await runPostdogRequest(payload) };
+        case "list_history":
+            return { success: true, data: await listPostdogHistorySummaries(payload.requestId) };
+        case "get_history_run":
+            return { success: true, data: await getPostdogHistoryRun(payload.runId) };
+        case "list_environments":
+            return { success: true, data: await listPostdogEnvironments() };
+        case "list_environments_for_ai": {
+            const active = await getActivePostdogEnvironment();
+            const environments = await listPostdogEnvironments();
+            return {
+                success: true,
+                data: {
+                    activeEnvironmentId: active?.id || "",
+                    environments: environments.map(serializePostdogEnvironmentForAi)
+                }
+            };
+        }
+        case "save_environment":
+            return { success: true, data: await savePostdogEnvironment(payload.environment || payload) };
+        case "delete_environment":
+            return { success: true, data: await deletePostdogEnvironment(payload.id) };
+        case "set_active_environment":
+            return { success: true, data: await setActivePostdogEnvironment(payload.id) };
+        case "import_curl": {
+            const request = importCurl(payload.text || payload.curl || "", payload);
+            return { success: true, data: await savePostdogRequest(request) };
+        }
+        case "export_curl": {
+            const request = payload.request || await getPostdogRequest(payload.id);
+            return { success: true, data: { text: exportCurl(request) } };
+        }
+        case "export_json": {
+            const [folders, requests, environments] = await Promise.all([
+                listPostdogFolders(),
+                listPostdogRequests(),
+                listPostdogEnvironments()
+            ]);
+            return { success: true, data: { text: exportPostdogJson({ folders, requests, environments }) } };
+        }
+        case "import_json": {
+            const parsed = parsePostdogJson(payload.text || "");
+            const folders = [];
+            const requests = [];
+            const environments = [];
+            for (const folder of parsed.folders) folders.push(await savePostdogFolder(folder));
+            for (const request of parsed.requests) requests.push(await savePostdogRequest(request));
+            for (const environment of parsed.environments) environments.push(await savePostdogEnvironment(environment));
+            return { success: true, data: { folders, requests, environments } };
+        }
+        default:
+            return { success: false, error: `Unknown postdog action: ${action}` };
+    }
+}
+
 // ========== Message handler (must be registered first for reliable wake-up) ==========
 
 /**
@@ -810,7 +921,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg?.type === "schedule_manager") {
+    if (msg?.type === "schedule_manager") {
         (async () => {
             try {
                 switch (msg.action) {
@@ -832,6 +943,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 }
             } catch (error) {
                 sendResponse({ error: error?.message || String(error) });
+            }
+        })();
+        return true;
+    }
+
+    if (msg?.type === "postdog_manager") {
+        (async () => {
+            try {
+                sendResponse(await handlePostdogManagerMessage(msg.action, msg.payload || {}));
+            } catch (error) {
+                sendResponse({ success: false, error: error?.message || String(error) });
             }
         })();
         return true;

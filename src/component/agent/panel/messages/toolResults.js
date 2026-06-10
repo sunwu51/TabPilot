@@ -159,10 +159,15 @@ export function isLikelyImageUrl(url) {
   }
 }
 export function parseImageDataUrl(dataUrl) {
-  if (typeof dataUrl !== "string") return null;
-  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-  return { mediaType: match[1], data: match[2] };
+  const raw = typeof dataUrl === "string" ? dataUrl : "";
+  if (!raw.startsWith("data:")) return null;
+  const marker = ";base64,";
+  const markerIndex = raw.indexOf(marker);
+  if (markerIndex <= "data:".length) return null;
+  const mediaType = raw.slice("data:".length, markerIndex);
+  const data = raw.slice(markerIndex + marker.length);
+  if (!mediaType || !data) return null;
+  return { mediaType, data };
 }
 
 export function parseToolMessageContent(content) {

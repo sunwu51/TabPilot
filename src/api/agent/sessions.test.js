@@ -165,6 +165,25 @@ describe("sessions storage", () => {
     }]);
   });
 
+  it("hydrates large user image blocks without regex stack pressure", () => {
+    const imageData = "a".repeat(512 * 1024);
+    const dataUrl = `data:image/png;base64,${imageData}`;
+
+    const result = compactSessionMessages([{
+      role: "user",
+      content: [
+        { type: "text", text: "look" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: imageData } }
+      ]
+    }]);
+
+    expect(result.imageStore).toEqual({ img_1: dataUrl });
+    expect(result.messages[0].content[1]).toEqual({
+      type: "image",
+      source: { type: "session_image", ref: "img_1", media_type: "image/png" }
+    });
+  });
+
   it("keeps canonical image refs aligned across blocks, imageRefs, and image store", () => {
     const result = compactSessionMessages([{
       role: "user",

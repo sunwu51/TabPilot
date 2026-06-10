@@ -126,6 +126,26 @@ describe("built-in tool execution", () => {
     });
   });
 
+  it("routes Postdog tools through the Postdog manager", async () => {
+    chrome.runtime.sendMessage
+      .mockImplementationOnce((message, callback) => callback({ success: true, data: [{ id: "req-1" }] }))
+      .mockImplementationOnce((message, callback) => callback({ success: true, data: { response: { status: 200 } } }));
+
+    await expect(executeTool("postdog_list_requests", { query: "foo" })).resolves.toEqual({ requests: [{ id: "req-1" }] });
+    await expect(executeTool("postdog_run_request", { id: "req-1" })).resolves.toEqual({ result: { response: { status: 200 } } });
+
+    expect(chrome.runtime.sendMessage.mock.calls[0][0]).toEqual({
+      type: "postdog_manager",
+      action: "list_requests_for_ai",
+      payload: { query: "foo" }
+    });
+    expect(chrome.runtime.sendMessage.mock.calls[1][0]).toEqual({
+      type: "postdog_manager",
+      action: "run_request",
+      payload: { id: "req-1" }
+    });
+  });
+
   it("delegates download execution to download helper", async () => {
     const { triggerBrowserDownload } = await import("./builtins/downloadHelper");
 

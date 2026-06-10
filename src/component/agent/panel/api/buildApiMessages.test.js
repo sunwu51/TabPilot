@@ -119,6 +119,37 @@ describe("buildApiMessages image options", () => {
     ]);
   });
 
+  it("parses large OpenAI Chat tool result image data URLs without regex stack pressure", () => {
+    const imageData = "a".repeat(512 * 1024);
+    const dataUrl = `data:image/png;base64,${imageData}`;
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "image_gen",
+            arguments: "{\"prompt\":\"cat\"}"
+          }
+        }]
+      },
+      {
+        ...toolImageMessage,
+        displayImages: [{ url: dataUrl }]
+      }
+    ], {
+      supportsImageInput: true,
+      supportsToolImageInput: true
+    });
+
+    expect(result[2].content[1]).toEqual({
+      type: "image_url",
+      image_url: { url: dataUrl, detail: "low" }
+    });
+  });
+
   it("keeps OpenAI Responses tool result images on the function output item", () => {
     const apiMessages = buildApiMessages(API_TYPES.OPENAI_RESPONSES, [
       {
