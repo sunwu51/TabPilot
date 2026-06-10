@@ -174,6 +174,48 @@ const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
 const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
 
+export function isParallelImageToolCall(toolCall) {
+  return toolCall?.name === "image_gen" || toolCall?.name === "image_edit";
+}
+
+export function buildToolExecutionBatches(toolCalls = []) {
+  const batches = [];
+  for (const toolCall of Array.isArray(toolCalls) ? toolCalls : []) {
+    if (!isParallelImageToolCall(toolCall)) {
+      batches.push({ parallel: false, toolCalls: [toolCall] });
+      continue;
+    }
+    const previous = batches[batches.length - 1];
+    if (previous?.parallel) {
+      previous.toolCalls.push(toolCall);
+    } else {
+      batches.push({ parallel: true, toolCalls: [toolCall] });
+    }
+  }
+  return batches;
+}
+
+export async function runToolExecutionBatches(toolCalls, executeToolCall, applyToolResult, { isCurrent = () => true } = {}) {
+  const toolResults = [];
+  for (const batch of buildToolExecutionBatches(toolCalls)) {
+    if (!isCurrent()) return toolResults;
+    const batchResults = batch.parallel
+      ? await Promise.all(batch.toolCalls.map(async (toolCall) => {
+        const toolResult = await executeToolCall(toolCall);
+        if (isCurrent()) applyToolResult?.(toolResult);
+        return toolResult;
+      }))
+      : [await executeToolCall(batch.toolCalls[0])];
+    if (!isCurrent()) return toolResults;
+    for (const toolResult of batchResults) {
+      if (!toolResult) continue;
+      toolResults.push(toolResult);
+      if (!batch.parallel) applyToolResult?.(toolResult);
+    }
+  }
+  return toolResults;
+}
+
 function resolveSupportsToolImageInput(llmConfig = {}) {
   if (llmConfig?.supportsImageInput !== true) return false;
   if (Object.prototype.hasOwnProperty.call(llmConfig, "supportsToolImageInput")) {
@@ -2604,7 +2646,7 @@ export default function AgentPanel() {
           setSessionMessages(targetSessionId, [...conversationMessages, assistantMsg, ...pendingToolMsgs]);
 
           const toolResults = [];
-          for (const tc of msg.toolCalls) {
+          const executeOneToolCall = async (tc) => {
             if (!isCurrentRun(targetSessionId, runId)) return;
             let result;
             const t0 = Date.now();
@@ -2636,42 +2678,53 @@ export default function AgentPanel() {
               if (permissionDenied) {
                 // result already populated; skip dangerous + execution path
               } else {
-              const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
-              if (dangerousMeta) {
-                const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
-                if (dangerousToolSkipApproval) {
-                  setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                  result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
-                } else {
-                  toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
-                  const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
-                  if (!isCurrentRun(targetSessionId, runId)) return;
-                  if (!approved) {
-                    result = { error: "Execution canceled by user", cancelled: true };
-                  } else {
+                const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
+                if (dangerousMeta) {
+                  const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
+                  if (dangerousToolSkipApproval) {
                     setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
                     result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
+                  } else {
+                    toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
+                    const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
+                    if (!isCurrentRun(targetSessionId, runId)) return;
+                    if (!approved) {
+                      result = { error: "Execution canceled by user", cancelled: true };
+                    } else {
+                      setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+                      result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
+                    }
                   }
+                } else {
+                  result = await executeTool(tc.name, resolvedArgs, combinedMcpTools);
                 }
-              } else {
-                result = await executeTool(tc.name, resolvedArgs, combinedMcpTools);
-              }
               }
             }
             const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
+            return { id: tc.id, name: tc.name, args: resolvedArgs, result, durationMs };
+          };
+
+          const applyToolResult = (toolResult) => {
+            if (!toolResult) return;
             const toolResultMsg = buildDisplayToolResultMessage(
-              { id: tc.id, name: tc.name, args: resolvedArgs, result, durationMs },
+              toolResult,
               targetSessionId,
               registerSessionImageDataUrl
             );
-            toolResults.push({ id: tc.id, name: tc.name, args: resolvedArgs, result, durationMs });
-            // Replace the pending placeholder for this tool
+            // Replace the pending placeholder for this tool as soon as it finishes.
             const currentMsgs = getSessionMessages(targetSessionId);
-            const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === tc.id ? toolResultMsg : m);
+            const updatedMsgs = currentMsgs.map(m => m._pending && m.tool_call_id === toolResult.id ? toolResultMsg : m);
             setSessionMessages(targetSessionId, updatedMsgs);
             void autoSave(targetSessionId, updatedMsgs);
-          }
+          };
+
+          toolResults.push(...await runToolExecutionBatches(
+            msg.toolCalls,
+            executeOneToolCall,
+            applyToolResult,
+            { isCurrent: () => isCurrentRun(targetSessionId, runId) }
+          ));
 
           if (!isCurrentRun(targetSessionId, runId)) return;
 

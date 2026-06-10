@@ -7,24 +7,168 @@ body,
 }
 
 body {
-  background: #0f172a;
+  overflow: hidden;
+  background: #111827;
+  color: #e5e7eb;
+  font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button {
+  font: inherit;
 }
 
 #root {
+  min-width: 0;
+  min-height: 0;
+}
+
+.image-viewer-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.image-viewer-toolbar,
+.image-viewer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 14px;
+  background: rgba(17, 24, 39, 0.92);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.image-viewer-toolbar {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.image-viewer-meta {
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.image-viewer-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #f8fafc;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.image-viewer-btn {
+  min-width: 42px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 6px;
+  background: #1f2937;
+  color: #f8fafc;
+  cursor: pointer;
+}
+
+.image-viewer-btn:hover,
+.image-viewer-btn:focus-visible {
+  background: #334155;
+  outline: none;
+}
+
+.image-viewer-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: auto;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, rgba(148, 163, 184, 0.08) 25%, transparent 25%, transparent 75%, rgba(148, 163, 184, 0.08) 75%),
+    linear-gradient(45deg, rgba(148, 163, 184, 0.08) 25%, transparent 25%, transparent 75%, rgba(148, 163, 184, 0.08) 75%);
+  background-color: #020617;
+  background-position: 0 0, 14px 14px;
+  background-size: 28px 28px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.image-viewer-stage:active {
+  cursor: grabbing;
 }
 
 .image-viewer-img {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  width: auto;
+  height: auto;
+  transform-origin: center center;
+  transition: transform 120ms ease;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.42);
+  pointer-events: none;
+}
+
+.image-viewer-nav {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 86px;
+  border: 0;
+  background: transparent;
+  color: #f8fafc;
+  font-size: 64px;
+  font-weight: 300;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.8);
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+.image-viewer-nav-prev {
+  left: 0;
+}
+
+.image-viewer-nav-next {
+  right: 0;
+}
+
+.image-viewer-stage:hover .image-viewer-nav:not(:disabled),
+.image-viewer-nav:focus-visible {
+  opacity: 1;
+}
+
+.image-viewer-nav:hover:not(:disabled),
+.image-viewer-nav:focus-visible {
+  background: rgba(15, 23, 42, 0.32);
+  outline: none;
+}
+
+.image-viewer-nav:disabled {
+  cursor: default;
+}
+
+.image-viewer-zoom {
+  flex: 0 0 auto;
+  min-width: 42px;
+  color: #e2e8f0;
+  font-weight: 700;
 }
 
 .image-viewer-status {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #e2e8f0;
-  font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }

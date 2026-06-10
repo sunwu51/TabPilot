@@ -526,7 +526,11 @@ async function handleRequest(req) {
         sendError(id, -32602, "Invalid params: name is required");
         return;
       }
-      executionQueue = executionQueue.then(() => executeToolCall(id, params));
+      if (isImageToolName(params.name)) {
+        void executeToolCall(id, params);
+      } else {
+        executionQueue = executionQueue.then(() => executeToolCall(id, params));
+      }
       break;
     }
 
