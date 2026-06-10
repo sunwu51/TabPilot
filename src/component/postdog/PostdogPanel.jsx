@@ -3,6 +3,13 @@
 import { Button } from "@sunwu51/camel-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import {
+  POSTDOG_ACTIVE_ENVIRONMENT_KEY,
+  POSTDOG_ENVIRONMENTS_KEY,
+  POSTDOG_FOLDERS_KEY,
+  POSTDOG_HISTORY_KEY,
+  POSTDOG_REQUESTS_KEY
+} from "../../api/postdog";
 import "./postdog.css";
 
 const EMPTY_REQUEST = {
@@ -45,6 +52,24 @@ export default function PostdogPanel() {
 
   useEffect(() => {
     void loadAll();
+  }, []);
+
+  useEffect(() => {
+    function handleStorageChange(changes, areaName) {
+      if (areaName !== "local") return;
+      if (
+        changes[POSTDOG_FOLDERS_KEY] ||
+        changes[POSTDOG_REQUESTS_KEY] ||
+        changes[POSTDOG_ENVIRONMENTS_KEY] ||
+        changes[POSTDOG_ACTIVE_ENVIRONMENT_KEY] ||
+        changes[POSTDOG_HISTORY_KEY]
+      ) {
+        void loadAll();
+      }
+    }
+
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
   }, []);
 
   useEffect(() => () => {
@@ -126,9 +151,6 @@ export default function PostdogPanel() {
         return nextFolderIds;
       }
       const next = new Set([...prev].filter(id => nextFolderIds.has(id)));
-      for (const id of nextFolderIds) {
-        if (!knownFolderIdsRef.current.has(id)) next.add(id);
-      }
       return next;
     });
     knownFolderIdsRef.current = nextFolderIds;
