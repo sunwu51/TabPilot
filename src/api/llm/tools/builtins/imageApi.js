@@ -482,9 +482,9 @@ async function imageSourceToFile(source, fallbackName) {
   if (!raw) throw new Error(`${fallbackName} is empty`);
 
   if (/^data:[^;]+;base64,/i.test(raw)) {
-    const match = raw.match(/^data:([^;]+);base64,(.+)$/i);
-    if (!match) throw new Error(`Invalid data URL for ${fallbackName}`);
-    const [, mediaType, base64Data] = match;
+    const parsed = parseBase64DataUrl(raw);
+    if (!parsed) throw new Error(`Invalid data URL for ${fallbackName}`);
+    const { mediaType, base64Data } = parsed;
     const bytes = base64ToUint8Array(base64Data);
     return blobToNamedFile(new Blob([bytes], { type: mediaType }), `${fallbackName}.${extensionFromMediaType(mediaType)}`);
   }
@@ -551,10 +551,25 @@ function base64ToUint8Array(base64Data) {
   return bytes;
 }
 
+function parseBase64DataUrl(dataUrl) {
+  const raw = typeof dataUrl === "string" ? dataUrl : "";
+  if (!raw.startsWith("data:")) return null;
+  const marker = ";base64,";
+  const markerIndex = raw.toLowerCase().indexOf(marker);
+  if (markerIndex <= "data:".length) return null;
+  const mediaType = raw.slice("data:".length, markerIndex);
+  const base64Data = raw.slice(markerIndex + marker.length);
+  if (!mediaType || !base64Data) return null;
+  return { mediaType, base64Data };
+}
+
 function stripDataUrlPrefix(value) {
   const raw = String(value || "").trim();
-  const match = raw.match(/^data:[^;]+;base64,(.+)$/i);
-  return match ? match[1] : raw;
+  const marker = ";base64,";
+  const markerIndex = raw.toLowerCase().indexOf(marker);
+  return raw.startsWith("data:") && markerIndex > "data:".length
+    ? raw.slice(markerIndex + marker.length)
+    : raw;
 }
 
 function isBase64DataUrl(value) {
