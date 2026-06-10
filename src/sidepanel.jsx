@@ -6,8 +6,9 @@ import './index.css'
 
 installWarnFilter();
 
-chrome.runtime.onMessage.addListener(async function (e) {
+chrome.runtime.onMessage.addListener(function (e) {
     console.log(e);
+    return false;
 });
 
 const root = createRoot(document.getElementById('root'));

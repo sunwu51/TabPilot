@@ -46,18 +46,21 @@ function App() {
   }, []);
 
   useEffect(() => {
-    async function handleRuntimeMessage(message) {
-      if (message?.type !== "focus_agent_panel") return;
-      const currentWindow = await chrome.windows.getCurrent();
-      if (String(currentWindow?.id || "") !== String(message.windowId || "")) return;
-      requestAnimationFrame(() => {
-        const agentPanel = document.querySelector(".agent-tab-panel");
-        const panels = Array.from(document.querySelectorAll(".tabs-panel, .tabs-panel-selected"));
-        const buttons = Array.from(document.querySelectorAll(".tabs-button-container button"));
-        const agentPanelWrapper = agentPanel?.closest(".tabs-panel, .tabs-panel-selected");
-        const agentIndex = panels.indexOf(agentPanelWrapper);
-        if (agentIndex >= 0) buttons[agentIndex]?.click();
-      });
+    function handleRuntimeMessage(message) {
+      if (message?.type !== "focus_agent_panel") return false;
+      void (async () => {
+        const currentWindow = await chrome.windows.getCurrent();
+        if (String(currentWindow?.id || "") !== String(message.windowId || "")) return;
+        requestAnimationFrame(() => {
+          const agentPanel = document.querySelector(".agent-tab-panel");
+          const panels = Array.from(document.querySelectorAll(".tabs-panel, .tabs-panel-selected"));
+          const buttons = Array.from(document.querySelectorAll(".tabs-button-container button"));
+          const agentPanelWrapper = agentPanel?.closest(".tabs-panel, .tabs-panel-selected");
+          const agentIndex = panels.indexOf(agentPanelWrapper);
+          if (agentIndex >= 0) buttons[agentIndex]?.click();
+        });
+      })();
+      return false;
     }
 
     chrome.runtime.onMessage.addListener(handleRuntimeMessage);
