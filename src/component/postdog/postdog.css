@@ -720,20 +720,47 @@
 }
 
 .postdog-json-node summary {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   cursor: pointer;
-  list-style-position: outside;
+  list-style: none;
   white-space: nowrap;
 }
 
+.postdog-json-node summary::-webkit-details-marker {
+  display: none;
+}
+
+.postdog-json-node summary::before {
+  content: "▸";
+  flex: 0 0 14px;
+  width: 14px;
+  color: #e5e7eb;
+  text-align: center;
+}
+
+.postdog-json-node[open] > summary::before {
+  content: "▾";
+}
+
 .postdog-json-children {
-  margin-left: 18px;
-  padding-left: 10px;
+  margin-left: 7px;
+  padding-left: 13px;
   border-left: 1px solid rgba(148, 163, 184, 0.35);
 }
 
 .postdog-json-leaf {
-  margin-left: 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   white-space: nowrap;
+}
+
+.postdog-json-leaf::before {
+  content: "";
+  flex: 0 0 14px;
+  width: 14px;
 }
 
 .postdog-json-key {
