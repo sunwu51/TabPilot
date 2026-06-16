@@ -36,6 +36,12 @@ import {
   hasUsableGithubSyncConfig,
   normalizeSyncIntervalMinutes
 } from "../api/sync/config";
+
+const GITHUB_SYNC_INTERVAL_OPTIONS = [
+  { value: 10, label: "10 分钟" },
+  { value: 20, label: "20 分钟" },
+  { value: 60, label: "60 分钟" }
+];
 import { getGithubSyncStatus, runGithubSync, saveGithubSyncConfig } from "../api/sync/engine";
 import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/browser/tabReuse";
 import {
@@ -1244,13 +1250,14 @@ function SettingsDialogBody() {
                   <span className="text-sm">同步 stash</span>
                 </Checkbox>
               </div>
-              <Input
-                label="同步间隔（分钟）"
-                labelClassName="!text-sm !font-medium !text-gray-500"
-                inputClassName="!min-h-8"
-                defaultValue={String(githubSyncIntervalMinutes)}
-                onChange={(value) => setGithubSyncIntervalMinutes(normalizeSyncIntervalMinutes(value || GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES))}
-                placeholder="5"
+              <Select
+                label="同步间隔"
+                items={GITHUB_SYNC_INTERVAL_OPTIONS.map((o) => o.label)}
+                defaultIndex={Math.max(0, GITHUB_SYNC_INTERVAL_OPTIONS.findIndex((o) => o.value === githubSyncIntervalMinutes))}
+                onSelectedItemChange={(changes) => {
+                  const opt = GITHUB_SYNC_INTERVAL_OPTIONS.find((o) => o.label === changes.selectedItem);
+                  setGithubSyncIntervalMinutes(opt ? opt.value : GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES);
+                }}
               />
               <div className="settings-api-url-hint">
                 规则是本地优先、定时拉取合并、再用 GitHub Contents API 覆盖上传；删除通过 tombstone 防止旧设备回灌。

@@ -2,8 +2,8 @@ export const GITHUB_SYNC_CONFIG_KEY = "githubSyncConfig";
 export const GITHUB_SYNC_STATE_KEY = "githubSyncState";
 export const GITHUB_SYNC_TOMBSTONES_KEY = "githubSyncTombstones";
 export const GITHUB_SYNC_ALARM_NAME = "github-sync";
-export const GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES = 5;
-export const GITHUB_SYNC_MIN_INTERVAL_MINUTES = 3;
+export const GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES = 10;
+export const GITHUB_SYNC_MIN_INTERVAL_MINUTES = 10;
 export const GITHUB_SYNC_IN_PROGRESS_STALE_MS = 10 * 60 * 1000;
 
 export const GITHUB_SYNC_DEFAULT_CONFIG = {
