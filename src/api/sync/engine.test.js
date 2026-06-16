@@ -128,4 +128,65 @@ describe("github sync engine", () => {
     expect(getChromeStorageSnapshot()[STASH_STORAGE_KEY].local.info).toBe("本机");
   });
 
+  it("skips scheduled sync while another sync is in progress", async () => {
+    resetChromeMock({
+      [GITHUB_SYNC_CONFIG_KEY]: {
+        enabled: true,
+        owner: "me",
+        repo: "sync",
+        token: "token",
+        syncSettings: true,
+        syncStash: false
+      },
+      [GITHUB_SYNC_STATE_KEY]: {
+        deviceId: "dev_a",
+        inProgress: true,
+        inProgressStartedAt: Date.now(),
+        lastSyncAt: 123,
+        remoteShas: {}
+      }
+    });
+    globalThis.fetch = vi.fn();
+
+    const result = await runGithubSync();
+
+    expect(result).toEqual({ skipped: true, reason: "in_progress" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(getChromeStorageSnapshot()[GITHUB_SYNC_STATE_KEY].lastSyncAt).toBe(123);
+  });
+
+  it("force sync recovers a stale in-progress state", async () => {
+    resetChromeMock({
+      llmConfig: { llmModels: [] },
+      [GITHUB_SYNC_CONFIG_KEY]: {
+        enabled: true,
+        owner: "me",
+        repo: "sync",
+        token: "token",
+        basePath: "tabmanager",
+        syncSettings: true,
+        syncStash: false
+      },
+      [GITHUB_SYNC_STATE_KEY]: {
+        deviceId: "dev_a",
+        inProgress: true,
+        inProgressStartedAt: Date.now() - 60 * 60 * 1000,
+        dirtySettings: true,
+        lastSyncAt: 123,
+        remoteShas: {}
+      }
+    });
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ content: { sha: "settings_sha" } }), { status: 200 }));
+
+    const result = await runGithubSync({ force: true });
+    const state = getChromeStorageSnapshot()[GITHUB_SYNC_STATE_KEY];
+
+    expect(result.success).toBe(true);
+    expect(state.inProgress).toBe(false);
+    expect(state.inProgressStartedAt).toBe(0);
+    expect(state.lastSyncAt).toBeGreaterThan(123);
+  });
+
 });

@@ -7,7 +7,8 @@ const SETTINGS_FIELD_KEYS = [
   "extractTextLimit",
   "betaFeaturesEnabled",
   "hideCopyButton",
-  "dangerousToolSkipApproval"
+  "dangerousToolSkipApproval",
+  "postdogToolsEnabled"
 ];
 
 export function mergeSettingsSnapshots(localSettings, remoteSnapshot, { deviceId = "", preferLocal = false } = {}) {

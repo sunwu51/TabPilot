@@ -32,6 +32,7 @@ import {
   GITHUB_SYNC_DEFAULT_CONFIG,
   GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES,
   GITHUB_SYNC_DEFAULT_STATE,
+  GITHUB_SYNC_STATE_KEY,
   hasUsableGithubSyncConfig,
   normalizeSyncIntervalMinutes
 } from "../api/sync/config";
@@ -60,12 +61,13 @@ const DEFAULT_SETTINGS = {
   mcpToolTimeoutSeconds: 60,
   reuse: false,
   extractTextLimit: 8000,
-  betaFeaturesEnabled: true,
+  betaFeaturesEnabled: false,
   bridgeEnabled: false,
   wsServerUrl: "",
   hideCopyButton: false,
   ttsVoiceName: "",
-  dangerousToolSkipApproval: false
+  dangerousToolSkipApproval: false,
+  postdogToolsEnabled: false
 };
 
 /**
@@ -127,6 +129,7 @@ function SettingsDialogBody() {
   const [ttsVoiceName, setTtsVoiceName] = useState(DEFAULT_SETTINGS.ttsVoiceName);
   const [ttsVoices, setTtsVoices] = useState([]);
   const [dangerousToolSkipApproval, setDangerousToolSkipApproval] = useState(DEFAULT_SETTINGS.dangerousToolSkipApproval);
+  const [postdogToolsEnabled, setPostdogToolsEnabled] = useState(DEFAULT_SETTINGS.postdogToolsEnabled);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [githubSyncEnabled, setGithubSyncEnabled] = useState(GITHUB_SYNC_DEFAULT_CONFIG.enabled);
@@ -206,6 +209,14 @@ function SettingsDialogBody() {
           ...(changes[WS_BRIDGE_STATUS_STORAGE_KEY].newValue || {})
         });
       }
+      if (changes[GITHUB_SYNC_STATE_KEY]) {
+        const syncState = {
+          ...GITHUB_SYNC_DEFAULT_STATE,
+          ...(changes[GITHUB_SYNC_STATE_KEY].newValue || {})
+        };
+        setGithubSyncLastSyncAt(syncState.lastSyncAt || 0);
+        setGithubSyncLastError(syncState.lastError || "");
+      }
     };
 
     chrome.storage.onChanged.addListener(handleStorageChange);
@@ -251,12 +262,13 @@ function SettingsDialogBody() {
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
-      setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
+      setBetaFeaturesEnabled(res.betaFeaturesEnabled === true);
       setBridgeEnabled(!!res.bridgeEnabled);
       setWsServerUrl(typeof res.wsServerUrl === "string" ? res.wsServerUrl : "");
       setHideCopyButton(!!res.hideCopyButton);
       setTtsVoiceName(typeof res.ttsVoiceName === "string" ? res.ttsVoiceName : "");
       setDangerousToolSkipApproval(!!res.dangerousToolSkipApproval);
+      setPostdogToolsEnabled(!!res.postdogToolsEnabled);
       setWsBridgeStatus({
         ...DEFAULT_WS_BRIDGE_STATUS,
         ...(res[WS_BRIDGE_STATUS_STORAGE_KEY] || {})
@@ -322,7 +334,8 @@ function SettingsDialogBody() {
         wsServerUrl: bridgeEnabled ? normalizedWsServerUrl : null,
         hideCopyButton,
         ttsVoiceName,
-        dangerousToolSkipApproval
+        dangerousToolSkipApproval,
+        postdogToolsEnabled
       });
       toast.success("设置已保存");
       closeDialog();
@@ -369,10 +382,13 @@ function SettingsDialogBody() {
         syncStash: githubSyncStash,
         intervalMinutes: githubSyncIntervalMinutes
       });
-      await runGithubSync({ force: true });
+      const result = await runGithubSync({ force: true });
       const syncStatus = await getGithubSyncStatus();
       setGithubSyncLastSyncAt(syncStatus.state.lastSyncAt || 0);
       setGithubSyncLastError(syncStatus.state.lastError || "");
+      if (result?.skipped) {
+        throw new Error(result.reason === "in_progress" ? "GitHub 同步正在进行中，请稍后再试" : "GitHub 同步被跳过");
+      }
       toast.success("GitHub 同步完成");
     } catch (error) {
       const message = error?.message || String(error);
@@ -997,6 +1013,11 @@ function SettingsDialogBody() {
               <span className="text-sm text-red-600">危险工具无需审批（危险）</span>
             </Checkbox>
           </div>
+          <div className="mt-2">
+            <Checkbox isSelected={postdogToolsEnabled} onChange={setPostdogToolsEnabled}>
+              <span className="text-sm">开启 Postdog 工具</span>
+            </Checkbox>
+          </div>
         </div>
 
         <div className="settings-card">
@@ -1125,148 +1146,152 @@ function SettingsDialogBody() {
               <span className="text-sm">启用 GitHub 同步</span>
             </Checkbox>
           </div>
-          <Input
-            label="Repo Owner"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={githubSyncOwner}
-            onChange={setGithubSyncOwner}
-            placeholder="your-name"
-          />
-          <Input
-            label="Repo 名称"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={githubSyncRepo}
-            onChange={setGithubSyncRepo}
-            placeholder="tabmanager-sync"
-          />
-          <Input
-            label="分支"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={githubSyncBranch}
-            onChange={setGithubSyncBranch}
-            placeholder="main"
-          />
-          <Input
-            label="同步目录"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={githubSyncBasePath}
-            onChange={setGithubSyncBasePath}
-            placeholder="tabmanager"
-          />
-          <div className="settings-secret-field">
-            <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-github-sync-token">GitHub Token</label>
-            <div className="settings-secret-input-wrapper">
-              <input
-                id="settings-github-sync-token"
-                className="settings-secret-input !min-h-8"
-                type={showGithubSyncToken ? "text" : "password"}
-                value={githubSyncToken}
-                onChange={(e) => setGithubSyncToken(e.target.value)}
-                placeholder="ghp_..."
-                autoComplete="off"
-                spellCheck={false}
+          {githubSyncEnabled && (
+            <>
+              <Input
+                label="Repo Owner"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={githubSyncOwner}
+                onChange={setGithubSyncOwner}
+                placeholder="your-name"
               />
-              <button
-                type="button"
-                className="settings-secret-toggle"
-                onClick={() => setShowGithubSyncToken((prev) => !prev)}
-                aria-label={showGithubSyncToken ? "隐藏 GitHub Token" : "显示 GitHub Token"}
-                title={showGithubSyncToken ? "隐藏" : "显示"}
-              >
-                {showGithubSyncToken ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                    />
-                  </svg>
-                )}
-              </button>
-            </div>
-          </div>
-          <div className="mt-2">
-            <Checkbox isSelected={githubSyncSettings} onChange={setGithubSyncSettings}>
-              <span className="text-sm">同步设置</span>
-            </Checkbox>
-          </div>
-          <div className="mt-2">
-            <Checkbox isSelected={githubSyncStash} onChange={setGithubSyncStash}>
-              <span className="text-sm">同步 stash</span>
-            </Checkbox>
-          </div>
-          <Input
-            label="同步间隔（分钟）"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={String(githubSyncIntervalMinutes)}
-            onChange={(value) => setGithubSyncIntervalMinutes(normalizeSyncIntervalMinutes(value || GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES))}
-            placeholder="5"
-          />
-          <div className="settings-api-url-hint">
-            规则是本地优先、定时拉取合并、再用 GitHub Contents API 覆盖上传；删除通过 tombstone 防止旧设备回灌。
-          </div>
-          <div className="settings-api-url-hint">
-            还没创建 token？可以先去{" "}
-            <a
-              href="https://github.com/settings/personal-access-tokens"
-              target="_blank"
-              rel="noreferrer"
-            >
-              GitHub Personal Access Tokens
-            </a>{" "}
-            页面生成一个只给当前 repo 的 fine-grained token。
-          </div>
-          <div className="settings-api-url-hint">
-            最近同步：{githubSyncLastSyncAt ? new Date(githubSyncLastSyncAt).toLocaleString() : "从未"}{githubSyncLastError ? ` · 错误：${githubSyncLastError}` : ""}
-          </div>
-          <div className="settings-tab-action-row">
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleSaveGithubSync}
-              isDisabled={githubSyncSaving || loading || saving}
-            >
-              {githubSyncSaving ? "保存中..." : "保存同步配置"}
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleRunGithubSync}
-              isDisabled={githubSyncRunning || loading || saving || !hasUsableGithubSyncConfig({
-                enabled: githubSyncEnabled,
-                owner: githubSyncOwner,
-                repo: githubSyncRepo,
-                token: githubSyncToken
-              })}
-            >
-              {githubSyncRunning ? "同步中..." : "立即同步"}
-            </Button>
-          </div>
+              <Input
+                label="Repo 名称"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={githubSyncRepo}
+                onChange={setGithubSyncRepo}
+                placeholder="tabmanager-sync"
+              />
+              <Input
+                label="分支"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={githubSyncBranch}
+                onChange={setGithubSyncBranch}
+                placeholder="main"
+              />
+              <Input
+                label="同步目录"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={githubSyncBasePath}
+                onChange={setGithubSyncBasePath}
+                placeholder="tabmanager"
+              />
+              <div className="settings-secret-field">
+                <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-github-sync-token">GitHub Token</label>
+                <div className="settings-secret-input-wrapper">
+                  <input
+                    id="settings-github-sync-token"
+                    className="settings-secret-input !min-h-8"
+                    type={showGithubSyncToken ? "text" : "password"}
+                    value={githubSyncToken}
+                    onChange={(e) => setGithubSyncToken(e.target.value)}
+                    placeholder="ghp_..."
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    className="settings-secret-toggle"
+                    onClick={() => setShowGithubSyncToken((prev) => !prev)}
+                    aria-label={showGithubSyncToken ? "隐藏 GitHub Token" : "显示 GitHub Token"}
+                    title={showGithubSyncToken ? "隐藏" : "显示"}
+                  >
+                    {showGithubSyncToken ? (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="3"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2">
+                <Checkbox isSelected={githubSyncSettings} onChange={setGithubSyncSettings}>
+                  <span className="text-sm">同步设置</span>
+                </Checkbox>
+              </div>
+              <div className="mt-2">
+                <Checkbox isSelected={githubSyncStash} onChange={setGithubSyncStash}>
+                  <span className="text-sm">同步 stash</span>
+                </Checkbox>
+              </div>
+              <Input
+                label="同步间隔（分钟）"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                defaultValue={String(githubSyncIntervalMinutes)}
+                onChange={(value) => setGithubSyncIntervalMinutes(normalizeSyncIntervalMinutes(value || GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES))}
+                placeholder="5"
+              />
+              <div className="settings-api-url-hint">
+                规则是本地优先、定时拉取合并、再用 GitHub Contents API 覆盖上传；删除通过 tombstone 防止旧设备回灌。
+              </div>
+              <div className="settings-api-url-hint">
+                还没创建 token？可以先去{" "}
+                <a
+                  href="https://github.com/settings/personal-access-tokens"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  GitHub Personal Access Tokens
+                </a>{" "}
+                页面生成一个只给当前 repo 的 fine-grained token。
+              </div>
+              <div className="settings-api-url-hint">
+                最近同步：{githubSyncLastSyncAt ? new Date(githubSyncLastSyncAt).toLocaleString() : "从未"}{githubSyncLastError ? ` · 错误：${githubSyncLastError}` : ""}
+              </div>
+              <div className="settings-tab-action-row">
+                <Button
+                  className="!min-h-7 !px-3 !py-0 !text-xs"
+                  onPress={handleSaveGithubSync}
+                  isDisabled={githubSyncSaving || loading || saving}
+                >
+                  {githubSyncSaving ? "保存中..." : "保存同步配置"}
+                </Button>
+                <Button
+                  className="!min-h-7 !px-3 !py-0 !text-xs"
+                  onPress={handleRunGithubSync}
+                  isDisabled={githubSyncRunning || loading || saving || !hasUsableGithubSyncConfig({
+                    enabled: githubSyncEnabled,
+                    owner: githubSyncOwner,
+                    repo: githubSyncRepo,
+                    token: githubSyncToken
+                  })}
+                >
+                  {githubSyncRunning ? "同步中..." : "立即同步"}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

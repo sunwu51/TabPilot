@@ -8,11 +8,14 @@ const DOM_LOCATOR_PROPERTIES = {
   matchExact: { type: "boolean", description: "Whether text matching should be exact. Defaults to false." },
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
 };
-const BETA_TOOL_NAMES = new Set(["list_macros", "describe_macro", "run_macro"]);
 const IMAGE_TOOL_NAMES = new Set(["image_gen", "image_edit"]);
 
 export function isImageToolName(toolName) {
   return IMAGE_TOOL_NAMES.has(String(toolName || "").trim());
+}
+
+export function isPostdogToolName(toolName) {
+  return String(toolName || "").trim().startsWith("postdog_");
 }
 
 // ==================== Tool Definitions ====================
@@ -920,11 +923,12 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {Object} [options]
  * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
  * @param {boolean} [options.supportsImageInput=false] - Whether the selected model accepts image inputs
- * @param {boolean} [options.enableBetaFeatures=true] - Whether to include beta built-in tools.
+ * @param {boolean} [options.enableBetaFeatures=true] - Whether to enable beta-only provider behavior.
  * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
+ * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false } = {}) {
   // Convert MCP tools to our internal format
   const externalTools = mcpTools.map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
@@ -935,8 +939,8 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
   const builtInTools = includeBuiltins
     ? TOOLS.filter(tool => {
       if (!supportsImageInput && tool.name === "tab_screenshot") return false;
-      if (enableBetaFeatures === false && BETA_TOOL_NAMES.has(tool.name)) return false;
       if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
+      if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
       return true;
     })
     : [];

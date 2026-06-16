@@ -177,7 +177,7 @@ export default function Macro() {
     return (
         <Card>
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
-                <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏 <span className="text-gray-400">(beta)</span></span>
+                <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏</span>
                 <div className="flex gap-1">
                     <Button
                         className="!text-xs !px-2"

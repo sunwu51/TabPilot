@@ -3,6 +3,7 @@ import { STASH_STORAGE_KEY } from "../llm/core/constants";
 import {
   GITHUB_SYNC_CONFIG_KEY,
   GITHUB_SYNC_DEFAULT_STATE,
+  GITHUB_SYNC_IN_PROGRESS_STALE_MS,
   GITHUB_SYNC_STATE_KEY,
   GITHUB_SYNC_TOMBSTONES_KEY,
   getStashIndexFilePath,
@@ -37,7 +38,8 @@ const SETTINGS_DIRTY_KEYS = new Set([
   "extractTextLimit",
   "betaFeaturesEnabled",
   "hideCopyButton",
-  "dangerousToolSkipApproval"
+  "dangerousToolSkipApproval",
+  "postdogToolsEnabled"
 ]);
 
 let suppressDirtyMark = false;
@@ -104,9 +106,13 @@ export async function runGithubSync({ force = false } = {}) {
 
   let state = await ensureGithubSyncDeviceId();
   if (state.inProgress) {
-    return { skipped: true, reason: "in_progress" };
+    const startedAt = Number(state.inProgressStartedAt) || 0;
+    const isStale = startedAt === 0 || Date.now() - startedAt > GITHUB_SYNC_IN_PROGRESS_STALE_MS;
+    if (!isStale) {
+      return { skipped: true, reason: "in_progress" };
+    }
   }
-  await patchGithubSyncState({ inProgress: true, lastError: "" });
+  await patchGithubSyncState({ inProgress: true, inProgressStartedAt: Date.now(), lastError: "" });
 
   try {
     const namespaces = [];
@@ -127,10 +133,10 @@ export async function runGithubSync({ force = false } = {}) {
       state = normalizeGithubSyncState((await chrome.storage.local.get({ [GITHUB_SYNC_STATE_KEY]: GITHUB_SYNC_DEFAULT_STATE }))[GITHUB_SYNC_STATE_KEY]);
     }
 
-    await patchGithubSyncState({ inProgress: false, lastSyncAt: Date.now(), lastError: "" });
+    await patchGithubSyncState({ inProgress: false, inProgressStartedAt: 0, lastSyncAt: Date.now(), lastError: "" });
     return { success: true, results };
   } catch (error) {
-    await patchGithubSyncState({ inProgress: false, lastError: error?.message || String(error) });
+    await patchGithubSyncState({ inProgress: false, inProgressStartedAt: 0, lastError: error?.message || String(error) });
     throw error;
   }
 }
