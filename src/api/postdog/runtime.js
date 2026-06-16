@@ -1,4 +1,5 @@
 import Sval from "sval";
+import { normalizeJsonRequestBody } from "./json";
 import {
   appendPostdogHistory,
   getActivePostdogEnvironment,
@@ -174,7 +175,8 @@ function prepareRequest(request, vars) {
   }
   let body;
   if (BODY_METHODS.has(method) && request.body?.type !== "none") {
-    body = applyVariables(request.body?.text || "", vars);
+    const rawBody = applyVariables(request.body?.text || "", vars);
+    body = request.body?.type === "json" ? normalizeJsonRequestBody(rawBody) : rawBody;
     if (request.body?.type === "json" && !hasHeader(headers, "content-type")) {
       headers["Content-Type"] = "application/json";
     }

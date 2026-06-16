@@ -9,6 +9,7 @@ import {
   savePostdogFolder,
   savePostdogRequest
 } from "./index";
+import { normalizeJsonRequestBody, stripJsonComments } from "./json";
 import { runPostdogRequest } from "./runtime";
 
 describe("postdog runtime", () => {
@@ -246,5 +247,52 @@ describe("postdog runtime", () => {
       expect.objectContaining({ message: expect.stringContaining("\"token\":\"***\"") })
     ]));
     expect(JSON.stringify(result.logs)).not.toContain("secret-token");
+  });
+
+  it("strips JSON body comments before sending without changing strings", async () => {
+    const request = await savePostdogRequest({
+      id: "req-json-comments",
+      name: "json comments",
+      method: "POST",
+      url: "https://api.example.com/items",
+      headers: [],
+      body: {
+        type: "json",
+        text: [
+          "{",
+          "  // line comment",
+          "  \"url\": \"https://example.com/a//b\",",
+          "  /* block comment */",
+          "  \"note\": \"keep /* text */\",",
+          "  \"ok\": true",
+          "}"
+        ].join("\n")
+      }
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    await runPostdogRequest({ id: request.id });
+
+    expect(fetch).toHaveBeenCalledWith("https://api.example.com/items", expect.objectContaining({
+      body: JSON.stringify({
+        url: "https://example.com/a//b",
+        note: "keep /* text */",
+        ok: true
+      })
+    }));
+  });
+
+  it("normalizes JSON comments for preview and transport helpers", () => {
+    const input = [
+      "{",
+      "  /** block doc comment */",
+      "  \"a\": 1, // comment",
+      "  \"b\": \"http://x/y\",",
+      "}"
+    ].join("\n");
+
+    expect(stripJsonComments(input)).toContain('"b": "http://x/y"');
+    expect(normalizeJsonRequestBody(input)).toBe('{"a":1,"b":"http://x/y"}');
   });
 });
