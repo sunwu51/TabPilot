@@ -162,6 +162,18 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  padding: 0 12px 0 0;
+  scrollbar-gutter: stable;
+}
+
+.dialog-dialog .settings-dialog-scroll > .settings-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dialog-dialog .settings-card .input-container,
+.dialog-dialog .settings-card .select-container {
+  max-width: 100%;
 }
 
 .dialog-dialog .settings-reuse-memory-row {
@@ -174,8 +186,14 @@ html, body, #root {
 .dialog-dialog .settings-tab-action-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.5rem;
+}
+
+.dialog-dialog .settings-tab-action-row button {
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .dialog-dialog .settings-model-badges {

@@ -9,6 +9,7 @@ import {
   savePostdogFolder,
   savePostdogRequest
 } from "./index";
+import { formatJsonWithComments, normalizeJsonRequestBody, stripJsonComments } from "./json";
 import { runPostdogRequest } from "./runtime";
 
 describe("postdog runtime", () => {
@@ -246,5 +247,131 @@ describe("postdog runtime", () => {
       expect.objectContaining({ message: expect.stringContaining("\"token\":\"***\"") })
     ]));
     expect(JSON.stringify(result.logs)).not.toContain("secret-token");
+  });
+
+  it("keeps binary responses out of body text and history", async () => {
+    const request = await savePostdogRequest({
+      id: "req-binary",
+      name: "download pdf",
+      method: "GET",
+      url: "https://api.example.com/report.pdf",
+      headers: [],
+      body: { type: "none", text: "" }
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      { status: 200, headers: { "Content-Type": "application/pdf", "Content-Length": "4" } }
+    )));
+
+    const result = await runPostdogRequest({ id: request.id });
+    const snapshot = getChromeStorageSnapshot();
+
+    expect(result.response).toMatchObject({
+      bodyKind: "binary",
+      bodyText: "",
+      bodyJson: null,
+      bodySizeBytes: 4,
+      bodyTruncated: false
+    });
+    expect(result.response.bodyNote).toContain("二进制响应");
+    expect(snapshot[POSTDOG_HISTORY_KEY][0].response).toMatchObject({
+      bodyKind: "binary",
+      bodyText: "",
+      bodyJson: null
+    });
+  });
+
+  it("stores a bounded preview for stream responses", async () => {
+    const request = await savePostdogRequest({
+      id: "req-stream",
+      name: "events",
+      method: "GET",
+      url: "https://api.example.com/events",
+      headers: [],
+      body: { type: "none", text: "" },
+      postScript: "postdog.tests.set('preview visible', postdog.response.text().includes('data: one'));"
+    });
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: one\n\n"));
+        controller.close();
+      }
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      stream,
+      { status: 200, headers: { "Content-Type": "text/event-stream" } }
+    )));
+
+    const result = await runPostdogRequest({ id: request.id });
+
+    expect(result.response).toMatchObject({
+      bodyKind: "stream",
+      bodyText: "data: one\n\n",
+      bodyJson: null,
+      bodyTruncated: false
+    });
+    expect(result.response.bodyNote).toContain("流式响应");
+    expect(result.tests).toEqual({ "preview visible": true });
+  });
+
+  it("strips JSON body comments before sending without changing strings", async () => {
+    const request = await savePostdogRequest({
+      id: "req-json-comments",
+      name: "json comments",
+      method: "POST",
+      url: "https://api.example.com/items",
+      headers: [],
+      body: {
+        type: "json",
+        text: [
+          "{",
+          "  // line comment",
+          "  \"url\": \"https://example.com/a//b\",",
+          "  /* block comment */",
+          "  \"note\": \"keep /* text */\",",
+          "  \"ok\": true",
+          "}"
+        ].join("\n")
+      }
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    await runPostdogRequest({ id: request.id });
+
+    expect(fetch).toHaveBeenCalledWith("https://api.example.com/items", expect.objectContaining({
+      body: JSON.stringify({
+        url: "https://example.com/a//b",
+        note: "keep /* text */",
+        ok: true
+      })
+    }));
+  });
+
+  it("normalizes JSON comments for preview and transport helpers", () => {
+    const input = [
+      "{",
+      "  /** block doc comment */",
+      "  \"a\": 1, // comment",
+      "  \"b\": \"http://x/y\",",
+      "}"
+    ].join("\n");
+
+    expect(stripJsonComments(input)).toContain('"b": "http://x/y"');
+    expect(normalizeJsonRequestBody(input)).toBe('{"a":1,"b":"http://x/y"}');
+  });
+
+  it("formats JSON body without removing comments", () => {
+    const input = '{"a":1,// keep line\n"b":{"c":2},/* keep block */"d":3}';
+
+    const formatted = formatJsonWithComments(input, 2);
+
+    expect(formatted).toContain("// keep line");
+    expect(formatted).toContain("/* keep block */");
+    expect(formatted).toContain('  "c": 2');
+    expect(normalizeJsonRequestBody(formatted)).toBe('{"a":1,"b":{"c":2},"d":3}');
   });
 });

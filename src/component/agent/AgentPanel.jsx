@@ -2323,7 +2323,7 @@ export default function AgentPanel() {
 
   async function getLLMConfig() {
     await ensureSettingsMigrated();
-    const { llmConfig, betaFeaturesEnabled } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled } = await chrome.storage.local.get({
       llmConfig: {
         activeLlmModelId: "",
         llmModels: [],
@@ -2336,7 +2336,8 @@ export default function AgentPanel() {
         activeImageModelId: "",
         imageModels: []
       },
-      betaFeaturesEnabled: true
+      betaFeaturesEnabled: false,
+      postdogToolsEnabled: false
     });
     const syncedConfig = syncActiveModelFields(llmConfig);
     setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
@@ -2350,7 +2351,8 @@ export default function AgentPanel() {
       omitThinkingFromRequests: syncedConfig?.omitThinkingFromRequests === true,
       imageApiProtocol: normalizeImageApiProtocol(syncedConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(syncedConfig),
-      enableBetaFeatures: betaFeaturesEnabled !== false
+      enableBetaFeatures: betaFeaturesEnabled === true,
+      postdogToolsEnabled: postdogToolsEnabled === true
     };
   }
 
@@ -2771,6 +2773,7 @@ export default function AgentPanel() {
       supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
+      postdogToolsEnabled: config.postdogToolsEnabled === true,
       imageToolsEnabled: config.imageToolsEnabled === true
     });
 

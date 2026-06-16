@@ -10,6 +10,8 @@ import {
   POSTDOG_HISTORY_KEY,
   POSTDOG_REQUESTS_KEY
 } from "../../api/postdog";
+import { formatJsonWithComments, parseJsonWithComments } from "../../api/postdog/json";
+import JsonCodeEditor from "./JsonCodeEditor";
 import "./postdog.css";
 
 const EMPTY_REQUEST = {
@@ -40,6 +42,8 @@ export default function PostdogPanel() {
   const [envDraft, setEnvDraft] = useState(null);
   const [importText, setImportText] = useState("");
   const [responseTab, setResponseTab] = useState("body");
+  const [requestTab, setRequestTab] = useState("headers");
+  const [envExpanded, setEnvExpanded] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState(() => new Set());
   const [historyRuns, setHistoryRuns] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -382,12 +386,15 @@ export default function PostdogPanel() {
 
   const responseBodyJson = useMemo(() => {
     if (!response?.response) return null;
+    if (response.response.bodyKind === "binary") return null;
     if (response.response.bodyJson != null) return { ok: true, value: response.response.bodyJson };
     if (!response.response.bodyText) return null;
     return parseJsonForView(response.response.bodyText);
   }, [response]);
 
   const responseStatusClass = getStatusClass(response?.response?.status);
+  const requestBodyType = draft.body?.type || "none";
+  const requestBodyText = draft.body?.text || "";
 
   async function exportJson() {
     const res = await sendPostdog("export_json");
@@ -410,12 +417,23 @@ export default function PostdogPanel() {
     }
   }
 
+  function beautifyRequestJson() {
+    try {
+      setDraft({ ...draft, body: { ...draft.body, text: formatJsonWithComments(requestBodyText, 2) } });
+    } catch (error) {
+      toast.error(error?.message || "JSON 格式错误");
+    }
+  }
+
   return (
     <div className="postdog-page" style={{ "--postdog-sidebar-width": `${sidebarWidth}px` }}>
       <aside className="postdog-sidebar">
         <div className="postdog-toolbar">
-          <Button className="!min-h-7 !px-2 !text-xs" onPress={() => createRequest(null)}>请求</Button>
-          <Button className="!min-h-7 !px-2 !text-xs" onPress={createFolder}>文件夹</Button>
+          <Button className="!min-h-7 !px-2 !text-xs" onPress={() => createRequest(null)}>新增请求</Button>
+          <Button className="!min-h-7 !px-2 !text-xs" onPress={createFolder}>新增文件夹</Button>
+          <Button className="!min-h-7 !px-2 !text-xs" onPress={exportJson}>导出 JSON</Button>
+          <Button className="!min-h-7 !px-2 !text-xs" onPress={() => importFileRef.current?.click()}>导入 JSON</Button>
+          <input ref={importFileRef} type="file" accept="application/json,.json" hidden onChange={e => importJsonFile(e.target.files?.[0])} />
         </div>
         {!selectedId && <RequestButton request={null} selected onPress={() => selectRequest("")} label="未保存草稿" />}
         {folders.map(folder => (
@@ -478,23 +496,48 @@ export default function PostdogPanel() {
         <section className="postdog-grid">
           <div className="postdog-workspace">
             <div className="postdog-editor">
-              <KeyValueEditor title="Headers" rows={draft.headers} onChange={headers => setDraft({ ...draft, headers })} secretToggle />
-              <KeyValueEditor title="Query" rows={draft.query} onChange={query => setDraft({ ...draft, query })} />
-              <label>Body</label>
-              <select value={draft.body?.type || "none"} onChange={e => setDraft({ ...draft, body: { ...draft.body, type: e.target.value } })}>
-                <option value="none">none</option>
-                <option value="json">json</option>
-                <option value="text">text</option>
-              </select>
-              <textarea
-                value={draft.body?.text || ""}
-                onChange={e => setDraft({ ...draft, body: { ...draft.body, text: e.target.value } })}
-                placeholder={'{\n  "request_id": "{{$uuid()}}",\n  "created_at": "{{$now()}}",\n  "name": "{{name}}"\n}'}
-              />
-              {requestBodyJson && (
-                <div className="postdog-json-preview">
-                  <div className="postdog-json-preview-title">Body JSON Preview</div>
-                  {requestBodyJson.ok ? <JsonViewer value={requestBodyJson.value} /> : <pre>{requestBodyJson.error}</pre>}
+              <div className="postdog-tab-buttons postdog-request-tabs">
+                <button type="button" className={requestTab === "headers" ? "active" : ""} onClick={() => setRequestTab("headers")}>Headers</button>
+                <button type="button" className={requestTab === "body" ? "active" : ""} onClick={() => setRequestTab("body")}>Body</button>
+                <button type="button" className={requestTab === "query" ? "active" : ""} onClick={() => setRequestTab("query")}>Params</button>
+              </div>
+              {requestTab === "headers" ? (
+                <KeyValueEditor rows={draft.headers} onChange={headers => setDraft({ ...draft, headers })} secretToggle />
+              ) : requestTab === "query" ? (
+                <KeyValueEditor rows={draft.query} onChange={query => setDraft({ ...draft, query })} />
+              ) : (
+                <div className="postdog-body-editor">
+                  <div className="postdog-body-toolbar">
+                    <select value={requestBodyType} onChange={e => setDraft({ ...draft, body: { ...draft.body, type: e.target.value } })}>
+                      <option value="none">none</option>
+                      <option value="json">json</option>
+                      <option value="text">text</option>
+                    </select>
+                    {requestBodyType === "json" && (
+                      <Button className="postdog-beautify-button !min-h-7 !px-2 !text-xs" onPress={beautifyRequestJson}>格式化 JSON</Button>
+                    )}
+                  </div>
+                  {requestBodyType === "json" ? (
+                    <JsonCodeEditor
+                      value={requestBodyText}
+                      onChange={text => setDraft({ ...draft, body: { ...draft.body, text } })}
+                      placeholder={'{\n  // comments are removed before send\n  "request_id": "{{$uuid()}}",\n  "created_at": "{{$now()}}",\n  "name": "{{name}}"\n}'}
+                    />
+                  ) : (
+                    <textarea
+                      wrap="off"
+                      spellCheck={false}
+                      value={requestBodyText}
+                      onChange={e => setDraft({ ...draft, body: { ...draft.body, text: e.target.value } })}
+                      placeholder={'{\n  "request_id": "{{$uuid()}}",\n  "created_at": "{{$now()}}",\n  "name": "{{name}}"\n}'}
+                    />
+                  )}
+                  {requestBodyJson && (
+                    <div className="postdog-json-preview">
+                      <div className="postdog-json-preview-title">Body JSON Preview</div>
+                      {requestBodyJson.ok ? <JsonViewer value={requestBodyJson.value} /> : <pre>{requestBodyJson.error}</pre>}
+                    </div>
+                  )}
                 </div>
               )}
               <details className="postdog-script-section">
@@ -570,10 +613,20 @@ export default function PostdogPanel() {
                   <div className="postdog-empty-response">尚未发送请求</div>
                 ) : responseTab === "headers" ? (
                   <HeaderTable headers={response.response.headers || {}} />
+                ) : response.response.bodyKind === "binary" ? (
+                  <div className="postdog-empty-response">{formatBinaryResponseMessage(response.response)}</div>
                 ) : responseBodyJson?.ok ? (
-                  <JsonViewer value={responseBodyJson.value} />
+                  <>
+                    {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
+                    <JsonViewer value={responseBodyJson.value} />
+                  </>
+                ) : response.response.bodyText ? (
+                  <>
+                    {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
+                    <pre>{response.response.bodyText}</pre>
+                  </>
                 ) : (
-                  <pre>{response.response.bodyText || response.response.error || ""}</pre>
+                  <pre>{response.response.error || response.response.bodyNote || ""}</pre>
                 )}
               </div>
             </div>
@@ -588,8 +641,9 @@ export default function PostdogPanel() {
                   {environments.map(env => <option key={env.id} value={env.id}>{env.name}</option>)}
                 </select>
                 <Button className="postdog-env-add-button !min-h-7 !px-2 !text-xs" onPress={createEnvironment}>新增</Button>
+                <Button className="postdog-env-toggle-button !min-h-7 !px-2 !text-xs" onPress={() => setEnvExpanded(expanded => !expanded)}>{envExpanded ? "收起" : "展开"}</Button>
               </div>
-              {envDraft && (
+              {envDraft && envExpanded && (
                 <>
                   <input value={envDraft.name} onChange={e => setEnvDraft({ ...envDraft, name: e.target.value })} />
                   <KeyValueEditor rows={envDraft.variables} onChange={variables => setEnvDraft({ ...envDraft, variables })} secretToggle compact />
@@ -604,11 +658,6 @@ export default function PostdogPanel() {
               <div className="postdog-row">
                 <Button className="!min-h-7 !px-2 !text-xs" onPress={importCurlText}>导入 curl</Button>
                 <Button className="!min-h-7 !px-2 !text-xs" onPress={exportCurrentCurl}>复制为 curl</Button>
-              </div>
-              <div className="postdog-row">
-                <Button className="!min-h-7 !px-2 !text-xs" onPress={exportJson}>导出 JSON</Button>
-                <Button className="!min-h-7 !px-2 !text-xs" onPress={() => importFileRef.current?.click()}>导入 JSON</Button>
-                <input ref={importFileRef} type="file" accept="application/json,.json" hidden onChange={e => importJsonFile(e.target.files?.[0])} />
               </div>
             </div>
 
@@ -729,6 +778,20 @@ function HeaderTable({ headers = {} }) {
   );
 }
 
+function formatBinaryResponseMessage(response) {
+  const contentType = response.headers?.["content-type"] || response.headers?.["Content-Type"] || "unknown";
+  const size = formatResponseBytes(response.bodySizeBytes);
+  return `${response.bodyNote || "二进制响应未展示。"} Content-Type: ${contentType}; Size: ${size}`;
+}
+
+function formatResponseBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${Math.round(value / 1024 / 1024)} MB`;
+}
+
 function JsonViewer({ value, rootLabel = "root" }) {
   return (
     <div className="postdog-json-tree">
@@ -809,7 +872,7 @@ function sendPostdog(action, payload = {}) {
 
 function parseJsonForView(text) {
   try {
-    return { ok: true, value: JSON.parse(text) };
+    return { ok: true, value: parseJsonWithComments(text) };
   } catch (error) {
     return { ok: false, error: error?.message || "JSON 解析失败" };
   }

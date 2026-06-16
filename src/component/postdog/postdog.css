@@ -63,8 +63,21 @@
   white-space: nowrap;
 }
 
+.postdog-env-toggle-button {
+  flex: 0 0 52px;
+  min-width: 52px;
+  white-space: nowrap;
+}
+
 .postdog-toolbar {
   margin-bottom: 8px;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.postdog-toolbar button {
+  flex: 1 1 calc(50% - 3px);
+  min-width: 78px;
 }
 
 .postdog-folder {
@@ -283,7 +296,7 @@
 .postdog-editor {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .postdog-script-section {
@@ -312,6 +325,11 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.postdog-request-tabs {
+  border-bottom: 1px solid #e5e7eb;
+  margin: -2px 0 2px;
 }
 
 .postdog-card-title {
@@ -492,7 +510,8 @@
   gap: 4px;
 }
 
-.postdog-tabs button {
+.postdog-tabs button,
+.postdog-request-tabs button {
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -502,7 +521,8 @@
   padding: 6px 10px;
 }
 
-.postdog-tabs button.active {
+.postdog-tabs button.active,
+.postdog-request-tabs button.active {
   border-bottom-color: #2563eb;
   color: #111827;
 }
@@ -526,6 +546,44 @@
 
 .postdog-response-content {
   min-height: 180px;
+}
+
+.postdog-body-note {
+  margin-bottom: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.postdog-body-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.postdog-body-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.postdog-body-toolbar select {
+  max-width: 130px;
+}
+
+.postdog-beautify-button {
+  flex: 0 0 auto;
+}
+
+.postdog-json-code-editor {
+  min-width: 0;
+}
+
+.postdog-json-code-editor .cm-editor {
+  height: auto;
+}
+
+.postdog-json-code-editor .cm-tooltip-autocomplete {
+  font-size: 12px;
 }
 
 .postdog-request-snapshot {
@@ -720,20 +778,47 @@
 }
 
 .postdog-json-node summary {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   cursor: pointer;
-  list-style-position: outside;
+  list-style: none;
   white-space: nowrap;
 }
 
+.postdog-json-node summary::-webkit-details-marker {
+  display: none;
+}
+
+.postdog-json-node summary::before {
+  content: "▸";
+  flex: 0 0 14px;
+  width: 14px;
+  color: #e5e7eb;
+  text-align: center;
+}
+
+.postdog-json-node[open] > summary::before {
+  content: "▾";
+}
+
 .postdog-json-children {
-  margin-left: 18px;
-  padding-left: 10px;
+  margin-left: 7px;
+  padding-left: 13px;
   border-left: 1px solid rgba(148, 163, 184, 0.35);
 }
 
 .postdog-json-leaf {
-  margin-left: 18px;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
   white-space: nowrap;
+}
+
+.postdog-json-leaf::before {
+  content: "";
+  flex: 0 0 14px;
+  width: 14px;
 }
 
 .postdog-json-key {

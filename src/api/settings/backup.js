@@ -16,7 +16,8 @@ export const SETTINGS_BACKUP_KEYS = [
   "extractTextLimit",
   "betaFeaturesEnabled",
   "hideCopyButton",
-  "dangerousToolSkipApproval"
+  "dangerousToolSkipApproval",
+  "postdogToolsEnabled"
 ];
 
 const LLM_CONFIG_KEYS = [
@@ -107,6 +108,7 @@ function normalizeSettingsPatch(source) {
   addBooleanPatch(patch, source, "betaFeaturesEnabled");
   addBooleanPatch(patch, source, "hideCopyButton");
   addBooleanPatch(patch, source, "dangerousToolSkipApproval");
+  addBooleanPatch(patch, source, "postdogToolsEnabled");
 
   return patch;
 }
