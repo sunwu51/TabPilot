@@ -386,6 +386,7 @@ export default function PostdogPanel() {
 
   const responseBodyJson = useMemo(() => {
     if (!response?.response) return null;
+    if (response.response.bodyKind === "binary") return null;
     if (response.response.bodyJson != null) return { ok: true, value: response.response.bodyJson };
     if (!response.response.bodyText) return null;
     return parseJsonForView(response.response.bodyText);
@@ -612,10 +613,20 @@ export default function PostdogPanel() {
                   <div className="postdog-empty-response">尚未发送请求</div>
                 ) : responseTab === "headers" ? (
                   <HeaderTable headers={response.response.headers || {}} />
+                ) : response.response.bodyKind === "binary" ? (
+                  <div className="postdog-empty-response">{formatBinaryResponseMessage(response.response)}</div>
                 ) : responseBodyJson?.ok ? (
-                  <JsonViewer value={responseBodyJson.value} />
+                  <>
+                    {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
+                    <JsonViewer value={responseBodyJson.value} />
+                  </>
+                ) : response.response.bodyText ? (
+                  <>
+                    {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
+                    <pre>{response.response.bodyText}</pre>
+                  </>
                 ) : (
-                  <pre>{response.response.bodyText || response.response.error || ""}</pre>
+                  <pre>{response.response.error || response.response.bodyNote || ""}</pre>
                 )}
               </div>
             </div>
@@ -765,6 +776,20 @@ function HeaderTable({ headers = {} }) {
       ))}
     </div>
   );
+}
+
+function formatBinaryResponseMessage(response) {
+  const contentType = response.headers?.["content-type"] || response.headers?.["Content-Type"] || "unknown";
+  const size = formatResponseBytes(response.bodySizeBytes);
+  return `${response.bodyNote || "二进制响应未展示。"} Content-Type: ${contentType}; Size: ${size}`;
+}
+
+function formatResponseBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) return "unknown";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${Math.round(value / 1024 / 1024)} MB`;
 }
 
 function JsonViewer({ value, rootLabel = "root" }) {

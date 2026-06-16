@@ -12,6 +12,9 @@ import {
 } from "./index";
 
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const MAX_TEXT_RESPONSE_BYTES = 1024 * 1024;
+const MAX_STREAM_PREVIEW_BYTES = 64 * 1024;
+const STREAM_READ_TIMEOUT_MS = 5000;
 
 export async function runPostdogRequest(input = {}) {
   const stored = input.id ? await getPostdogRequest(input.id) : null;
@@ -54,15 +57,19 @@ export async function runPostdogRequest(input = {}) {
       credentials: "include",
       redirect: "follow"
     });
-    const text = await fetchResponse.text();
+    const body = await readPostdogResponseBody(fetchResponse);
     responsePayload = {
       status: fetchResponse.status,
       statusText: fetchResponse.statusText,
       ok: fetchResponse.ok,
       url: fetchResponse.url,
       headers: Object.fromEntries(fetchResponse.headers.entries()),
-      bodyText: text,
-      bodyJson: parseJsonMaybe(text)
+      bodyKind: body.kind,
+      bodyText: body.text,
+      bodyJson: body.json,
+      bodySizeBytes: body.sizeBytes,
+      bodyTruncated: body.truncated,
+      bodyNote: body.note
     };
   } catch (error) {
     responsePayload = {
@@ -71,8 +78,12 @@ export async function runPostdogRequest(input = {}) {
       status: 0,
       statusText: "FETCH_ERROR",
       headers: {},
+      bodyKind: "text",
       bodyText: "",
-      bodyJson: null
+      bodyJson: null,
+      bodySizeBytes: 0,
+      bodyTruncated: false,
+      bodyNote: ""
     };
   }
   const durationMs = Math.round(performance.now() - startedAt);
@@ -214,6 +225,193 @@ function createGuid() {
 function hasHeader(headers, name) {
   const lower = name.toLowerCase();
   return Object.keys(headers).some(key => key.toLowerCase() === lower);
+}
+
+async function readPostdogResponseBody(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const contentDisposition = response.headers.get("content-disposition") || "";
+  const contentLength = parseContentLength(response.headers.get("content-length"));
+  if (isBinaryResponse(contentType, contentDisposition)) {
+    return {
+      kind: "binary",
+      text: "",
+      json: null,
+      sizeBytes: contentLength,
+      truncated: false,
+      note: "二进制响应未读取 body，仅保留状态、Header 和大小信息。"
+    };
+  }
+
+  const stream = isStreamResponse(contentType);
+  const limit = stream ? MAX_STREAM_PREVIEW_BYTES : MAX_TEXT_RESPONSE_BYTES;
+  const result = await readResponseTextPreview(response, {
+    limitBytes: limit,
+    timeoutMs: stream ? STREAM_READ_TIMEOUT_MS : 0
+  });
+  const truncated = result.truncated || result.timedOut;
+  const text = result.text;
+  return {
+    kind: stream ? "stream" : "text",
+    text,
+    json: parseJsonMaybe(text),
+    sizeBytes: result.sizeBytes,
+    truncated,
+    note: buildBodyNote({
+      kind: stream ? "stream" : "text",
+      truncated,
+      timedOut: result.timedOut,
+      limitBytes: limit,
+      sizeBytes: result.sizeBytes
+    })
+  };
+}
+
+function isBinaryResponse(contentType, contentDisposition) {
+  const type = normalizeContentType(contentType);
+  const disposition = String(contentDisposition || "").toLowerCase();
+  if (disposition.includes("attachment")) return true;
+  if (!type) return false;
+  if (isStreamResponse(type) || isTextualResponse(type)) return false;
+  return true;
+}
+
+function isStreamResponse(contentType) {
+  const type = normalizeContentType(contentType);
+  return type === "text/event-stream" ||
+    type === "application/x-ndjson" ||
+    type === "application/stream+json" ||
+    type.includes("stream");
+}
+
+function isTextualResponse(contentType) {
+  const type = normalizeContentType(contentType);
+  return type.startsWith("text/") ||
+    type === "application/json" ||
+    type.endsWith("+json") ||
+    type === "application/xml" ||
+    type.endsWith("+xml") ||
+    type === "application/javascript" ||
+    type === "application/x-javascript" ||
+    type === "application/x-www-form-urlencoded";
+}
+
+function normalizeContentType(contentType) {
+  return String(contentType || "").split(";")[0].trim().toLowerCase();
+}
+
+async function readResponseTextPreview(response, { limitBytes, timeoutMs }) {
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    const bytes = new TextEncoder().encode(text);
+    const truncated = bytes.length > limitBytes;
+    const clipped = truncated ? bytes.slice(0, limitBytes) : bytes;
+    return {
+      text: new TextDecoder().decode(clipped),
+      sizeBytes: bytes.length,
+      truncated,
+      timedOut: false
+    };
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let sizeBytes = 0;
+  let storedBytes = 0;
+  let truncated = false;
+  let timedOut = false;
+  try {
+    let reading = true;
+    while (reading) {
+      const read = timeoutMs > 0 ? await readWithTimeout(reader, timeoutMs) : await reader.read();
+      if (read.timedOut) {
+        timedOut = true;
+        break;
+      }
+      if (read.done) {
+        reading = false;
+        continue;
+      }
+      const chunk = normalizeChunk(read.value);
+      sizeBytes += chunk.byteLength;
+      if (storedBytes < limitBytes) {
+        const remaining = limitBytes - storedBytes;
+        const kept = chunk.byteLength > remaining ? chunk.slice(0, remaining) : chunk;
+        chunks.push(kept);
+        storedBytes += kept.byteLength;
+      }
+      if (storedBytes >= limitBytes) {
+        truncated = true;
+        break;
+      }
+    }
+  } finally {
+    if (truncated || timedOut) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Ignore cancellation failures from already closed streams.
+      }
+    }
+  }
+  return {
+    text: new TextDecoder().decode(concatUint8Arrays(chunks, storedBytes)),
+    sizeBytes,
+    truncated,
+    timedOut
+  };
+}
+
+async function readWithTimeout(reader, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeChunk(value) {
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (value instanceof ArrayBuffer || Object.prototype.toString.call(value) === "[object ArrayBuffer]") return new Uint8Array(value);
+  return new TextEncoder().encode(String(value ?? ""));
+}
+
+function concatUint8Arrays(chunks, totalBytes) {
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+function parseContentLength(value) {
+  const size = Number(value);
+  return Number.isFinite(size) && size >= 0 ? size : null;
+}
+
+function buildBodyNote({ kind, truncated, timedOut, limitBytes, sizeBytes }) {
+  if (kind === "stream") {
+    if (timedOut) return `流式响应已读取 ${formatBytes(sizeBytes)} 预览，因超过 ${Math.round(STREAM_READ_TIMEOUT_MS / 1000)} 秒未结束而停止。`;
+    if (truncated) return `流式响应只展示前 ${formatBytes(limitBytes)} 预览。`;
+    return "流式响应已作为预览展示。";
+  }
+  if (truncated) return `响应 body 超过 ${formatBytes(limitBytes)}，这里只展示前半部分。`;
+  return "";
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) return "未知大小";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${Math.round(value / 1024 / 1024)} MB`;
 }
 
 async function runScript(script, context) {

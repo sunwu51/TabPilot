@@ -548,6 +548,12 @@
   min-height: 180px;
 }
 
+.postdog-body-note {
+  margin-bottom: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .postdog-body-editor {
   display: flex;
   flex-direction: column;
