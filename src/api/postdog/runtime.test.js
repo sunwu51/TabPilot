@@ -9,7 +9,7 @@ import {
   savePostdogFolder,
   savePostdogRequest
 } from "./index";
-import { normalizeJsonRequestBody, stripJsonComments } from "./json";
+import { formatJsonWithComments, normalizeJsonRequestBody, stripJsonComments } from "./json";
 import { runPostdogRequest } from "./runtime";
 
 describe("postdog runtime", () => {
@@ -294,5 +294,15 @@ describe("postdog runtime", () => {
 
     expect(stripJsonComments(input)).toContain('"b": "http://x/y"');
     expect(normalizeJsonRequestBody(input)).toBe('{"a":1,"b":"http://x/y"}');
+  });
+  it("formats JSON body without removing comments", () => {
+    const input = '{"a":1,// keep line\n"b":{"c":2},/* keep block */"d":3}';
+
+    const formatted = formatJsonWithComments(input, 2);
+
+    expect(formatted).toContain("// keep line");
+    expect(formatted).toContain("/* keep block */");
+    expect(formatted).toContain('  "c": 2');
+    expect(normalizeJsonRequestBody(formatted)).toBe('{"a":1,"b":{"c":2},"d":3}');
   });
 });

@@ -1,3 +1,4 @@
+import { applyEdits, format } from "jsonc-parser";
 import stripJsonCommentsLib from "strip-json-comments";
 
 export function normalizeJsonRequestBody(text) {
@@ -11,7 +12,12 @@ export function normalizeJsonRequestBody(text) {
 export function formatJsonWithComments(text, space = 2) {
   const raw = String(text ?? "");
   if (!raw.trim()) return "";
-  return JSON.stringify(JSON.parse(stripJsonComments(raw)), null, space);
+  JSON.parse(stripJsonComments(raw));
+  return applyEdits(raw, format(raw, undefined, {
+    insertSpaces: true,
+    tabSize: space,
+    eol: "\n"
+  }));
 }
 
 export function parseJsonWithComments(text) {
