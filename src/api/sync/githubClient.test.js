@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getGithubSyncFile, putGithubSyncFile } from "./githubClient";
+import { getGithubSyncFile, getGithubSyncFileLenient, putGithubSyncFile } from "./githubClient";
 import { encodeCompressedJson } from "./codec";
 
 describe("github sync client", () => {
@@ -17,6 +17,18 @@ describe("github sync client", () => {
 
     expect(file).toEqual({ sha: "sha_1", content: { text: "你好" } });
     expect(fetch.mock.calls[0][0]).toContain("/repos/me/sync/contents/tabmanager/settings.json.deflate.b64");
+  });
+
+  it("returns sha for unreadable content in lenient mode", async () => {
+    fetch.mockResolvedValueOnce(new Response(JSON.stringify({
+      sha: "sha_bad",
+      content: "not-deflate-json"
+    }), { status: 200 }));
+
+    const file = await getGithubSyncFileLenient(makeConfig(), "tabmanager/stash/index.json.deflate.b64");
+
+    expect(file.sha).toBe("sha_bad");
+    expect(file.unreadable).toBe(true);
   });
 
   it("writes compressed JSON with the existing sha", async () => {

@@ -93,4 +93,39 @@ describe("github sync engine", () => {
     expect(fetch).toHaveBeenCalledTimes(4);
     expect(fetch.mock.calls[2][0]).toContain(`/stash/items/${getStashItemId(remoteTitle)}.json.deflate.b64`);
   });
+
+  it("overwrites unreadable remote stash index with local index", async () => {
+    resetChromeMock({
+      [STASH_STORAGE_KEY]: {
+        local: { info: "本机", createdAt: 1, updatedAt: 10 }
+      },
+      [GITHUB_SYNC_CONFIG_KEY]: {
+        enabled: true,
+        owner: "me",
+        repo: "sync",
+        token: "token",
+        syncSettings: false,
+        syncStash: true
+      },
+      [GITHUB_SYNC_STATE_KEY]: {
+        deviceId: "dev_a",
+        dirtyStash: false,
+        remoteShas: {}
+      }
+    });
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        sha: "bad_index_sha",
+        content: "not-deflate-json"
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ content: { sha: "local_item_sha" } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ content: { sha: "fixed_index_sha" } }), { status: 200 }));
+
+    await runGithubSync();
+    const indexPutBody = JSON.parse(fetch.mock.calls[2][1].body);
+
+    expect(indexPutBody.sha).toBe("bad_index_sha");
+    expect(getChromeStorageSnapshot()[STASH_STORAGE_KEY].local.info).toBe("本机");
+  });
+
 });

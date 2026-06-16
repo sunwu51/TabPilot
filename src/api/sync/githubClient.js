@@ -16,6 +16,29 @@ export async function getGithubSyncFile(config, path) {
   };
 }
 
+export async function getGithubSyncFileLenient(config, path) {
+  const response = await fetch(buildContentsUrl(config, path), {
+    method: "GET",
+    headers: buildGithubHeaders(config)
+  });
+  if (response.status === 404) return null;
+  const body = await readGithubResponse(response);
+  try {
+    return {
+      sha: body.sha,
+      content: decodeCompressedJson(body.content || ""),
+      unreadable: false
+    };
+  } catch (error) {
+    return {
+      sha: body.sha,
+      content: null,
+      unreadable: true,
+      error: error?.message || String(error)
+    };
+  }
+}
+
 export async function getGithubSyncFileSha(config, path) {
   const response = await fetch(buildContentsUrl(config, path), {
     method: "GET",

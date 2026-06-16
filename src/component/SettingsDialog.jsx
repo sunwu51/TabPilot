@@ -1073,7 +1073,7 @@ function SettingsDialogBody() {
               className="!min-h-7 !px-3 !py-0 !text-xs"
               onPress={handleOpenPostdog}
             >
-              Postdog
+              postdog
             </Button>
           </div>
           <hr className="settings-quick-entry-divider" />

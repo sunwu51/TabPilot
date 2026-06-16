@@ -12,7 +12,7 @@ import {
   normalizeGithubSyncConfig,
   normalizeGithubSyncState
 } from "./config";
-import { getGithubSyncFile, putGithubSyncFile } from "./githubClient";
+import { getGithubSyncFile, getGithubSyncFileLenient, putGithubSyncFile } from "./githubClient";
 import {
   applySettingsSnapshot,
   applyStashSnapshot,
@@ -141,8 +141,11 @@ async function pullGithubSyncNamespace(config, state, namespace) {
   }
 
   const path = getSyncFilePath(config, namespace);
-  const remote = await getGithubSyncFile(config, path);
+  const remote = await getGithubSyncFileLenient(config, path);
   if (!remote) {
+    return await mergeAndPushGithubSyncNamespace(config, state, namespace);
+  }
+  if (remote.unreadable) {
     return await mergeAndPushGithubSyncNamespace(config, state, namespace);
   }
 
@@ -163,7 +166,7 @@ async function mergeAndPushGithubSyncNamespace(config, state, namespace) {
   }
 
   const path = getSyncFilePath(config, namespace);
-  let remote = await getGithubSyncFile(config, path);
+  let remote = await getGithubSyncFileLenient(config, path);
   const merged = await buildMergedSnapshot(namespace, remote?.content, state.deviceId, { preferLocal: true });
   const put = await putWithConflictRetry(config, path, merged.snapshot, remote?.sha || "", async (latestRemote) => {
     return (await buildMergedSnapshot(namespace, latestRemote?.content, state.deviceId, { preferLocal: true })).snapshot;
@@ -234,11 +237,13 @@ async function applyWithoutDirtyMark(fn) {
 
 async function syncStashItems(config, state) {
   const indexPath = getStashIndexFilePath(config);
-  let remoteIndexFile = await getGithubSyncFile(config, indexPath);
+  let remoteIndexFile = await getGithubSyncFileLenient(config, indexPath);
   if (!remoteIndexFile) {
     remoteIndexFile = await migrateLegacyStashSnapshotToIndex(config);
   }
-  const remoteIndex = remoteIndexFile?.content || { schemaVersion: 1, namespace: "stash-index", items: {} };
+  const remoteIndex = remoteIndexFile?.unreadable
+    ? { schemaVersion: 1, namespace: "stash-index", items: {} }
+    : (remoteIndexFile?.content || { schemaVersion: 1, namespace: "stash-index", items: {} });
   const localStashes = await readLocalStashesForMerge();
   const tombstoneRes = await chrome.storage.local.get({ [GITHUB_SYNC_TOMBSTONES_KEY]: {} });
   const localIndex = buildStashIndex(localStashes, tombstoneRes[GITHUB_SYNC_TOMBSTONES_KEY]);
@@ -264,9 +269,9 @@ async function syncStashItems(config, state) {
     const remoteWins = sameIndexEntry(remoteEntry, mergedEntry);
 
     if (remoteWins && !localWins) {
-      const remoteItem = await getGithubSyncFile(config, itemPath);
+      const remoteItem = await getGithubSyncFileLenient(config, itemPath);
       itemShas[itemId] = remoteItem?.sha || "";
-      const remoteStash = normalizeRemoteStashItem(remoteItem?.content, title);
+      const remoteStash = remoteItem?.unreadable ? null : normalizeRemoteStashItem(remoteItem?.content, title);
       if (remoteStash) {
         nextStashes[title] = remoteStash;
         continue;
@@ -274,7 +279,7 @@ async function syncStashItems(config, state) {
     }
 
     if (localStashes[title]) {
-      const remoteItem = remoteEntry && !remoteWins ? await getGithubSyncFile(config, itemPath) : null;
+      const remoteItem = remoteEntry && !remoteWins ? await getGithubSyncFileLenient(config, itemPath) : null;
       const sha = remoteItem?.sha || itemShas[itemId] || "";
       await putGithubSyncFile(config, itemPath, buildStashItemDocument(title, localStashes[title], state.deviceId), { sha });
       nextStashes[title] = localStashes[title];
@@ -283,7 +288,13 @@ async function syncStashItems(config, state) {
 
   await applyWithoutDirtyMark(async () => {
     await applyStashSnapshot({ stashes: nextStashes });
-    await chrome.storage.local.set({ [GITHUB_SYNC_TOMBSTONES_KEY]: nextTombstones });
+    const latestTombstoneRes = await chrome.storage.local.get({ [GITHUB_SYNC_TOMBSTONES_KEY]: {} });
+    await chrome.storage.local.set({
+      [GITHUB_SYNC_TOMBSTONES_KEY]: {
+        ...(latestTombstoneRes[GITHUB_SYNC_TOMBSTONES_KEY] || {}),
+        ...nextTombstones
+      }
+    });
   });
 
   const put = await putStashIndexWithConflictRetry(config, indexPath, mergedIndex, remoteIndexFile?.sha || "", state);
