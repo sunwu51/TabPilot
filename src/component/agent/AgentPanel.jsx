@@ -449,6 +449,7 @@ export default function AgentPanel() {
   const [tabMentionCandidates, setTabMentionCandidates] = useState([]);
   const [selectedMentionTabs, setSelectedMentionTabs] = useState([]);
   const [selectedMentionSkills, setSelectedMentionSkills] = useState([]);
+  const [deletingSessionIds, setDeletingSessionIds] = useState(() => new Set());
   const messagesScrollerRef = useRef(null);
   const messagesContentRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -460,6 +461,7 @@ export default function AgentPanel() {
   const inputResizeDragRef = useRef(null);
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
+  const deletingSessionIdsRef = useRef(new Set());
   const currentWindowIdRef = useRef(null);
   const sessionLockPortRef = useRef(null);
   const defaultNewSessionSystemPromptRef = useRef({ sessionId: "", systemPrompt: "" });
@@ -2179,35 +2181,52 @@ export default function AgentPanel() {
   /** Delete a session from history */
   async function handleDeleteSession(id, e) {
     e.stopPropagation();
+    if (deletingSessionIdsRef.current.has(id)) return;
+    deletingSessionIdsRef.current.add(id);
+    setDeletingSessionIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     const deletingCurrentSession = id === activeSessionIdRef.current;
-    stopSessionGeneration(id);
 
-    if (deletingCurrentSession) {
-      await releaseCurrentSessionLock();
-      activeSessionIdRef.current = "";
-    } else {
-      await releaseSessionLock(id, currentWindowIdRef.current);
-    }
-    sessionMessagesRef.current.delete(id);
-    clearSessionImageState(id);
-    sessionPlansRef.current.delete(id);
-    sessionRuntimeRef.current.delete(id);
-    await deleteSession(id);
-    const updated = await listSessions();
-    setSessions(updated);
-    // If deleted the current session, switch to another or create new
-    if (deletingCurrentSession) {
-      if (updated.length > 0) {
-        const windowId = await getCurrentWindowId();
-        const restored = await pickInitialUnlockedSession(updated, windowId);
-        if (restored) {
-          await openSession(restored.id, { skipLockPrompt: true });
+    try {
+      stopSessionGeneration(id);
+
+      if (deletingCurrentSession) {
+        await releaseCurrentSessionLock();
+        activeSessionIdRef.current = "";
+      } else {
+        await releaseSessionLock(id, currentWindowIdRef.current);
+      }
+      sessionMessagesRef.current.delete(id);
+      clearSessionImageState(id);
+      sessionPlansRef.current.delete(id);
+      sessionRuntimeRef.current.delete(id);
+      await deleteSession(id);
+      const updated = await listSessions();
+      setSessions(updated);
+      // If deleted the current session, switch to another or create new
+      if (deletingCurrentSession) {
+        if (updated.length > 0) {
+          const windowId = await getCurrentWindowId();
+          const restored = await pickInitialUnlockedSession(updated, windowId);
+          if (restored) {
+            await openSession(restored.id, { skipLockPrompt: true });
+          } else {
+            await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
+          }
         } else {
           await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
         }
-      } else {
-        await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
       }
+    } finally {
+      deletingSessionIdsRef.current.delete(id);
+      setDeletingSessionIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -3629,47 +3648,53 @@ export default function AgentPanel() {
                 {sessions.length === 0 && (
                   <div className="chat-history-empty">暂无历史会话</div>
                 )}
-                {sessions.map(s => (
-                  <div
-                    key={s.id}
-                    className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
-                    onClick={() => switchSession(s.id)}
-                  >
-                    <div className="chat-history-item-info">
-                      <span className="chat-history-item-title">
-                        {s.title}
-                        {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
-                          <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
-                        )}
-                        {s.id !== sessionId && isSessionLoading(s.id) && (
-                          <span className="chat-history-item-status">● 生成中</span>
-                        )}
-                      </span>
-                      {Array.isArray(s.keywords) && s.keywords.length > 0 && (
-                        <span className="chat-history-keywords">
-                          {s.keywords.slice(0, 3).map(keyword => (
-                            <span key={keyword} className="chat-history-keyword-badge" title={keyword}>{keyword}</span>
-                          ))}
+                {sessions.map(s => {
+                  const isDeleting = deletingSessionIds.has(s.id);
+                  return (
+                    <div
+                      key={s.id}
+                      className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
+                      onClick={() => {
+                        if (!isDeleting) switchSession(s.id);
+                      }}
+                    >
+                      <div className="chat-history-item-info">
+                        <span className="chat-history-item-title">
+                          {s.title}
+                          {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
+                            <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
+                          )}
+                          {s.id !== sessionId && isSessionLoading(s.id) && (
+                            <span className="chat-history-item-status">● 生成中</span>
+                          )}
                         </span>
-                      )}
-                      <span className="chat-history-item-time">
-                        {formatTime(s.startedAt || s.updatedAt)}
-                        {hasHistoryContextUsage(s.contextUsage) && (
-                          <>
-                            {" · "}
-                            上下文：{formatContextUsageK(s.contextUsage)}
-                          </>
+                        {Array.isArray(s.keywords) && s.keywords.length > 0 && (
+                          <span className="chat-history-keywords">
+                            {s.keywords.slice(0, 3).map(keyword => (
+                              <span key={keyword} className="chat-history-keyword-badge" title={keyword}>{keyword}</span>
+                            ))}
+                          </span>
                         )}
-                      </span>
+                        <span className="chat-history-item-time">
+                          {formatTime(s.startedAt || s.updatedAt)}
+                          {hasHistoryContextUsage(s.contextUsage) && (
+                            <>
+                              {" · "}
+                              上下文：{formatContextUsageK(s.contextUsage)}
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        className={`chat-history-item-delete${isDeleting ? " chat-history-item-delete-loading" : ""}`}
+                        onClick={(e) => handleDeleteSession(s.id, e)}
+                        aria-label={`${isDeleting ? "正在删除会话" : "删除会话"} ${s.title || ""}`.trim()}
+                        title={isDeleting ? "删除中" : "删除"}
+                        disabled={isDeleting}
+                      >{isDeleting ? "删" : "✕"}</button>
                     </div>
-                    <button
-                      className="chat-history-item-delete"
-                      onClick={(e) => handleDeleteSession(s.id, e)}
-                      aria-label={`删除会话 ${s.title || ""}`.trim()}
-                      title="删除"
-                    >✕</button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

@@ -117,3 +117,11 @@
   color: #ef4444;
   background: #fef2f2;
 }
+
+.chat-history-item-delete:disabled,
+.chat-history-item-delete-loading {
+  color: #ef4444;
+  background: #fef2f2;
+  cursor: progress;
+  opacity: 1;
+}
