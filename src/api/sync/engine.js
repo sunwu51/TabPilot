@@ -3,6 +3,7 @@ import { STASH_STORAGE_KEY } from "../llm/core/constants";
 import {
   GITHUB_SYNC_CONFIG_KEY,
   GITHUB_SYNC_DEFAULT_STATE,
+  GITHUB_SYNC_FORCE_TAKEOVER_MS,
   GITHUB_SYNC_IN_PROGRESS_STALE_MS,
   GITHUB_SYNC_STATE_KEY,
   GITHUB_SYNC_TOMBSTONES_KEY,
@@ -25,6 +26,7 @@ import {
   updateStashTombstones
 } from "./merge";
 import {
+  areStashIndexesEqual,
   buildStashIndex,
   buildStashItemDocument,
   getStashItemId,
@@ -107,8 +109,10 @@ export async function runGithubSync({ force = false } = {}) {
   let state = await ensureGithubSyncDeviceId();
   if (state.inProgress) {
     const startedAt = Number(state.inProgressStartedAt) || 0;
-    const isStale = startedAt === 0 || Date.now() - startedAt > GITHUB_SYNC_IN_PROGRESS_STALE_MS;
-    if (!isStale) {
+    const elapsed = startedAt > 0 ? Date.now() - startedAt : Number.POSITIVE_INFINITY;
+    const isStale = elapsed > GITHUB_SYNC_IN_PROGRESS_STALE_MS;
+    const canForceTakeover = force === true && elapsed > GITHUB_SYNC_FORCE_TAKEOVER_MS;
+    if (!isStale && !canForceTakeover) {
       return { skipped: true, reason: "in_progress" };
     }
   }
@@ -285,6 +289,9 @@ async function syncStashItems(config, state) {
     }
 
     if (localStashes[title]) {
+      if (remoteWins && localWins) {
+        continue;
+      }
       const remoteItem = remoteEntry && !remoteWins ? await getGithubSyncFileLenient(config, itemPath) : null;
       const sha = remoteItem?.sha || itemShas[itemId] || "";
       await putGithubSyncFile(config, itemPath, buildStashItemDocument(title, localStashes[title], state.deviceId), { sha });
@@ -302,6 +309,14 @@ async function syncStashItems(config, state) {
       }
     });
   });
+
+  if (remoteIndexFile && !remoteIndexFile.unreadable && areStashIndexesEqual(mergedIndex, remoteIndex)) {
+    await patchGithubSyncState({
+      dirtyStash: false,
+      remoteShas: { ...state.remoteShas, stash: remoteIndexFile.sha || "" }
+    });
+    return { action: "unchanged_items", sha: remoteIndexFile.sha || "" };
+  }
 
   const put = await putStashIndexWithConflictRetry(config, indexPath, mergedIndex, remoteIndexFile?.sha || "", state);
   await patchGithubSyncState({

@@ -47,7 +47,7 @@ describe("github sync engine", () => {
     expect(snapshot[GITHUB_SYNC_STATE_KEY].dirtyStash).toBe(false);
     expect(snapshot[GITHUB_SYNC_STATE_KEY].remoteShas).toEqual({
       settings: "settings_sha",
-      stash: "stash_sha"
+      stash: "migrated_index_sha"
     });
   });
 
@@ -92,6 +92,43 @@ describe("github sync engine", () => {
     expect(snapshot[STASH_STORAGE_KEY].remote.info).toBe("远端");
     expect(fetch).toHaveBeenCalledTimes(4);
     expect(fetch.mock.calls[2][0]).toContain(`/stash/items/${getStashItemId(remoteTitle)}.json.deflate.b64`);
+  });
+
+  it("does not commit stash files when index entries are unchanged", async () => {
+    const stash = { info: "本机", createdAt: 1, updatedAt: 10 };
+    const remoteIndex = buildStashIndex({ local: stash });
+    resetChromeMock({
+      [STASH_STORAGE_KEY]: {
+        local: stash
+      },
+      [GITHUB_SYNC_CONFIG_KEY]: {
+        enabled: true,
+        owner: "me",
+        repo: "sync",
+        token: "token",
+        syncSettings: false,
+        syncStash: true
+      },
+      [GITHUB_SYNC_STATE_KEY]: {
+        deviceId: "dev_a",
+        dirtyStash: false,
+        remoteShas: { stash: "remote_index_sha" }
+      }
+    });
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        sha: "remote_index_sha",
+        content: encodeCompressedJson(remoteIndex)
+      }), { status: 200 }));
+
+    const result = await runGithubSync();
+    const state = getChromeStorageSnapshot()[GITHUB_SYNC_STATE_KEY];
+
+    expect(result.results.stash).toEqual({ action: "unchanged_items", sha: "remote_index_sha" });
+    expect(state.dirtyStash).toBe(false);
+    expect(state.remoteShas.stash).toBe("remote_index_sha");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1].method).toBe("GET");
   });
 
   it("overwrites unreadable remote stash index with local index", async () => {
@@ -153,6 +190,66 @@ describe("github sync engine", () => {
     expect(result).toEqual({ skipped: true, reason: "in_progress" });
     expect(fetch).not.toHaveBeenCalled();
     expect(getChromeStorageSnapshot()[GITHUB_SYNC_STATE_KEY].lastSyncAt).toBe(123);
+  });
+
+  it("keeps force sync from taking over a fresh in-progress state", async () => {
+    resetChromeMock({
+      [GITHUB_SYNC_CONFIG_KEY]: {
+        enabled: true,
+        owner: "me",
+        repo: "sync",
+        token: "token",
+        syncSettings: true,
+        syncStash: false
+      },
+      [GITHUB_SYNC_STATE_KEY]: {
+        deviceId: "dev_a",
+        inProgress: true,
+        inProgressStartedAt: Date.now(),
+        lastSyncAt: 123,
+        remoteShas: {}
+      }
+    });
+    globalThis.fetch = vi.fn();
+
+    const result = await runGithubSync({ force: true });
+
+    expect(result).toEqual({ skipped: true, reason: "in_progress" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("lets force sync take over an old in-progress state before the scheduled stale timeout", async () => {
+    resetChromeMock({
+      llmConfig: { llmModels: [] },
+      [GITHUB_SYNC_CONFIG_KEY]: {
+        enabled: true,
+        owner: "me",
+        repo: "sync",
+        token: "token",
+        basePath: "tabmanager",
+        syncSettings: true,
+        syncStash: false
+      },
+      [GITHUB_SYNC_STATE_KEY]: {
+        deviceId: "dev_a",
+        inProgress: true,
+        inProgressStartedAt: Date.now() - 31 * 1000,
+        dirtySettings: true,
+        lastSyncAt: 123,
+        remoteShas: {}
+      }
+    });
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ content: { sha: "settings_sha" } }), { status: 200 }));
+
+    const result = await runGithubSync({ force: true });
+    const state = getChromeStorageSnapshot()[GITHUB_SYNC_STATE_KEY];
+
+    expect(result.success).toBe(true);
+    expect(state.inProgress).toBe(false);
+    expect(state.inProgressStartedAt).toBe(0);
+    expect(state.lastSyncAt).toBeGreaterThan(123);
   });
 
   it("force sync recovers a stale in-progress state", async () => {

@@ -24,7 +24,6 @@ export function buildStashIndex(stashes = {}, tombstones = {}) {
   return {
     schemaVersion: 1,
     namespace: "stash-index",
-    updatedAt: Date.now(),
     items: index
   };
 }
@@ -44,9 +43,21 @@ export function mergeStashIndexes(localIndex, remoteIndex) {
   return {
     schemaVersion: 1,
     namespace: "stash-index",
-    updatedAt: Math.max(Date.now(), Number(localIndex?.updatedAt) || 0, Number(remoteIndex?.updatedAt) || 0),
     items: result
   };
+}
+
+export function areStashIndexesEqual(a, b) {
+  const aItems = a?.items && typeof a.items === "object" ? a.items : {};
+  const bItems = b?.items && typeof b.items === "object" ? b.items : {};
+  const titles = new Set([...Object.keys(aItems), ...Object.keys(bItems)]);
+  for (const title of titles) {
+    const aEntry = normalizeIndexEntry(title, aItems[title]);
+    const bEntry = normalizeIndexEntry(title, bItems[title]);
+    if (!aEntry && !bEntry) continue;
+    if (!sameNormalizedIndexEntry(aEntry, bEntry)) return false;
+  }
+  return true;
 }
 
 export function getChangedStashIndexEntries(localIndex, remoteIndex) {
@@ -89,6 +100,13 @@ function normalizeIndexEntry(title, entry) {
   const deletedAt = Number(entry.deletedAt) || 0;
   if (deletedAt > 0) result.deletedAt = deletedAt;
   return result;
+}
+
+function sameNormalizedIndexEntry(a, b) {
+  if (!a || !b) return false;
+  return String(a.id || "") === String(b.id || "")
+    && Number(a.updatedAt || 0) === Number(b.updatedAt || 0)
+    && Number(a.deletedAt || 0) === Number(b.deletedAt || 0);
 }
 
 function bytesToHex(bytes) {

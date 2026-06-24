@@ -59,7 +59,7 @@ describe("sessions storage", () => {
 
   it("loads missing session data with safe defaults", async () => {
     expect(await loadSession("missing")).toEqual([]);
-    expect(await loadSessionMeta("missing")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 1 });
+    expect(await loadSessionMeta("missing")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null });
   });
 
   it("saves messages without replacing existing metadata", async () => {
@@ -72,9 +72,55 @@ describe("sessions storage", () => {
     await saveSession("a", [{ role: "user", content: "hello" }], "Auto title");
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }], nextImageRefIndex: 1 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }], nextImageRefIndex: 1, contextSummary: null });
     const [entry] = await listSessions();
     expect(entry).toMatchObject({ title: "Auto title", startedAt: 100, updatedAt: 100 });
+  });
+
+  it("loads optional context summary metadata", async () => {
+    resetChromeMock({
+      session_a: {
+        messages: [],
+        contextSummary: {
+          version: 1,
+          coveredMessageIndex: 3.7,
+          displayMessageIndex: 5.9,
+          summary: "  compacted history  ",
+          createdAt: 10
+        }
+      }
+    });
+
+    expect(await loadSessionMeta("a")).toEqual({
+      systemPrompt: "",
+      plans: [],
+      nextImageRefIndex: 1,
+      contextSummary: {
+        version: 1,
+        coveredMessageIndex: 3,
+        displayMessageIndex: 5,
+        summary: "compacted history",
+        createdAt: 10
+      }
+    });
+  });
+
+  it("truncates oversized stored context summary metadata", async () => {
+    resetChromeMock({
+      session_a: {
+        messages: [],
+        contextSummary: {
+          version: 1,
+          coveredMessageIndex: 3,
+          summary: "x".repeat(3000),
+          createdAt: 10
+        }
+      }
+    });
+
+    const meta = await loadSessionMeta("a");
+    expect(meta.contextSummary.summary.length).toBeLessThanOrEqual(2400);
+    expect(meta.contextSummary.summary).toContain("摘要已按长度上限截断");
   });
 
   it("does not recreate a deleted session payload when saving after its index entry is gone", async () => {
@@ -125,7 +171,7 @@ describe("sessions storage", () => {
         { ref: "img_1", dataUrl }
       ]
     }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [], nextImageRefIndex: 2 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [], nextImageRefIndex: 2, contextSummary: null });
   });
 
   it("stores user image blocks out of the main message payload", async () => {
@@ -246,7 +292,7 @@ describe("sessions storage", () => {
 
     // Only the freshly referenced image survives; the three orphan entries are swept.
     expect(await loadSessionImageStore("a")).toEqual({ img_1: dataUrl });
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 2 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 2, contextSummary: null });
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
   });
@@ -278,7 +324,7 @@ describe("sessions storage", () => {
     // img_3 data GC'd, but the counter does not recycle: it stays at 4 so that
     // the next allocation is img_4, not img_3.
     expect(await loadSessionImageStore("a")).toEqual({ img_1: img1, img_2: img2 });
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null });
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("img_3"));
     warnSpy.mockRestore();
   });
@@ -357,7 +403,7 @@ describe("sessions storage", () => {
     }], "A");
 
     expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null });
   });
 
   it("persists nextImageRefIndex so future refs continue increasing after removed messages", async () => {
@@ -376,7 +422,7 @@ describe("sessions storage", () => {
       }]
     }], "A", { nextImageRefIndex: 4 });
 
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null });
     expect(await loadSessionImageStore("a")).toEqual({ img_3: "data:image/png;base64,dXNlcg==" });
   });
 
@@ -452,7 +498,7 @@ describe("sessions storage", () => {
     await saveSessionMeta("a", { systemPrompt: "sys", plans: [{ step: "one" }] });
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }], nextImageRefIndex: 1 });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }], nextImageRefIndex: 1, contextSummary: null });
   });
 
   it("clears stored session keywords from the index entry", async () => {

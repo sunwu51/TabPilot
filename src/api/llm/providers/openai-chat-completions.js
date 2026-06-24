@@ -27,9 +27,10 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
       body: JSON.stringify({
         model: config.model,
         messages,
-        tools,
+        ...(tools.length > 0 ? { tools } : {}),
         stream: true,
         stream_options: { include_usage: true },
+        ...buildOpenAIChatMaxTokens(options),
         ...buildOpenAIChatReasoningFields(config),
         ...buildOpenAICacheFields(options)
       }),
@@ -223,6 +224,17 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
   } finally {
     timeoutState.cleanup();
   }
+}
+
+function buildOpenAIChatMaxTokens(options = {}) {
+  const maxTokens = normalizeStreamMaxTokens(options.maxTokens);
+  return maxTokens ? { max_tokens: maxTokens } : {};
+}
+
+function normalizeStreamMaxTokens(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.min(8192, Math.floor(number));
 }
 
 
