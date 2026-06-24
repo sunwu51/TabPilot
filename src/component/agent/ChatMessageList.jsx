@@ -10,19 +10,21 @@ const ChatMessageList = memo(function ChatMessageList({
   onRewindToUserMessage,
   searchState,
   contextSummary,
+  contextCompaction,
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver,
   imageRefNavigator
 }) {
-  const groups = useMemo(() => groupMessages(messages), [messages]);
-  const coveredMessageIndex = normalizeCoveredMessageIndex(contextSummary, messages.length);
+  const dividerState = buildContextDividerState(contextSummary, contextCompaction, messages.length);
+  const groups = useMemo(() => groupMessages(messages, dividerState.index), [messages, dividerState.index]);
+  const dividerGroupIndex = findDividerGroupIndex(groups, dividerState.index);
 
   return (
     <>
       {groups.map((group, groupIndex) => {
-        const divider = group.endIndex === coveredMessageIndex
-          ? <ContextCompressedDivider key={`context-compressed-${coveredMessageIndex}`} />
+        const divider = groupIndex === dividerGroupIndex
+          ? <ContextCompressedDivider key={`context-compressed-${dividerState.index}-${dividerState.status}`} status={dividerState.status} />
           : null;
         if (group.type === "tools") {
           return (
@@ -78,6 +80,7 @@ const ChatMessageList = memo(function ChatMessageList({
   prevProps.sessionId === nextProps.sessionId &&
   prevProps.searchState === nextProps.searchState &&
   prevProps.contextSummary === nextProps.contextSummary &&
+  prevProps.contextCompaction === nextProps.contextCompaction &&
   prevProps.imageEditingEnabled === nextProps.imageEditingEnabled &&
   prevProps.imageSrcResolver === nextProps.imageSrcResolver &&
   prevProps.imageRefNavigator === nextProps.imageRefNavigator
@@ -95,20 +98,38 @@ function FragmentWithDivider({ children, divider }) {
   );
 }
 
-function ContextCompressedDivider() {
+function ContextCompressedDivider({ status }) {
+  const isCompressing = status === "compressing";
   return (
-    <div className="context-compressed-divider" title="后续请求将使用摘要代替以上历史">
+    <div className="context-compressed-divider" title={isCompressing ? "正在生成摘要，后续请求将使用摘要代替以上历史" : "后续请求将使用摘要代替以上历史"}>
       <span className="context-compressed-line" />
-      <span className="context-compressed-text">以上消息已经被压缩</span>
+      <span className="context-compressed-text">{isCompressing ? "正在压缩会话内容" : "以上消息已经被压缩"}</span>
       <span className="context-compressed-line" />
     </div>
   );
 }
 
-function normalizeCoveredMessageIndex(contextSummary, messageCount) {
-  const index = Number(contextSummary?.coveredMessageIndex);
+function buildContextDividerState(contextSummary, contextCompaction, messageCount) {
+  const compactionIndex = normalizeDividerMessageIndex(contextCompaction, messageCount);
+  if (contextCompaction?.status === "compressing" && compactionIndex >= 0) {
+    return { index: compactionIndex, status: "compressing" };
+  }
+  const summaryIndex = normalizeDividerMessageIndex(contextSummary, messageCount);
+  return { index: summaryIndex, status: summaryIndex >= 0 ? "compressed" : "" };
+}
+
+function normalizeDividerMessageIndex(contextSummary, messageCount) {
+  const preferredIndex = Number(contextSummary?.displayMessageIndex);
+  const fallbackIndex = Number(contextSummary?.coveredMessageIndex);
+  const index = Number.isFinite(preferredIndex) ? preferredIndex : fallbackIndex;
   if (!Number.isFinite(index) || index < 0 || index >= messageCount) return -1;
   return Math.floor(index);
+}
+
+function findDividerGroupIndex(groups, dividerIndex) {
+  if (!Array.isArray(groups) || groups.length === 0 || dividerIndex < 0) return -1;
+  const index = groups.findIndex(group => Number(group?.endIndex) >= dividerIndex);
+  return index >= 0 ? index : groups.length - 1;
 }
 
 /* eslint-disable react/prop-types */
@@ -253,7 +274,7 @@ function handleToggleKeyDown(event, toggleExpanded) {
   toggleExpanded();
 }
 
-function groupMessages(messages) {
+function groupMessages(messages, dividerIndex = -1) {
   const result = [];
   let index = 0;
 
@@ -270,6 +291,7 @@ function groupMessages(messages) {
     while (index < messages.length && isToolLikeMessage(messages[index])) {
       group.push(messages[index]);
       index += 1;
+      if (index - 1 === dividerIndex && !isToolResultForPreviousAssistant(messages, index)) break;
     }
 
     const items = buildToolSequenceItems(group, start);
@@ -277,7 +299,8 @@ function groupMessages(messages) {
 
     const toolCallCount = items.filter(item => item.type === "tool").length;
     if (toolCallCount > 5) {
-      const trailingThinking = splitTrailingThinkingMessage(messages[index], index);
+      const splitAtDivider = index - 1 === dividerIndex && isToolLikeMessage(messages[index]);
+      const trailingThinking = splitAtDivider ? null : splitTrailingThinkingMessage(messages[index], index);
       if (trailingThinking) {
         items.push(...trailingThinking.items);
         index += 1;
@@ -288,7 +311,7 @@ function groupMessages(messages) {
         items,
         toolCallCount,
         endIndex: trailingThinking?.remainingMessage ? trailingThinking.messageIndex - 1 : index - 1,
-        key: `tools-${start}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
+        key: `tools-${start}-${index - 1}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
       });
       if (trailingThinking?.remainingMessage) {
         result.push({
@@ -699,6 +722,24 @@ function isToolLikeMessage(message) {
   if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
   if (message.role === "assistant" && Array.isArray(message.content)) {
     return message.content.some((block) => block?.type === "tool_use");
+  }
+  return false;
+}
+
+function isToolResultForPreviousAssistant(messages, index) {
+  const current = messages[index];
+  const previous = messages[index - 1];
+  if (current?.role !== "tool") return false;
+  return messageHasToolCallId(previous, current.tool_call_id);
+}
+
+function messageHasToolCallId(message, toolCallId) {
+  if (!message || message.role !== "assistant" || !toolCallId) return false;
+  if (Array.isArray(message.tool_calls)) {
+    return message.tool_calls.some(call => (call?.id || call?.tool_call_id) === toolCallId);
+  }
+  if (Array.isArray(message.content)) {
+    return message.content.some(block => block?.type === "tool_use" && block.id === toolCallId);
   }
   return false;
 }

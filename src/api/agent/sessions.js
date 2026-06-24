@@ -5,6 +5,7 @@ const LAST_ACTIVE_SESSION_ID_KEY = "agent_last_active_session_id";
 const LAST_ACTIVE_SESSION_BY_WINDOW_KEY = "agent_last_active_session_by_window";
 const SESSION_LOCKS_KEY = "agent_session_locks";
 const SESSION_LOCK_TTL_MS = 30 * 1000;
+const CONTEXT_SUMMARY_MAX_CHARS = 2400;
 
 /**
  * Generate a unique session ID: s_{timestamp}_{random4chars}
@@ -243,14 +244,27 @@ export async function loadSessionMeta(id) {
 
 function normalizeStoredContextSummary(contextSummary) {
   if (!contextSummary || typeof contextSummary !== "object") return null;
-  const summary = String(contextSummary.summary || "").trim();
+  const summary = normalizeStoredContextSummaryText(contextSummary.summary);
   const coveredMessageIndex = Number(contextSummary.coveredMessageIndex);
   if (!summary || !Number.isFinite(coveredMessageIndex) || coveredMessageIndex < 0) return null;
+  const normalizedCoveredMessageIndex = Math.floor(coveredMessageIndex);
+  const displayMessageIndex = Number(contextSummary.displayMessageIndex);
   return {
     ...contextSummary,
     summary,
-    coveredMessageIndex: Math.floor(coveredMessageIndex)
+    coveredMessageIndex: normalizedCoveredMessageIndex,
+    displayMessageIndex: Number.isFinite(displayMessageIndex) && displayMessageIndex >= 0
+      ? Math.floor(displayMessageIndex)
+      : normalizedCoveredMessageIndex
   };
+}
+
+function normalizeStoredContextSummaryText(value) {
+  const text = String(value || "").trim();
+  if (text.length <= CONTEXT_SUMMARY_MAX_CHARS) return text;
+  const suffix = "\n[摘要已按长度上限截断]";
+  const maxTextLength = Math.max(0, CONTEXT_SUMMARY_MAX_CHARS - suffix.length);
+  return `${Array.from(text).slice(0, maxTextLength).join("").trimEnd()}${suffix}`;
 }
 
 /**

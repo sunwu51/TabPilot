@@ -84,6 +84,7 @@ describe("sessions storage", () => {
         contextSummary: {
           version: 1,
           coveredMessageIndex: 3.7,
+          displayMessageIndex: 5.9,
           summary: "  compacted history  ",
           createdAt: 10
         }
@@ -97,10 +98,29 @@ describe("sessions storage", () => {
       contextSummary: {
         version: 1,
         coveredMessageIndex: 3,
+        displayMessageIndex: 5,
         summary: "compacted history",
         createdAt: 10
       }
     });
+  });
+
+  it("truncates oversized stored context summary metadata", async () => {
+    resetChromeMock({
+      session_a: {
+        messages: [],
+        contextSummary: {
+          version: 1,
+          coveredMessageIndex: 3,
+          summary: "x".repeat(3000),
+          createdAt: 10
+        }
+      }
+    });
+
+    const meta = await loadSessionMeta("a");
+    expect(meta.contextSummary.summary.length).toBeLessThanOrEqual(2400);
+    expect(meta.contextSummary.summary).toContain("摘要已按长度上限截断");
   });
 
   it("does not recreate a deleted session payload when saving after its index entry is gone", async () => {

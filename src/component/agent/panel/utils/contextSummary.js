@@ -4,17 +4,22 @@ export const CONTEXT_SUMMARY_FORCE_RATIO = 0.9;
 export const CONTEXT_SUMMARY_KEEP_LAST_MESSAGES = 20;
 export const CONTEXT_SUMMARY_MIN_MESSAGES_TO_COMPACT = 4;
 export const CONTEXT_SUMMARY_APPROX_CHARS_PER_TOKEN = 4;
+export const CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 700;
+export const CONTEXT_SUMMARY_MAX_CHARS = 2400;
 
 const SUMMARY_ROLE = "user";
 
 export function normalizeContextSummary(value) {
   if (!value || typeof value !== "object") return null;
   const coveredMessageIndex = Number(value.coveredMessageIndex);
-  const summary = String(value.summary || "").trim();
+  const summary = normalizeContextSummaryText(value.summary);
   if (!Number.isFinite(coveredMessageIndex) || coveredMessageIndex < 0 || !summary) return null;
+  const normalizedCoveredMessageIndex = Math.floor(coveredMessageIndex);
+  const displayMessageIndex = normalizeOptionalMessageIndex(value.displayMessageIndex, normalizedCoveredMessageIndex);
   return {
     version: Number(value.version) || CONTEXT_SUMMARY_VERSION,
-    coveredMessageIndex: Math.floor(coveredMessageIndex),
+    coveredMessageIndex: normalizedCoveredMessageIndex,
+    displayMessageIndex,
     summary,
     createdAt: Number(value.createdAt) || Date.now(),
     updatedAt: Number(value.updatedAt) || Number(value.createdAt) || Date.now(),
@@ -68,28 +73,35 @@ export function buildContextSummaryRequestMessages({ contextSummary, messages })
 export function buildContextSummaryPrompt({ oldSummary, messages }) {
   const transcript = formatMessagesForSummary(messages);
   return [
-    "请压缩以下会话历史，用于后续 AI agent 继续完成长程任务。",
+    "请把以下会话历史压缩成极简续作上下文，供后续 AI agent 继续任务。",
     "",
-    "必须保留：",
-    "- 用户目标和当前任务状态",
-    "- 已完成步骤、未完成步骤、阻塞点",
-    "- 明确的用户偏好、约束和最新指令",
-    "- 关键文件、URL、标签页、工具结果和错误信息",
-    "- 已经尝试过但失败的方法",
-    "- 后续继续时应立即执行的下一步",
+    "输出要求：",
+    `- 总长度不超过 900 个中文字符，硬上限 ${CONTEXT_SUMMARY_MAX_CHARS} 个字符；信息很多时优先保留当前任务状态和下一步。`,
+    "- 只写事实，不写寒暄、解释、过程叙述或元评论。",
+    "- 不逐条复述工具调用；合并同类工具结果，只保留结论、关键文件、错误和已验证命令。",
+    "- 删除过期分支、重复日志、无关 UI 细节和已经被后续结果覆盖的信息。",
+    "- 如果已有摘要，只输出合并后的新摘要，不要分别列出旧摘要和新增历史。",
     "",
-    "不要保留寒暄、重复内容、无关细节。不要编造未出现的信息。",
+    "固定格式：",
+    "目标/状态：1-3 条。",
+    "关键上下文：最多 6 条，包含用户偏好、约束、文件路径、重要结果或错误。",
+    "已尝试：最多 3 条，只写仍影响后续判断的尝试。",
+    "下一步：1-3 条，写恢复任务后应立即做什么。",
+    "",
+    "不要编造未出现的信息。没有内容的栏目写“无”。",
     oldSummary ? `\n【已有压缩摘要】\n${oldSummary}` : "",
     `\n【需要压缩的新增历史】\n${transcript}`
   ].filter(Boolean).join("\n");
 }
 
-export function buildMergedContextSummary({ previousSummary, newSummary, coveredMessageIndex, model }) {
+export function buildMergedContextSummary({ previousSummary, newSummary, coveredMessageIndex, displayMessageIndex, model }) {
   const now = Date.now();
+  const normalizedCoveredMessageIndex = normalizeNonNegativeInteger(coveredMessageIndex, 0);
   return {
     version: CONTEXT_SUMMARY_VERSION,
-    coveredMessageIndex,
-    summary: String(newSummary || "").trim() || String(previousSummary?.summary || "").trim(),
+    coveredMessageIndex: normalizedCoveredMessageIndex,
+    displayMessageIndex: normalizeOptionalMessageIndex(displayMessageIndex, normalizedCoveredMessageIndex),
+    summary: normalizeContextSummaryText(newSummary) || normalizeContextSummaryText(previousSummary?.summary),
     createdAt: previousSummary?.createdAt || now,
     updatedAt: now,
     sourceModel: String(model || "")
@@ -130,6 +142,23 @@ function buildContextSummaryMessage(summary) {
 function normalizePositiveInteger(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
+function normalizeNonNegativeInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : fallback;
+}
+
+function normalizeOptionalMessageIndex(value, fallback) {
+  return normalizeNonNegativeInteger(value, fallback);
+}
+
+function normalizeContextSummaryText(value) {
+  const text = String(value || "").trim();
+  if (text.length <= CONTEXT_SUMMARY_MAX_CHARS) return text;
+  const suffix = "\n[摘要已按长度上限截断]";
+  const maxTextLength = Math.max(0, CONTEXT_SUMMARY_MAX_CHARS - suffix.length);
+  return `${Array.from(text).slice(0, maxTextLength).join("").trimEnd()}${suffix}`;
 }
 
 function moveCutIndexToCompletedToolSequenceEnd(messages, cutIndex) {

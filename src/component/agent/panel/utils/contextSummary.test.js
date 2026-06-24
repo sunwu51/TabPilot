@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildContextSummaryPrompt,
   buildContextSummaryRequestMessages,
   buildMergedContextSummary,
+  CONTEXT_SUMMARY_MAX_CHARS,
+  CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
   findContextSummaryCutIndex,
   getKeepLastMessagesForContextSummary,
   getMessagesToSummarize,
@@ -17,6 +20,18 @@ function makeMessages(count) {
 }
 
 describe("contextSummary helpers", () => {
+  it("builds a concise summary prompt with a bounded output budget", () => {
+    const prompt = buildContextSummaryPrompt({
+      oldSummary: "old",
+      messages: makeMessages(2)
+    });
+
+    expect(CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS).toBeLessThanOrEqual(700);
+    expect(prompt).toContain("总长度不超过 900 个中文字符");
+    expect(prompt).toContain("不逐条复述工具调用");
+    expect(prompt).toContain("固定格式");
+  });
+
   it("builds request messages from summary plus uncovered history", () => {
     const messages = makeMessages(5);
     const result = buildContextSummaryRequestMessages({
@@ -50,14 +65,38 @@ describe("contextSummary helpers", () => {
       previousSummary: existing,
       newSummary: "merged",
       coveredMessageIndex: 7,
+      displayMessageIndex: 9,
       model: "model-a"
     })).toEqual(expect.objectContaining({
       version: 1,
       coveredMessageIndex: 7,
+      displayMessageIndex: 9,
       summary: "merged",
       createdAt: existing.createdAt,
       sourceModel: "model-a"
     }));
+  });
+
+  it("falls back divider display index to the covered index for old summaries", () => {
+    expect(normalizeContextSummary({
+      version: 1,
+      coveredMessageIndex: 4.8,
+      summary: "existing"
+    })).toEqual(expect.objectContaining({
+      coveredMessageIndex: 4,
+      displayMessageIndex: 4
+    }));
+  });
+
+  it("bounds stored summary text even if the provider ignores max output tokens", () => {
+    const normalized = normalizeContextSummary({
+      version: 1,
+      coveredMessageIndex: 1,
+      summary: "x".repeat(CONTEXT_SUMMARY_MAX_CHARS + 100)
+    });
+
+    expect(normalized.summary.length).toBeLessThanOrEqual(CONTEXT_SUMMARY_MAX_CHARS);
+    expect(normalized.summary).toContain("摘要已按长度上限截断");
   });
 
   it("moves the cut to the end of a completed tool sequence", () => {

@@ -34,7 +34,9 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
         cache_control: DEFAULT_ANTHROPIC_CACHE_CONTROL,
         system: systemPrompt,
         messages: apiMessages,
-        tools, max_tokens: 4096, stream: true,
+        ...(tools.length > 0 ? { tools } : {}),
+        max_tokens: normalizeStreamMaxTokens(options.maxTokens, 4096),
+        stream: true,
         ...buildAnthropicReasoningFields(config)
       }),
       signal: timeoutState.signal
@@ -219,6 +221,12 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
   } finally {
     timeoutState.cleanup();
   }
+}
+
+function normalizeStreamMaxTokens(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return Math.min(8192, Math.floor(number));
 }
 
 function getAnthropicEventIndex(event) {

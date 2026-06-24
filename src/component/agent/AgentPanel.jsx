@@ -102,6 +102,8 @@ import {
   buildContextSummaryPrompt,
   buildContextSummaryRequestMessages,
   buildMergedContextSummary,
+  CONTEXT_SUMMARY_MAX_CHARS,
+  CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
   findContextSummaryCutIndex,
   getMessagesToSummarize,
   normalizeContextSummary,
@@ -156,7 +158,7 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
-import { textComplete } from "../../api/llm/providers/textComplete";
+import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import {
   mergeMcpToolLists,
   loadSkillsIndexFromSkillStation,
@@ -437,6 +439,7 @@ export default function AgentPanel() {
   const [modelMenuOpen, setModelMenuOpen] = useState(null);
   const [contextUsage, setContextUsage] = useState(null);
   const [contextSummary, setContextSummary] = useState(null);
+  const [contextCompaction, setContextCompaction] = useState(null);
   const [requestBodySize, setRequestBodySize] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
@@ -1129,6 +1132,7 @@ export default function AgentPanel() {
       runId: 0,
       pendingApproval: null,
       contextUsage: null,
+      contextCompaction: null,
       requestBodySize: null
     };
   }
@@ -1140,6 +1144,7 @@ export default function AgentPanel() {
       setLoading(!!next.loading);
       setPendingApproval(next.pendingApproval || null);
       setContextUsage(next.contextUsage || null);
+      setContextCompaction(next.contextCompaction || null);
       setRequestBodySize(next.requestBodySize || null);
       if (!next.loading && !next.pendingApproval && shouldFocusInputWhenReadyRef.current) {
         requestAnimationFrame(() => {
@@ -1781,6 +1786,7 @@ export default function AgentPanel() {
     const runtime = getSessionRuntime(id);
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
     setContextSummary(normalizedContextSummary);
+    setContextCompaction(runtime.contextCompaction || null);
     setRequestBodySize(runtime.requestBodySize || null);
     setLoading(!!runtime.loading);
     setPendingApproval(runtime.pendingApproval || null);
@@ -2606,31 +2612,54 @@ export default function AgentPanel() {
     if (cutIndex < 0 || messagesToSummarize.length === 0) return existingSummary;
 
     try {
+      const displayMessageIndex = Math.max(0, conversationMessages.length - 1);
+      setSessionRuntime(targetSessionId, {
+        contextCompaction: {
+          status: "compressing",
+          coveredMessageIndex: cutIndex,
+          displayMessageIndex
+        }
+      });
       toast("上下文较长，正在压缩早期历史...", { duration: 1800 });
       const prompt = buildContextSummaryPrompt({
         oldSummary: existingSummary?.summary || "",
         messages: messagesToSummarize
       });
-      const summaryText = await textComplete(config, [
+      let streamedSummaryLength = 0;
+      const summaryStream = streamTextComplete(config, [
         { role: "system", content: "你负责把长会话历史压缩成可继续执行任务的上下文摘要。" },
         { role: "user", content: prompt }
       ], {
+        onText: (_chunk, fullText) => {
+          streamedSummaryLength = fullText.length;
+          console.debug("[context-summary]", "streaming compact summary", {
+            chars: streamedSummaryLength
+          });
+        }
+      }, {
         sessionId: targetSessionId,
-        maxTokens: 1800,
+        maxTokens: CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
+        maxChars: CONTEXT_SUMMARY_MAX_CHARS,
         allowEmptyResponse: false
       });
+      setSessionRuntime(targetSessionId, { abort: summaryStream.abort, loading: true });
+      const summaryText = await summaryStream.promise;
       if (!isCurrentRun(targetSessionId, runId)) return existingSummary;
       const nextSummary = buildMergedContextSummary({
         previousSummary: existingSummary,
         newSummary: summaryText,
         coveredMessageIndex: cutIndex,
+        displayMessageIndex,
         model: config.model
       });
       const normalized = setSessionContextSummary(targetSessionId, nextSummary);
       await saveSessionMeta(targetSessionId, { contextSummary: normalized });
+      setSessionRuntime(targetSessionId, { contextCompaction: null });
       toast("已压缩早期上下文", { duration: 1600 });
       return normalized;
     } catch (error) {
+      setSessionRuntime(targetSessionId, { contextCompaction: null });
+      if (error?.name === "AbortError") return existingSummary;
       console.error("Failed to compact conversation context:", error);
       toast.error(`上下文压缩失败：${error.message || String(error)}`);
       return existingSummary;
@@ -3598,11 +3627,9 @@ export default function AgentPanel() {
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
     const existingSummary = getSessionContextSummary(currentSessionId);
-    const nextSummary = existingSummary && existingSummary.coveredMessageIndex < truncated.length
-      ? existingSummary
-      : null;
+    const nextSummary = clampContextSummaryForRewind(existingSummary, truncated.length);
     setSessionContextSummary(currentSessionId, nextSummary);
-    if (nextSummary !== existingSummary) {
+    if (JSON.stringify(nextSummary) !== JSON.stringify(existingSummary)) {
       void saveSessionMeta(currentSessionId, { contextSummary: nextSummary });
     }
     setSessionMessages(currentSessionId, truncated);
@@ -3624,6 +3651,17 @@ export default function AgentPanel() {
 
   function isSessionLoading(targetSessionId) {
     return !!getSessionRuntime(targetSessionId).loading;
+  }
+
+  function clampContextSummaryForRewind(summary, messageCount) {
+    if (!summary || summary.coveredMessageIndex >= messageCount || messageCount <= 0) return null;
+    const displayMessageIndex = Number(summary.displayMessageIndex ?? summary.coveredMessageIndex);
+    const nextDisplayMessageIndex = Number.isFinite(displayMessageIndex)
+      ? Math.min(Math.floor(displayMessageIndex), messageCount - 1)
+      : messageCount - 1;
+    return nextDisplayMessageIndex === summary.displayMessageIndex
+      ? summary
+      : { ...summary, displayMessageIndex: nextDisplayMessageIndex };
   }
 
   // ==================== Render ====================
@@ -3879,6 +3917,7 @@ export default function AgentPanel() {
                 sessionId={sessionId || ""}
                 messages={messages}
                 contextSummary={contextSummary}
+                contextCompaction={contextCompaction}
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
                 imageEditingEnabled={imageEditingEnabled}

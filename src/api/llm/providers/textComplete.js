@@ -3,6 +3,7 @@ import { resolveLlmRequestUrl } from "../core/endpoint";
 import { API_TYPES, normalizeApiType } from "../core/config";
 import { syncActiveModelFields } from "../core/modelProfiles";
 import { ensureSettingsMigrated } from "../../settings/migrations";
+import { streamChat } from "./streamChat";
 
 /**
  * Lightweight non-streaming, no-tools LLM text completion.
@@ -25,6 +26,64 @@ export async function textComplete(config, messages, options = {}) {
     return _openaiResponsesComplete(config, messages, options);
   }
   return _openaiComplete(config, messages, options);
+}
+
+export function streamTextComplete(config, messages, callbacks = {}, options = {}) {
+  let settled = false;
+  let fullText = "";
+  let abortStream = null;
+  let rejectPromise = null;
+  const maxChars = normalizeTextCompleteMaxChars(options.maxChars);
+
+  const promise = new Promise((resolve, reject) => {
+    rejectPromise = reject;
+    abortStream = streamChat(config, messages, {
+      onText: (chunk) => {
+        fullText += chunk;
+        if (maxChars && fullText.length > maxChars) {
+          fullText = truncateTextComplete(fullText, maxChars);
+          callbacks.onText?.(chunk, fullText);
+          if (!settled) {
+            settled = true;
+            abortStream?.();
+            resolve(fullText);
+          }
+          return;
+        }
+        callbacks.onText?.(chunk, fullText);
+      },
+      onDone: (message) => {
+        if (settled) return;
+        settled = true;
+        const finalText = fullText || extractOpenAITextContent(message?.content);
+        if (!finalText && options.allowEmptyResponse !== true) {
+          reject(new Error("Unexpected streaming text completion response shape"));
+          return;
+        }
+        resolve(finalText);
+      },
+      onError: (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      }
+    }, [], {
+      ...options,
+      includeBuiltins: false
+    });
+  });
+
+  return {
+    promise,
+    abort: () => {
+      if (settled) return;
+      settled = true;
+      abortStream?.();
+      const error = new Error("Streaming text completion aborted");
+      error.name = "AbortError";
+      rejectPromise?.(error);
+    }
+  };
 }
 
 const DEFAULT_ANTHROPIC_CACHE_CONTROL = { type: "ephemeral" };
@@ -191,6 +250,19 @@ function normalizeTextCompleteMaxTokens(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return fallback;
   return Math.min(8192, Math.max(1, Math.floor(number)));
+}
+
+function normalizeTextCompleteMaxChars(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return Math.floor(number);
+}
+
+function truncateTextComplete(value, maxChars) {
+  const suffix = "\n[输出已按长度上限截断]";
+  if (maxChars <= suffix.length) return Array.from(suffix).slice(0, maxChars).join("");
+  const maxTextLength = Math.max(0, maxChars - suffix.length);
+  return `${Array.from(String(value || "")).slice(0, maxTextLength).join("").trimEnd()}${suffix}`;
 }
 
 /**
