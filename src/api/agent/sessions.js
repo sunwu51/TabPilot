@@ -228,15 +228,28 @@ export async function loadHydratedSession(id) {
 /**
  * Load optional metadata for a specific session.
  * @param {string} id - session ID
- * @returns {Promise<{systemPrompt: string, plans: Array}>}
+ * @returns {Promise<{systemPrompt: string, plans: Array, nextImageRefIndex: number, contextSummary: object | null}>}
  */
 export async function loadSessionMeta(id) {
   const key = `session_${id}`;
-  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1 } });
+  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null } });
   return {
     systemPrompt: result[key]?.systemPrompt || "",
     plans: Array.isArray(result[key]?.plans) ? result[key].plans : [],
-    nextImageRefIndex: normalizeNextImageRefIndex(result[key]?.nextImageRefIndex)
+    nextImageRefIndex: normalizeNextImageRefIndex(result[key]?.nextImageRefIndex),
+    contextSummary: normalizeStoredContextSummary(result[key]?.contextSummary)
+  };
+}
+
+function normalizeStoredContextSummary(contextSummary) {
+  if (!contextSummary || typeof contextSummary !== "object") return null;
+  const summary = String(contextSummary.summary || "").trim();
+  const coveredMessageIndex = Number(contextSummary.coveredMessageIndex);
+  if (!summary || !Number.isFinite(coveredMessageIndex) || coveredMessageIndex < 0) return null;
+  return {
+    ...contextSummary,
+    summary,
+    coveredMessageIndex: Math.floor(coveredMessageIndex)
   };
 }
 
@@ -704,7 +717,7 @@ export async function resetSessionTitle(id, title = "新会话") {
 /**
  * Save optional metadata for a session without replacing messages.
  * @param {string} id - session ID
- * @param {{systemPrompt?: string, plans?: Array}} meta - partial session metadata
+ * @param {{systemPrompt?: string, plans?: Array, contextSummary?: object | null}} meta - partial session metadata
  */
 export async function saveSessionMeta(id, meta = {}) {
   const key = `session_${id}`;

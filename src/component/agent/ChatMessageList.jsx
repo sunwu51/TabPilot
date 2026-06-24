@@ -9,58 +9,66 @@ const ChatMessageList = memo(function ChatMessageList({
   messages = [],
   onRewindToUserMessage,
   searchState,
+  contextSummary,
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver,
   imageRefNavigator
 }) {
   const groups = useMemo(() => groupMessages(messages), [messages]);
+  const coveredMessageIndex = normalizeCoveredMessageIndex(contextSummary, messages.length);
 
   return (
     <>
       {groups.map((group, groupIndex) => {
+        const divider = group.endIndex === coveredMessageIndex
+          ? <ContextCompressedDivider key={`context-compressed-${coveredMessageIndex}`} />
+          : null;
         if (group.type === "tools") {
           return (
-            <CollapsedToolGroup
-              key={group.key || `tools-${groupIndex}`}
-              items={group.items}
-              toolCallCount={group.toolCallCount}
-              onRewindToUserMessage={onRewindToUserMessage}
-              sessionId={sessionId}
-              imageEditingEnabled={imageEditingEnabled}
-              onImageEditRequest={onImageEditRequest}
-              imageSrcResolver={imageSrcResolver}
-              imageRefNavigator={imageRefNavigator}
-            />
+            <FragmentWithDivider key={group.key || `tools-${groupIndex}`} divider={divider}>
+              <CollapsedToolGroup
+                items={group.items}
+                toolCallCount={group.toolCallCount}
+                onRewindToUserMessage={onRewindToUserMessage}
+                sessionId={sessionId}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
+                imageSrcResolver={imageSrcResolver}
+                imageRefNavigator={imageRefNavigator}
+              />
+            </FragmentWithDivider>
           );
         }
         if (group.type === "tool-sequence") {
           return (
-            <ToolMessageSequence
-              key={group.key || `tool-sequence-${groupIndex}`}
-              items={group.items}
+            <FragmentWithDivider key={group.key || `tool-sequence-${groupIndex}`} divider={divider}>
+              <ToolMessageSequence
+                items={group.items}
+                onRewindToUserMessage={onRewindToUserMessage}
+                sessionId={sessionId}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
+                imageSrcResolver={imageSrcResolver}
+                imageRefNavigator={imageRefNavigator}
+              />
+            </FragmentWithDivider>
+          );
+        }
+        return (
+          <FragmentWithDivider key={group.key || `msg-${group.index}`} divider={divider}>
+            <ChatMessage
+              msg={group.message}
+              messageIndex={group.index}
               onRewindToUserMessage={onRewindToUserMessage}
               sessionId={sessionId}
+              searchState={searchState}
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
               imageRefNavigator={imageRefNavigator}
             />
-          );
-        }
-        return (
-          <ChatMessage
-            key={group.key || `msg-${group.index}`}
-            msg={group.message}
-            messageIndex={group.index}
-            onRewindToUserMessage={onRewindToUserMessage}
-            sessionId={sessionId}
-            searchState={searchState}
-            imageEditingEnabled={imageEditingEnabled}
-            onImageEditRequest={onImageEditRequest}
-            imageSrcResolver={imageSrcResolver}
-            imageRefNavigator={imageRefNavigator}
-          />
+          </FragmentWithDivider>
         );
       })}
     </>
@@ -69,12 +77,39 @@ const ChatMessageList = memo(function ChatMessageList({
   prevProps.messages === nextProps.messages &&
   prevProps.sessionId === nextProps.sessionId &&
   prevProps.searchState === nextProps.searchState &&
+  prevProps.contextSummary === nextProps.contextSummary &&
   prevProps.imageEditingEnabled === nextProps.imageEditingEnabled &&
   prevProps.imageSrcResolver === nextProps.imageSrcResolver &&
   prevProps.imageRefNavigator === nextProps.imageRefNavigator
 );
 
 export default ChatMessageList;
+
+/* eslint-disable react/prop-types */
+function FragmentWithDivider({ children, divider }) {
+  return (
+    <>
+      {children}
+      {divider}
+    </>
+  );
+}
+
+function ContextCompressedDivider() {
+  return (
+    <div className="context-compressed-divider" title="后续请求将使用摘要代替以上历史">
+      <span className="context-compressed-line" />
+      <span className="context-compressed-text">以上消息已经被压缩</span>
+      <span className="context-compressed-line" />
+    </div>
+  );
+}
+
+function normalizeCoveredMessageIndex(contextSummary, messageCount) {
+  const index = Number(contextSummary?.coveredMessageIndex);
+  if (!Number.isFinite(index) || index < 0 || index >= messageCount) return -1;
+  return Math.floor(index);
+}
 
 /* eslint-disable react/prop-types */
 function CollapsedToolGroup({
@@ -225,7 +260,7 @@ function groupMessages(messages) {
   while (index < messages.length) {
     const message = messages[index];
     if (!isToolLikeMessage(message)) {
-      result.push({ type: "message", message, index, key: `msg-${index}` });
+      result.push({ type: "message", message, index, endIndex: index, key: `msg-${index}` });
       index += 1;
       continue;
     }
@@ -252,6 +287,7 @@ function groupMessages(messages) {
         type: "tools",
         items,
         toolCallCount,
+        endIndex: trailingThinking?.remainingMessage ? trailingThinking.messageIndex - 1 : index - 1,
         key: `tools-${start}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
       });
       if (trailingThinking?.remainingMessage) {
@@ -259,6 +295,7 @@ function groupMessages(messages) {
           type: "message",
           message: trailingThinking.remainingMessage,
           index: trailingThinking.messageIndex,
+          endIndex: trailingThinking.messageIndex,
           key: `msg-${trailingThinking.messageIndex}-without-thinking`
         });
       }
@@ -266,6 +303,7 @@ function groupMessages(messages) {
       result.push({
         type: "tool-sequence",
         items,
+        endIndex: index - 1,
         key: `tool-sequence-${start}-${group.length}-${toolCallCount}`
       });
     }

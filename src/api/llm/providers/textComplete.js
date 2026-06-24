@@ -19,7 +19,7 @@ export async function textComplete(config, messages, options = {}) {
 
   const apiType = normalizeApiType(config.apiType);
   if (apiType === API_TYPES.ANTHROPIC) {
-    return _anthropicComplete(config, messages);
+    return _anthropicComplete(config, messages, options);
   }
   if (apiType === API_TYPES.OPENAI_RESPONSES) {
     return _openaiResponsesComplete(config, messages, options);
@@ -36,6 +36,7 @@ function buildOpenAICacheFields(options = {}) {
 
 async function _openaiComplete(config, messages, options = {}) {
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_CHAT_COMPLETIONS, config.baseUrl);
+  const maxTokens = normalizeTextCompleteMaxTokens(options.maxTokens, 600);
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -46,7 +47,7 @@ async function _openaiComplete(config, messages, options = {}) {
       model: config.model,
       messages,
       stream: false,
-      max_tokens: 600,
+      max_tokens: maxTokens,
       enable_thinking: false,
       ...buildOpenAICacheFields(options)
     }),
@@ -97,6 +98,7 @@ function extractTextBlockText(block) {
 
 async function _openaiResponsesComplete(config, messages, options = {}) {
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
+  const maxTokens = normalizeTextCompleteMaxTokens(options.maxTokens, 600);
   const res = await fetch(url, {
     method: "POST",
     headers: {
@@ -110,7 +112,7 @@ async function _openaiResponsesComplete(config, messages, options = {}) {
         content: [{ type: "input_text", text: typeof msg.content === "string" ? msg.content : String(msg.content ?? "") }]
       })),
       stream: false,
-      max_output_tokens: 600,
+      max_output_tokens: maxTokens,
       ...buildOpenAICacheFields(options)
     }),
   });
@@ -141,7 +143,7 @@ function extractOpenAIResponsesTextContent(response) {
   return "";
 }
 
-async function _anthropicComplete(config, messages) {
+async function _anthropicComplete(config, messages, options = {}) {
   let systemPrompt = "";
   const apiMessages = [];
   for (const msg of messages) {
@@ -157,7 +159,7 @@ async function _anthropicComplete(config, messages) {
     model: config.model,
     cache_control: DEFAULT_ANTHROPIC_CACHE_CONTROL,
     messages: apiMessages,
-    max_tokens: 600,
+    max_tokens: normalizeTextCompleteMaxTokens(options.maxTokens, 600),
   };
   if (systemPrompt) body.system = systemPrompt;
 
@@ -183,6 +185,12 @@ async function _anthropicComplete(config, messages) {
     throw new Error("Unexpected Anthropic response shape");
   }
   return block.text.trim();
+}
+
+function normalizeTextCompleteMaxTokens(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return Math.min(8192, Math.max(1, Math.floor(number)));
 }
 
 /**

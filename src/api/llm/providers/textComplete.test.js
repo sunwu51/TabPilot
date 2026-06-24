@@ -79,4 +79,25 @@ describe("textComplete", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("passes custom maxTokens to OpenAI chat completion requests", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "done" } }]
+      })
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await textComplete(
+      { apiType: "openai-chat-completions", baseUrl: "https://api.example.com/v1", apiKey: "sk-test", model: "gpt-test" },
+      [{ role: "user", content: "hello" }],
+      { maxTokens: 2048 }
+    );
+
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload).toMatchObject({ max_tokens: 2048 });
+
+    vi.unstubAllGlobals();
+  });
 });

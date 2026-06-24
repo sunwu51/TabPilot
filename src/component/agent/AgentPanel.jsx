@@ -99,6 +99,15 @@ import {
   formatRequestBodySizeM
 } from "./panel/utils/llmStats";
 import {
+  buildContextSummaryPrompt,
+  buildContextSummaryRequestMessages,
+  buildMergedContextSummary,
+  findContextSummaryCutIndex,
+  getMessagesToSummarize,
+  normalizeContextSummary,
+  shouldAutoCompactContext
+} from "./panel/utils/contextSummary";
+import {
   SLASH_COMMANDS,
   shouldOpenSlashCommand,
   filterSlashCommands,
@@ -147,6 +156,7 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
+import { textComplete } from "../../api/llm/providers/textComplete";
 import {
   mergeMcpToolLists,
   loadSkillsIndexFromSkillStation,
@@ -426,6 +436,7 @@ export default function AgentPanel() {
   });
   const [modelMenuOpen, setModelMenuOpen] = useState(null);
   const [contextUsage, setContextUsage] = useState(null);
+  const [contextSummary, setContextSummary] = useState(null);
   const [requestBodySize, setRequestBodySize] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
@@ -472,6 +483,7 @@ export default function AgentPanel() {
   const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
+  const sessionContextSummaryRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
   const sessionKeywordsRefreshingRef = useRef(false);
   const [pendingApproval, setPendingApproval] = useState(null);
@@ -1003,6 +1015,7 @@ export default function AgentPanel() {
     sessionMessagesRef.current.delete(deletedSessionId);
     clearSessionImageState(deletedSessionId);
     sessionPlansRef.current.delete(deletedSessionId);
+    sessionContextSummaryRef.current.delete(deletedSessionId);
     sessionRuntimeRef.current.delete(deletedSessionId);
 
     const windowId = await getCurrentWindowId();
@@ -1034,6 +1047,7 @@ export default function AgentPanel() {
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
+    setContextSummary(null);
     setRequestBodySize(null);
     setMessages([]);
     setLoading(false);
@@ -1144,6 +1158,23 @@ export default function AgentPanel() {
 
   function getSessionMessages(targetSessionId) {
     return sessionMessagesRef.current.get(targetSessionId) || [];
+  }
+
+  function getSessionContextSummary(targetSessionId) {
+    return sessionContextSummaryRef.current.get(targetSessionId) || null;
+  }
+
+  function setSessionContextSummary(targetSessionId, value) {
+    const normalized = normalizeContextSummary(value);
+    if (normalized) {
+      sessionContextSummaryRef.current.set(targetSessionId, normalized);
+    } else {
+      sessionContextSummaryRef.current.delete(targetSessionId);
+    }
+    if (activeSessionIdRef.current === targetSessionId) {
+      setContextSummary(normalized);
+    }
+    return normalized;
   }
 
   function getSessionNextImageRefIndex(targetSessionId) {
@@ -1734,6 +1765,12 @@ export default function AgentPanel() {
     setSessionMessages(id, msgs);
     perf.mark("after-setSessionMessages");
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
+    const normalizedContextSummary = normalizeContextSummary(meta.contextSummary);
+    if (normalizedContextSummary) {
+      sessionContextSummaryRef.current.set(id, normalizedContextSummary);
+    } else {
+      sessionContextSummaryRef.current.delete(id);
+    }
     await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
@@ -1743,6 +1780,7 @@ export default function AgentPanel() {
     setShowJumpToBottom(false);
     const runtime = getSessionRuntime(id);
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+    setContextSummary(normalizedContextSummary);
     setRequestBodySize(runtime.requestBodySize || null);
     setLoading(!!runtime.loading);
     setPendingApproval(runtime.pendingApproval || null);
@@ -2130,6 +2168,7 @@ export default function AgentPanel() {
     setSessionNextImageRefIndex(id, 1);
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
+    setSessionContextSummary(id, null);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
     await saveActiveSessionForWindow(id);
@@ -2140,6 +2179,7 @@ export default function AgentPanel() {
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
+    setContextSummary(null);
     setRequestBodySize(null);
     setMessages([]);
     setStreamingContent(null);
@@ -2202,6 +2242,7 @@ export default function AgentPanel() {
       sessionMessagesRef.current.delete(id);
       clearSessionImageState(id);
       sessionPlansRef.current.delete(id);
+      sessionContextSummaryRef.current.delete(id);
       sessionRuntimeRef.current.delete(id);
       await deleteSession(id);
       const updated = await listSessions();
@@ -2538,14 +2579,78 @@ export default function AgentPanel() {
     }
   }
 
+  async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId) {
+    const existingSummary = getSessionContextSummary(targetSessionId);
+    const latestUsage = getSessionRuntime(targetSessionId).contextUsage ||
+      getLatestContextUsageFromMessages(conversationMessages, config);
+    const cutIndex = findContextSummaryCutIndex(conversationMessages);
+    const shouldCompact = shouldAutoCompactContext({
+      contextUsage: latestUsage,
+      limitTokens: config.modelContextLimitTokens,
+      messages: conversationMessages,
+      contextSummary: existingSummary
+    });
+    console.debug("[context-summary]", "auto compact check", {
+      shouldCompact,
+      messageCount: conversationMessages.length,
+      usageTokens: latestUsage?.tokens ?? null,
+      limitTokens: config.modelContextLimitTokens,
+      cutIndex,
+      existingCoveredMessageIndex: existingSummary?.coveredMessageIndex ?? null
+    });
+    if (!shouldCompact) {
+      return existingSummary;
+    }
+
+    const messagesToSummarize = getMessagesToSummarize(conversationMessages, existingSummary, cutIndex);
+    if (cutIndex < 0 || messagesToSummarize.length === 0) return existingSummary;
+
+    try {
+      toast("上下文较长，正在压缩早期历史...", { duration: 1800 });
+      const prompt = buildContextSummaryPrompt({
+        oldSummary: existingSummary?.summary || "",
+        messages: messagesToSummarize
+      });
+      const summaryText = await textComplete(config, [
+        { role: "system", content: "你负责把长会话历史压缩成可继续执行任务的上下文摘要。" },
+        { role: "user", content: prompt }
+      ], {
+        sessionId: targetSessionId,
+        maxTokens: 1800,
+        allowEmptyResponse: false
+      });
+      if (!isCurrentRun(targetSessionId, runId)) return existingSummary;
+      const nextSummary = buildMergedContextSummary({
+        previousSummary: existingSummary,
+        newSummary: summaryText,
+        coveredMessageIndex: cutIndex,
+        model: config.model
+      });
+      const normalized = setSessionContextSummary(targetSessionId, nextSummary);
+      await saveSessionMeta(targetSessionId, { contextSummary: normalized });
+      toast("已压缩早期上下文", { duration: 1600 });
+      return normalized;
+    } catch (error) {
+      console.error("Failed to compact conversation context:", error);
+      toast.error(`上下文压缩失败：${error.message || String(error)}`);
+      return existingSummary;
+    }
+  }
+
   async function runConversation(config, targetSessionId, conversationMessages, runId) {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt(config);
     await loadSessionImagesIntoCache(targetSessionId);
     if (!isCurrentRun(targetSessionId, runId)) return;
+    const activeContextSummary = await maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId);
+    if (!isCurrentRun(targetSessionId, runId)) return;
+    const compactedConversationMessages = buildContextSummaryRequestMessages({
+      contextSummary: activeContextSummary,
+      messages: conversationMessages
+    });
     const requestConversationMessages = hydrateStoredImageRefsInMessages(
       targetSessionId,
-      attachKnownImageRefsToMessages(targetSessionId, conversationMessages)
+      attachKnownImageRefsToMessages(targetSessionId, compactedConversationMessages)
     );
     const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
@@ -3027,6 +3132,7 @@ export default function AgentPanel() {
     stopSessionGeneration(currentSessionId);
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
+    setSessionContextSummary(currentSessionId, null);
     clearSessionImageState(currentSessionId);
     setSessionMessages(currentSessionId, []);
     sessionPlansRef.current.set(currentSessionId, []);
@@ -3046,12 +3152,12 @@ export default function AgentPanel() {
       const preservedTitle = String(sessionTitle || "").trim() || "新会话";
       setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
       await saveSession(currentSessionId, [], preservedTitle, { nextImageRefIndex: 1 });
-      await saveSessionMeta(currentSessionId, { plans: [] });
+      await saveSessionMeta(currentSessionId, { plans: [], contextSummary: null });
       await clearSessionKeywords(currentSessionId);
     } else {
       setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
       await saveSession(currentSessionId, [], "新会话", { nextImageRefIndex: 1 });
-      await saveSessionMeta(currentSessionId, { plans: [] });
+      await saveSessionMeta(currentSessionId, { plans: [], contextSummary: null });
       await clearSessionKeywords(currentSessionId);
     }
     setSessions(await listSessions());
@@ -3491,6 +3597,14 @@ export default function AgentPanel() {
     const truncated = msgs.slice(0, index);
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
+    const existingSummary = getSessionContextSummary(currentSessionId);
+    const nextSummary = existingSummary && existingSummary.coveredMessageIndex < truncated.length
+      ? existingSummary
+      : null;
+    setSessionContextSummary(currentSessionId, nextSummary);
+    if (nextSummary !== existingSummary) {
+      void saveSessionMeta(currentSessionId, { contextSummary: nextSummary });
+    }
     setSessionMessages(currentSessionId, truncated);
     setInput(text);
     setPendingAttachments(restoredAttachments);
@@ -3764,6 +3878,7 @@ export default function AgentPanel() {
               <ChatMessageList
                 sessionId={sessionId || ""}
                 messages={messages}
+                contextSummary={contextSummary}
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
                 imageEditingEnabled={imageEditingEnabled}
