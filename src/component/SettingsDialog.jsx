@@ -254,6 +254,11 @@ function SettingsDialogBody() {
   }
 
   async function handleConfirm() {
+    if (hasPendingModelDraft()) {
+      const shouldDiscardDraft = window.confirm(buildPendingModelDraftMessage());
+      if (!shouldDiscardDraft) return;
+    }
+
     setSaving(true);
     try {
       const normalizedWsServerUrl = normalizeWsServerUrlInput(wsServerUrl);
@@ -295,6 +300,25 @@ function SettingsDialogBody() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function hasPendingModelDraft() {
+    return hasPendingLlmModelDraft() || hasPendingImageModelDraft();
+  }
+
+  function hasPendingLlmModelDraft() {
+    return llmModelFormOpen && hasAnyTextValue(baseUrl, apiKey, model);
+  }
+
+  function hasPendingImageModelDraft() {
+    return imageModelFormOpen && hasAnyTextValue(imageBaseUrl, imageApiKey, imageModel);
+  }
+
+  function buildPendingModelDraftMessage() {
+    const draftNames = [];
+    if (hasPendingLlmModelDraft()) draftNames.push("LLM 模型");
+    if (hasPendingImageModelDraft()) draftNames.push("图片模型");
+    return `有未保存的${draftNames.join("和")}草稿，确认要放弃这些草稿并保存其它设置吗？`;
   }
 
   function handleSupportsImageInputChange(checked) {
@@ -1068,6 +1092,10 @@ function normalizeWsServerUrlInput(value) {
   } catch {
     return null;
   }
+}
+
+function hasAnyTextValue(...values) {
+  return values.some(value => String(value || "").trim().length > 0);
 }
 
 function buildTtsVoiceOptions(voices) {
