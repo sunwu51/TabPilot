@@ -132,6 +132,13 @@ export function resetChromeMock(initialStorage = {}) {
       onCompleted: { addListener: vi.fn() },
       onCommitted: { addListener: vi.fn() },
     },
+    webRequest: {
+      onBeforeRequest: { addListener: vi.fn(), removeListener: vi.fn() },
+      onBeforeSendHeaders: { addListener: vi.fn(), removeListener: vi.fn() },
+      onHeadersReceived: { addListener: vi.fn(), removeListener: vi.fn() },
+      onCompleted: { addListener: vi.fn(), removeListener: vi.fn() },
+      onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
     history: {
       search: makeAsyncCallback(() => []),
     },

@@ -146,6 +146,55 @@ describe("built-in tool execution", () => {
     });
   });
 
+  it("routes network capture tools through the service worker manager", async () => {
+    chrome.runtime.sendMessage
+      .mockImplementationOnce((message, callback) => callback({
+        success: true,
+        captureId: "cap_1",
+        expiresAt: "2026-07-08T00:05:00.000Z"
+      }))
+      .mockImplementationOnce((message, callback) => callback({
+        success: true,
+        captureId: "cap_1",
+        count: 1,
+        requests: [{ uuid: "net_1", endpoint: "GET https://example.com/api" }]
+      }))
+      .mockImplementationOnce((message, callback) => callback({
+        success: true,
+        captureId: "cap_1",
+        count: 1,
+        requests: [{ uuid: "net_1", request: { url: "https://example.com/api" } }]
+      }));
+
+    await expect(executeTool("network_capture_start", {
+      scope: "active_tab",
+      filters: { pathIncludes: ["/api"], contentTypes: ["application/json"] }
+    })).resolves.toMatchObject({ success: true, captureId: "cap_1" });
+    await expect(executeTool("network_capture_stop", { captureId: "cap_1" }))
+      .resolves.toMatchObject({ success: true, count: 1 });
+    await expect(executeTool("network_capture_get_details", { captureId: "cap_1", uuids: ["net_1"] }))
+      .resolves.toMatchObject({ success: true, count: 1 });
+
+    expect(chrome.runtime.sendMessage.mock.calls[0][0]).toEqual({
+      type: "network_capture",
+      action: "start",
+      payload: {
+        scope: "active_tab",
+        filters: { pathIncludes: ["/api"], contentTypes: ["application/json"] }
+      }
+    });
+    expect(chrome.runtime.sendMessage.mock.calls[1][0]).toEqual({
+      type: "network_capture",
+      action: "stop",
+      payload: { captureId: "cap_1" }
+    });
+    expect(chrome.runtime.sendMessage.mock.calls[2][0]).toEqual({
+      type: "network_capture",
+      action: "get_details",
+      payload: { captureId: "cap_1", uuids: ["net_1"] }
+    });
+  });
+
   it("delegates download execution to download helper", async () => {
     const { triggerBrowserDownload } = await import("./builtins/downloadHelper");
 

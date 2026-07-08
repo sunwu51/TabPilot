@@ -24,7 +24,8 @@
     "sidePanel",
     "history",
     "storage",
-    "scripting"
+    "scripting",
+    "webRequest"
   ],
   "optional_permissions": [
     "downloads"

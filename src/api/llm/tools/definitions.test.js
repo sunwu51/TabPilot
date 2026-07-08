@@ -148,6 +148,20 @@ describe("llm tool definitions", () => {
     expect(names).not.toContain("postdog_export");
   });
 
+  it("exposes network capture tools by default", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES);
+
+    expect(names).toContain("network_capture_start");
+    expect(names).toContain("network_capture_stop");
+    expect(names).toContain("network_capture_get_details");
+
+    const startTool = getTools(API_TYPES.OPENAI_RESPONSES)
+      .find(tool => tool.name === "network_capture_start");
+    expect(startTool.parameters.properties.scope.enum).toEqual(["active_tab", "all"]);
+    expect(startTool.parameters.properties.scope.description).toContain("Defaults to active_tab");
+    expect(startTool.parameters.properties.filters.properties.contentTypes.description).toContain("Content-Type");
+  });
+
   it("describes image_model_id as a configured image profile selector", () => {
     const imageGen = getTools(API_TYPES.OPENAI_RESPONSES, [], { imageToolsEnabled: true })
       .find(tool => tool.name === "image_gen");
