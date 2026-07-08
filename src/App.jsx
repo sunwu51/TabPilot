@@ -18,13 +18,11 @@ import SettingsDialog from "./component/SettingsDialog";
  */
 function App() {
   const [bridgeEnabled, setBridgeEnabled] = useState(false);
-  const [betaFeaturesEnabled, setBetaFeaturesEnabled] = useState(true);
   const bridgeEnabledRef = useRef(false);
 
   useEffect(() => {
-    chrome.storage.local.get({ bridgeEnabled: false, betaFeaturesEnabled: true }, (res) => {
+    chrome.storage.local.get({ bridgeEnabled: false }, (res) => {
       setBridgeEnabled(!!res.bridgeEnabled);
-      setBetaFeaturesEnabled(res.betaFeaturesEnabled !== false);
       bridgeEnabledRef.current = !!res.bridgeEnabled;
     });
     const handleChange = (changes) => {
@@ -36,9 +34,6 @@ function App() {
           chrome.runtime.sendMessage({ type: "wsbridge", action: "disconnect" });
         }
         bridgeEnabledRef.current = next;
-      }
-      if (changes.betaFeaturesEnabled) {
-        setBetaFeaturesEnabled(changes.betaFeaturesEnabled.newValue !== false);
       }
     };
     chrome.storage.onChanged.addListener(handleChange);
@@ -73,7 +68,7 @@ function App() {
         <Search />
         <Group />
         <Workspace />
-        {betaFeaturesEnabled && <Macro />}
+        <Macro />
       </div>
     </TabsItem>,
     <TabsItem key="agent" title="小助手" className="agent-tab-panel">

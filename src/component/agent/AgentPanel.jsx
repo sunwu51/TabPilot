@@ -28,11 +28,14 @@ import {
   createSession,
   loadSession,
   loadSessionImageStore,
+  hydrateSessionMessages,
   loadSessionMeta,
+  loadSessionQueuedMessages,
   loadLastActiveSessionId,
   loadLastActiveSessionIdForWindow,
   saveSession,
   saveSessionMeta,
+  saveSessionQueuedMessages,
   clearSessionKeywords,
   saveLastActiveSessionId,
   saveLastActiveSessionIdForWindow,
@@ -99,6 +102,17 @@ import {
   formatRequestBodySizeM
 } from "./panel/utils/llmStats";
 import {
+  buildContextSummaryPrompt,
+  buildContextSummaryRequestMessages,
+  buildMergedContextSummary,
+  CONTEXT_SUMMARY_MAX_CHARS,
+  CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
+  findContextSummaryCutIndex,
+  getMessagesToSummarize,
+  normalizeContextSummary,
+  shouldAutoCompactContext
+} from "./panel/utils/contextSummary";
+import {
   SLASH_COMMANDS,
   shouldOpenSlashCommand,
   filterSlashCommands,
@@ -147,6 +161,7 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
+import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import {
   mergeMcpToolLists,
   loadSkillsIndexFromSkillStation,
@@ -237,7 +252,7 @@ function buildLlmConfigInfo(llmConfig = {}) {
     reasoningEffort: normalizeReasoningEffort(syncedConfig.reasoningEffort),
     omitThinkingFromRequests: syncedConfig.omitThinkingFromRequests === true,
     imageApiProtocol: normalizeImageApiProtocol(syncedConfig.imageApiProtocol),
-    imageModel: syncedConfig.imageModel || DEFAULT_IMAGE_MODEL,
+    imageModel: syncedConfig.imageModel || "",
     imageToolsEnabled: isImageApiConfigured(syncedConfig),
     llmModels: llmProfiles.profiles,
     activeLlmModelId: llmProfiles.activeId,
@@ -274,6 +289,20 @@ function buildRewindRestoredAttachments(target) {
   const restoredAttachments = [];
   const seenImageSources = new Set();
 
+  function addImageAttachment(dataUrl, options = {}) {
+    const source = normalizeImageRefSource(dataUrl);
+    if (!source || seenImageSources.has(source)) return;
+    seenImageSources.add(source);
+    restoredAttachments.push({
+      id: createRestoredAttachmentId(),
+      type: "image",
+      dataUrl: source,
+      ...(options.imageRole ? { imageRole: options.imageRole } : {}),
+      ...(options.originalRef ? { originalRef: options.originalRef } : {}),
+      fileName: options.fileName || "image"
+    });
+  }
+
   if (Array.isArray(target?.content)) {
     for (const block of target.content) {
       if (block.type === "file") {
@@ -285,13 +314,7 @@ function buildRewindRestoredAttachments(target) {
         });
       } else if (block.type === "image" && block.source?.media_type && block.source?.data) {
         const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
-        seenImageSources.add(dataUrl);
-        restoredAttachments.push({
-          id: createRestoredAttachmentId(),
-          type: "image",
-          dataUrl,
-          fileName: "image"
-        });
+        addImageAttachment(dataUrl);
       }
     }
   }
@@ -305,11 +328,9 @@ function buildRewindRestoredAttachments(target) {
     ...normalizeMessageImageRefs(target?.imageRefs),
     ...normalizeImageEditPreviewImages(target?.imageEditMeta?.images)
   ]
-    .filter(item => ["edit_image", "edit_reference", "edit_mask"].includes(item.role))
     .filter(item => {
-      if (seenImageSources.has(item.dataUrl)) return false;
-      seenImageSources.add(item.dataUrl);
-      return true;
+      const source = normalizeImageRefSource(item.dataUrl);
+      return source && !seenImageSources.has(source);
     })
     .sort((a, b) => {
       const priorityDiff = (rolePriority[a.role] ?? 99) - (rolePriority[b.role] ?? 99);
@@ -318,10 +339,7 @@ function buildRewindRestoredAttachments(target) {
     });
 
   for (const item of supplementalImageRefs) {
-    restoredAttachments.push({
-      id: createRestoredAttachmentId(),
-      type: "image",
-      dataUrl: item.dataUrl,
+    addImageAttachment(item.dataUrl, {
       imageRole: item.role,
       originalRef: item.ref,
       fileName:
@@ -329,7 +347,9 @@ function buildRewindRestoredAttachments(target) {
           ? "edit-image"
           : item.role === "edit_reference"
             ? "edit-reference"
-            : "edit-mask"
+            : item.role === "edit_mask"
+              ? "edit-mask"
+              : "image"
     });
   }
 
@@ -417,7 +437,7 @@ export default function AgentPanel() {
     reasoningEffort: "default",
     omitThinkingFromRequests: false,
     imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
-    imageModel: DEFAULT_IMAGE_MODEL,
+    imageModel: "",
     imageToolsEnabled: false,
     llmModels: [],
     activeLlmModelId: "",
@@ -426,6 +446,8 @@ export default function AgentPanel() {
   });
   const [modelMenuOpen, setModelMenuOpen] = useState(null);
   const [contextUsage, setContextUsage] = useState(null);
+  const [contextSummary, setContextSummary] = useState(null);
+  const [contextCompaction, setContextCompaction] = useState(null);
   const [requestBodySize, setRequestBodySize] = useState(null);
   const [latestPlan, setLatestPlan] = useState(null);
   const [planCollapsed, setPlanCollapsed] = useState(false);
@@ -449,6 +471,7 @@ export default function AgentPanel() {
   const [tabMentionCandidates, setTabMentionCandidates] = useState([]);
   const [selectedMentionTabs, setSelectedMentionTabs] = useState([]);
   const [selectedMentionSkills, setSelectedMentionSkills] = useState([]);
+  const [deletingSessionIds, setDeletingSessionIds] = useState(() => new Set());
   const messagesScrollerRef = useRef(null);
   const messagesContentRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -460,6 +483,7 @@ export default function AgentPanel() {
   const inputResizeDragRef = useRef(null);
   const historyRef = useRef(null);
   const activeSessionIdRef = useRef(null);
+  const deletingSessionIdsRef = useRef(new Set());
   const currentWindowIdRef = useRef(null);
   const sessionLockPortRef = useRef(null);
   const defaultNewSessionSystemPromptRef = useRef({ sessionId: "", systemPrompt: "" });
@@ -470,7 +494,10 @@ export default function AgentPanel() {
   const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
+  const sessionContextSummaryRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
+  const sessionDraftsRef = useRef(new Map());
+  const sessionQueuedMessagesRef = useRef(new Map());
   const sessionKeywordsRefreshingRef = useRef(false);
   const [pendingApproval, setPendingApproval] = useState(null);
   const approvalResolverRef = useRef(new Map());
@@ -479,6 +506,7 @@ export default function AgentPanel() {
   const latestPlanStatusRef = useRef(null);
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [queuedMessages, setQueuedMessages] = useState([]);
   const [imageEditRequest, setImageEditRequest] = useState(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   // eslint-disable-next-line no-unused-vars
@@ -718,10 +746,11 @@ export default function AgentPanel() {
     }
 
     const intervalId = setInterval(() => {
-      const currentSessionId = activeSessionIdRef.current;
       const currentWindowId = currentWindowIdRef.current;
-      if (currentSessionId && currentWindowId) {
-        void refreshSessionLock(currentSessionId, currentWindowId);
+      if (currentWindowId) {
+        for (const lockedSessionId of getLocallyHeldSessionLockIds()) {
+          void refreshSessionLock(lockedSessionId, currentWindowId);
+        }
       }
     }, SESSION_LOCK_HEARTBEAT_MS);
     return () => {
@@ -800,12 +829,47 @@ export default function AgentPanel() {
           void handleActiveSessionDeletedExternally(nextSessions);
         }
       }
+      for (const [key, change] of Object.entries(changes)) {
+        const changedSessionId = getSessionIdFromStorageKey(key);
+        if (!changedSessionId) continue;
+        const nextValue = change.newValue || {};
+        const nextQueuedMessages = Array.isArray(nextValue.queuedMessages) ? nextValue.queuedMessages : [];
+        setSessionQueuedMessages(changedSessionId, nextQueuedMessages);
+        if (getSessionRuntime(changedSessionId).loading) continue;
+        if (activeSessionIdRef.current === changedSessionId) {
+          setSessionMessages(changedSessionId, Array.isArray(nextValue.messages) ? nextValue.messages : []);
+          setContextSummary(normalizeContextSummary(nextValue.contextSummary));
+          setSessionSystemPrompt(nextValue.systemPrompt || "");
+          sessionPlansRef.current.set(changedSessionId, normalizeSessionPlans(nextValue.plans));
+          applyLatestPlanFromPlans(nextValue.plans || [], { preserveCollapse: true });
+        } else {
+          sessionMessagesRef.current.delete(changedSessionId);
+        }
+      }
     }
 
     chrome.storage?.onChanged?.addListener(handleStorageChanged);
     return () => chrome.storage?.onChanged?.removeListener(handleStorageChanged);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function getLocallyHeldSessionLockIds() {
+    const ids = new Set();
+    if (activeSessionIdRef.current) ids.add(activeSessionIdRef.current);
+    for (const [targetSessionId, runtime] of sessionRuntimeRef.current.entries()) {
+      if (runtime?.loading || runtime?.pendingApproval) ids.add(targetSessionId);
+    }
+    for (const [targetSessionId, items] of sessionQueuedMessagesRef.current.entries()) {
+      if (Array.isArray(items) && items.length > 0) ids.add(targetSessionId);
+    }
+    return ids;
+  }
+
+  function getSessionIdFromStorageKey(key) {
+    const raw = String(key || "");
+    if (!raw.startsWith("session_") || raw.endsWith("_images")) return "";
+    return raw.slice("session_".length);
+  }
 
   /** Close history dropdown when clicking outside */
   useEffect(() => {
@@ -1001,6 +1065,7 @@ export default function AgentPanel() {
     sessionMessagesRef.current.delete(deletedSessionId);
     clearSessionImageState(deletedSessionId);
     sessionPlansRef.current.delete(deletedSessionId);
+    sessionContextSummaryRef.current.delete(deletedSessionId);
     sessionRuntimeRef.current.delete(deletedSessionId);
 
     const windowId = await getCurrentWindowId();
@@ -1032,6 +1097,7 @@ export default function AgentPanel() {
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
+    setContextSummary(null);
     setRequestBodySize(null);
     setMessages([]);
     setLoading(false);
@@ -1113,6 +1179,7 @@ export default function AgentPanel() {
       runId: 0,
       pendingApproval: null,
       contextUsage: null,
+      contextCompaction: null,
       requestBodySize: null
     };
   }
@@ -1124,6 +1191,7 @@ export default function AgentPanel() {
       setLoading(!!next.loading);
       setPendingApproval(next.pendingApproval || null);
       setContextUsage(next.contextUsage || null);
+      setContextCompaction(next.contextCompaction || null);
       setRequestBodySize(next.requestBodySize || null);
       if (!next.loading && !next.pendingApproval && shouldFocusInputWhenReadyRef.current) {
         requestAnimationFrame(() => {
@@ -1142,6 +1210,86 @@ export default function AgentPanel() {
 
   function getSessionMessages(targetSessionId) {
     return sessionMessagesRef.current.get(targetSessionId) || [];
+  }
+
+  function getSessionQueuedMessages(targetSessionId) {
+    return sessionQueuedMessagesRef.current.get(targetSessionId) || [];
+  }
+
+  function setSessionQueuedMessages(targetSessionId, items = []) {
+    const nextItems = Array.isArray(items) ? items : [];
+    if (nextItems.length > 0) {
+      sessionQueuedMessagesRef.current.set(targetSessionId, nextItems);
+    } else {
+      sessionQueuedMessagesRef.current.delete(targetSessionId);
+    }
+    if (activeSessionIdRef.current === targetSessionId) {
+      setQueuedMessages(nextItems);
+    }
+    return nextItems;
+  }
+
+  function getCurrentComposerDraft() {
+    return {
+      text: input,
+      attachments: pendingAttachments,
+      selectedTabs: selectedMentionTabs,
+      selectedSkills: selectedMentionSkills
+    };
+  }
+
+  function saveComposerDraft(targetSessionId) {
+    if (!targetSessionId) return;
+    const draft = getCurrentComposerDraft();
+    const hasDraft = !!draft.text ||
+      draft.attachments.length > 0 ||
+      draft.selectedTabs.length > 0 ||
+      draft.selectedSkills.length > 0;
+    if (hasDraft) {
+      sessionDraftsRef.current.set(targetSessionId, draft);
+    } else {
+      sessionDraftsRef.current.delete(targetSessionId);
+    }
+  }
+
+  function restoreComposerDraft(targetSessionId) {
+    const draft = sessionDraftsRef.current.get(targetSessionId) || {};
+    setInput(draft.text || "");
+    setPendingAttachments(Array.isArray(draft.attachments) ? draft.attachments : []);
+    setSelectedMentionTabs(Array.isArray(draft.selectedTabs) ? draft.selectedTabs : []);
+    setSelectedMentionSkills(Array.isArray(draft.selectedSkills) ? draft.selectedSkills : []);
+    closeInputCompletions();
+  }
+
+  function clearComposerDraft(targetSessionId) {
+    if (targetSessionId) sessionDraftsRef.current.delete(targetSessionId);
+    setInput("");
+    setPendingAttachments([]);
+    setSelectedMentionTabs([]);
+    setSelectedMentionSkills([]);
+    closeInputCompletions();
+  }
+
+  function shouldHoldSessionLock(targetSessionId) {
+    const runtime = getSessionRuntime(targetSessionId);
+    return !!runtime.loading || !!runtime.pendingApproval || getSessionQueuedMessages(targetSessionId).length > 0;
+  }
+
+  function getSessionContextSummary(targetSessionId) {
+    return sessionContextSummaryRef.current.get(targetSessionId) || null;
+  }
+
+  function setSessionContextSummary(targetSessionId, value) {
+    const normalized = normalizeContextSummary(value);
+    if (normalized) {
+      sessionContextSummaryRef.current.set(targetSessionId, normalized);
+    } else {
+      sessionContextSummaryRef.current.delete(targetSessionId);
+    }
+    if (activeSessionIdRef.current === targetSessionId) {
+      setContextSummary(normalized);
+    }
+    return normalized;
   }
 
   function getSessionNextImageRefIndex(targetSessionId) {
@@ -1697,9 +1845,11 @@ export default function AgentPanel() {
       fromSessionId: activeSessionIdRef.current || "",
       cached: sessionMessagesRef.current.has(id)
     });
+    const previousSessionId = activeSessionIdRef.current;
+    if (previousSessionId && previousSessionId !== id) {
+      saveComposerDraft(previousSessionId);
+    }
     closeInputCompletions();
-    setSelectedMentionTabs([]);
-    setSelectedMentionSkills([]);
     if (!options.preserveSearch) {
       setSearchMode(false);
       setSearchScope("current");
@@ -1713,25 +1863,30 @@ export default function AgentPanel() {
     setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
     setStreamingThinking(sessionStreamingThinkingRef.current.get(id) ?? null);
     setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
-    const cached = sessionMessagesRef.current.get(id);
     perf.mark("before-load");
     const [msgs, meta] = await Promise.all([
-      cached ?? loadSession(id),
+      loadSession(id),
       loadSessionMeta(id)
     ]);
     perf.mark("after-load");
     perf.attachMessageStats(msgs);
     const shouldMigrateInlineImages = hasInlineBase64SessionImages(msgs);
     setSessionNextImageRefIndex(id, meta.nextImageRefIndex);
-    const previousSessionId = activeSessionIdRef.current;
-    if (previousSessionId && previousSessionId !== id) {
+    if (previousSessionId && previousSessionId !== id && !shouldHoldSessionLock(previousSessionId)) {
       void releaseSessionLock(previousSessionId, currentWindowIdRef.current);
     }
     activeSessionIdRef.current = id;
+    setSessionQueuedMessages(id, meta.queuedMessages);
     perf.mark("before-setSessionMessages");
     setSessionMessages(id, msgs);
     perf.mark("after-setSessionMessages");
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
+    const normalizedContextSummary = normalizeContextSummary(meta.contextSummary);
+    if (normalizedContextSummary) {
+      sessionContextSummaryRef.current.set(id, normalizedContextSummary);
+    } else {
+      sessionContextSummaryRef.current.delete(id);
+    }
     await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(sessions.find(s => s.id === id)?.title || extractTitle(msgs) || "会话");
@@ -1741,9 +1896,12 @@ export default function AgentPanel() {
     setShowJumpToBottom(false);
     const runtime = getSessionRuntime(id);
     setContextUsage(runtime.contextUsage || getLatestContextUsageFromMessages(msgs, llmConfigInfo));
+    setContextSummary(normalizedContextSummary);
+    setContextCompaction(runtime.contextCompaction || null);
     setRequestBodySize(runtime.requestBodySize || null);
     setLoading(!!runtime.loading);
     setPendingApproval(runtime.pendingApproval || null);
+    restoreComposerDraft(id);
     setImageEditRequest(null);
     setShowHistory(false);
     perf.mark("after-state-queue");
@@ -2128,6 +2286,7 @@ export default function AgentPanel() {
     setSessionNextImageRefIndex(id, 1);
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
+    setSessionContextSummary(id, null);
     setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
     await saveActiveSessionForWindow(id);
@@ -2138,6 +2297,7 @@ export default function AgentPanel() {
     shouldAutoFollowBottomRef.current = true;
     setShowJumpToBottom(false);
     setContextUsage(null);
+    setContextSummary(null);
     setRequestBodySize(null);
     setMessages([]);
     setStreamingContent(null);
@@ -2165,12 +2325,13 @@ export default function AgentPanel() {
     // Save current session first
     const currentSessionId = activeSessionIdRef.current;
     if (currentSessionId && currentSessionId !== id) {
+      saveComposerDraft(currentSessionId);
       const currentMessages = getSessionMessages(currentSessionId);
       if (currentMessages.length > 0) {
         await autoSave(currentSessionId, currentMessages);
       }
     }
-    if (currentSessionId && currentSessionId !== id) {
+    if (currentSessionId && currentSessionId !== id && !shouldHoldSessionLock(currentSessionId)) {
       await releaseSessionLock(currentSessionId, currentWindowIdRef.current);
     }
     await openSession(id, { ...options, lockAlreadyClaimed: true });
@@ -2179,35 +2340,53 @@ export default function AgentPanel() {
   /** Delete a session from history */
   async function handleDeleteSession(id, e) {
     e.stopPropagation();
+    if (deletingSessionIdsRef.current.has(id)) return;
+    deletingSessionIdsRef.current.add(id);
+    setDeletingSessionIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     const deletingCurrentSession = id === activeSessionIdRef.current;
-    stopSessionGeneration(id);
 
-    if (deletingCurrentSession) {
-      await releaseCurrentSessionLock();
-      activeSessionIdRef.current = "";
-    } else {
-      await releaseSessionLock(id, currentWindowIdRef.current);
-    }
-    sessionMessagesRef.current.delete(id);
-    clearSessionImageState(id);
-    sessionPlansRef.current.delete(id);
-    sessionRuntimeRef.current.delete(id);
-    await deleteSession(id);
-    const updated = await listSessions();
-    setSessions(updated);
-    // If deleted the current session, switch to another or create new
-    if (deletingCurrentSession) {
-      if (updated.length > 0) {
-        const windowId = await getCurrentWindowId();
-        const restored = await pickInitialUnlockedSession(updated, windowId);
-        if (restored) {
-          await openSession(restored.id, { skipLockPrompt: true });
+    try {
+      stopSessionGeneration(id);
+
+      if (deletingCurrentSession) {
+        await releaseCurrentSessionLock();
+        activeSessionIdRef.current = "";
+      } else {
+        await releaseSessionLock(id, currentWindowIdRef.current);
+      }
+      sessionMessagesRef.current.delete(id);
+      clearSessionImageState(id);
+      sessionPlansRef.current.delete(id);
+      sessionContextSummaryRef.current.delete(id);
+      sessionRuntimeRef.current.delete(id);
+      await deleteSession(id);
+      const updated = await listSessions();
+      setSessions(updated);
+      // If deleted the current session, switch to another or create new
+      if (deletingCurrentSession) {
+        if (updated.length > 0) {
+          const windowId = await getCurrentWindowId();
+          const restored = await pickInitialUnlockedSession(updated, windowId);
+          if (restored) {
+            await openSession(restored.id, { skipLockPrompt: true });
+          } else {
+            await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
+          }
         } else {
           await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
         }
-      } else {
-        await createAndOpenFreshSession(defaultNewSessionSystemPrompt);
       }
+    } finally {
+      deletingSessionIdsRef.current.delete(id);
+      setDeletingSessionIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
@@ -2323,7 +2502,7 @@ export default function AgentPanel() {
 
   async function getLLMConfig() {
     await ensureSettingsMigrated();
-    const { llmConfig, betaFeaturesEnabled } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled } = await chrome.storage.local.get({
       llmConfig: {
         activeLlmModelId: "",
         llmModels: [],
@@ -2336,7 +2515,8 @@ export default function AgentPanel() {
         activeImageModelId: "",
         imageModels: []
       },
-      betaFeaturesEnabled: true
+      betaFeaturesEnabled: false,
+      postdogToolsEnabled: false
     });
     const syncedConfig = syncActiveModelFields(llmConfig);
     setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
@@ -2350,7 +2530,8 @@ export default function AgentPanel() {
       omitThinkingFromRequests: syncedConfig?.omitThinkingFromRequests === true,
       imageApiProtocol: normalizeImageApiProtocol(syncedConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(syncedConfig),
-      enableBetaFeatures: betaFeaturesEnabled !== false
+      enableBetaFeatures: betaFeaturesEnabled === true,
+      postdogToolsEnabled: postdogToolsEnabled === true
     };
   }
 
@@ -2425,22 +2606,12 @@ export default function AgentPanel() {
     }
   }
 
-  async function sendMessage(options = {}) {
+  function buildUserMessageForSession(targetSessionId, options = {}) {
     const text = String(options.text ?? input).trim();
     const selectedTabs = Array.isArray(options.selectedTabs) ? options.selectedTabs : selectedMentionTabs;
     const selectedSkills = Array.isArray(options.selectedSkills) ? options.selectedSkills : selectedMentionSkills;
     const attachments = Array.isArray(options.attachments) ? options.attachments : pendingAttachments;
-    if (!text && attachments.length === 0 && selectedTabs.length === 0 && selectedSkills.length === 0) return;
-    if (loading) return;
-
-    const config = await getLLMConfig();
-    if (!config.apiKey || !config.baseUrl) {
-      toast.error("请先在设置中配置 LLM API");
-      return;
-    }
-
-    const currentSessionId = activeSessionIdRef.current;
-    if (!currentSessionId) return;
+    if (!targetSessionId || (!text && attachments.length === 0 && selectedTabs.length === 0 && selectedSkills.length === 0)) return null;
 
     const imageAtts = attachments.filter(a => a.type === "image");
     const textAtts = attachments.filter(a => a.type === "text");
@@ -2448,7 +2619,7 @@ export default function AgentPanel() {
     const finalText = injectionMeta ? buildInjectedUserText(text, injectionMeta) : text;
     const imageRefs = imageAtts
       .map(att => {
-        const ref = registerSessionImageDataUrl(currentSessionId, att.dataUrl);
+        const ref = registerSessionImageDataUrl(targetSessionId, att.dataUrl);
         return ref ? { ref, dataUrl: att.dataUrl } : null;
       })
       .filter(Boolean);
@@ -2481,15 +2652,65 @@ export default function AgentPanel() {
       userMsg.displayContent = text || "请根据我指定的上下文回答。";
       userMsg.injectedUserContext = injectionMeta;
     }
+    return userMsg;
+  }
+
+  async function sendMessage(options = {}) {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    if (pendingApproval) return;
+
+    const userMsg = buildUserMessageForSession(currentSessionId, options);
+    if (!userMsg) return;
+
+    if (getSessionRuntime(currentSessionId).loading) {
+      await enqueueUserMessage(currentSessionId, userMsg);
+      clearComposerDraft(currentSessionId);
+      shouldFocusInputWhenReadyRef.current = false;
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+
+    const config = await getLLMConfig();
+    if (!config.apiKey || !config.baseUrl) {
+      toast.error("请先在设置中配置 LLM API");
+      return;
+    }
+
+    await startUserMessage(currentSessionId, userMsg, config, { clearComposer: true });
+  }
+
+  async function enqueueUserMessage(targetSessionId, userMsg) {
+    const windowId = await getCurrentWindowId();
+    const queuedMsg = {
+      ...userMsg,
+      id: `queued_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: Date.now(),
+      createdByWindowId: windowId || ""
+    };
+    const latest = await loadSessionQueuedMessages(targetSessionId);
+    const nextQueued = [mergeQueuedMessages(latest[0], queuedMsg)];
+    await saveSessionQueuedMessages(targetSessionId, nextQueued);
+    setSessionQueuedMessages(targetSessionId, nextQueued);
+    toast("已加入队列", { duration: 1200 });
+  }
+
+  async function hydrateQueuedMessageForSession(targetSessionId, queuedMsg) {
+    if (!targetSessionId || !queuedMsg) return queuedMsg;
+    const imageStore = await loadSessionImageStore(targetSessionId);
+    const storageHydratedMsg = hydrateSessionMessages([queuedMsg], imageStore)[0] || queuedMsg;
+    await loadSessionImagesIntoCache(targetSessionId);
+    return hydrateStoredImageRefsInMessages(targetSessionId, [storageHydratedMsg])[0] || storageHydratedMsg;
+  }
+
+  async function startUserMessage(currentSessionId, userMsg, config, options = {}) {
     const newMessages = [...getSessionMessages(currentSessionId), userMsg];
     enableAutoFollowBottom("auto");
     setSessionMessages(currentSessionId, newMessages);
     void autoSave(currentSessionId, newMessages);
-    setInput("");
-    setPendingAttachments([]);
-    setSelectedMentionTabs([]);
-    setSelectedMentionSkills([]);
-    closeInputCompletions();
+    if (options.clearComposer !== false) {
+      clearComposerDraft(currentSessionId);
+    }
     shouldFocusInputWhenReadyRef.current = true;
     const nextRunId = getSessionRuntime(currentSessionId).runId + 1;
     setSessionRuntime(currentSessionId, { loading: true, abort: null, runId: nextRunId });
@@ -2499,6 +2720,55 @@ export default function AgentPanel() {
       toast.error(`发送失败: ${err.message || String(err)}`);
       setSessionRuntime(currentSessionId, { loading: false, abort: null });
     });
+  }
+
+  async function drainNextQueuedMessage(targetSessionId, options = {}) {
+    if (!targetSessionId || (getSessionRuntime(targetSessionId).loading && !options.afterCompletedRun)) return false;
+    const latest = await loadSessionQueuedMessages(targetSessionId);
+    if (latest.length === 0) {
+      setSessionQueuedMessages(targetSessionId, []);
+      return false;
+    }
+
+    const config = await getLLMConfig();
+    if (!config.apiKey || !config.baseUrl) {
+      toast.error("请先在设置中配置 LLM API");
+      setSessionQueuedMessages(targetSessionId, latest);
+      setSessionRuntime(targetSessionId, { loading: false, abort: null });
+      return false;
+    }
+
+    const [queuedMsg, ...remaining] = latest;
+    const hydratedQueuedMsg = await hydrateQueuedMessageForSession(targetSessionId, queuedMsg);
+    setSessionRuntime(targetSessionId, { loading: true, abort: null });
+    await saveSessionQueuedMessages(targetSessionId, remaining);
+    setSessionQueuedMessages(targetSessionId, remaining);
+    const userMsg = {
+      ...hydratedQueuedMsg,
+      sentAt: Date.now()
+    };
+    delete userMsg.id;
+    delete userMsg.createdAt;
+    delete userMsg.createdByWindowId;
+    await startUserMessage(targetSessionId, userMsg, config, { clearComposer: false });
+    return true;
+  }
+
+  async function completeSessionRun(targetSessionId, finalMessages) {
+    setSessionMessages(targetSessionId, finalMessages);
+    await autoSave(targetSessionId, finalMessages);
+    await waitForQueuedDrainTurn();
+    const drained = await drainNextQueuedMessage(targetSessionId, { afterCompletedRun: true });
+    if (!drained) {
+      setSessionRuntime(targetSessionId, { loading: false, abort: null });
+      if (activeSessionIdRef.current !== targetSessionId) {
+        await releaseSessionLock(targetSessionId, currentWindowIdRef.current);
+      }
+    }
+  }
+
+  function waitForQueuedDrainTurn() {
+    return new Promise(resolve => setTimeout(resolve, 0));
   }
 
   async function runSlashCommand(command) {
@@ -2517,14 +2787,101 @@ export default function AgentPanel() {
     }
   }
 
+  async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId) {
+    const existingSummary = getSessionContextSummary(targetSessionId);
+    const latestUsage = getSessionRuntime(targetSessionId).contextUsage ||
+      getLatestContextUsageFromMessages(conversationMessages, config);
+    const cutIndex = findContextSummaryCutIndex(conversationMessages);
+    const shouldCompact = shouldAutoCompactContext({
+      contextUsage: latestUsage,
+      limitTokens: config.modelContextLimitTokens,
+      messages: conversationMessages,
+      contextSummary: existingSummary
+    });
+    console.debug("[context-summary]", "auto compact check", {
+      shouldCompact,
+      messageCount: conversationMessages.length,
+      usageTokens: latestUsage?.tokens ?? null,
+      limitTokens: config.modelContextLimitTokens,
+      cutIndex,
+      existingCoveredMessageIndex: existingSummary?.coveredMessageIndex ?? null
+    });
+    if (!shouldCompact) {
+      return existingSummary;
+    }
+
+    const messagesToSummarize = getMessagesToSummarize(conversationMessages, existingSummary, cutIndex);
+    if (cutIndex < 0 || messagesToSummarize.length === 0) return existingSummary;
+
+    try {
+      const displayMessageIndex = Math.max(0, conversationMessages.length - 1);
+      setSessionRuntime(targetSessionId, {
+        contextCompaction: {
+          status: "compressing",
+          coveredMessageIndex: cutIndex,
+          displayMessageIndex
+        }
+      });
+      toast("上下文较长，正在压缩早期历史...", { duration: 1800 });
+      const prompt = buildContextSummaryPrompt({
+        oldSummary: existingSummary?.summary || "",
+        messages: messagesToSummarize
+      });
+      let streamedSummaryLength = 0;
+      const summaryStream = streamTextComplete(config, [
+        { role: "system", content: "你负责把长会话历史压缩成可继续执行任务的上下文摘要。" },
+        { role: "user", content: prompt }
+      ], {
+        onText: (_chunk, fullText) => {
+          streamedSummaryLength = fullText.length;
+          console.debug("[context-summary]", "streaming compact summary", {
+            chars: streamedSummaryLength
+          });
+        }
+      }, {
+        sessionId: targetSessionId,
+        maxTokens: CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
+        maxChars: CONTEXT_SUMMARY_MAX_CHARS,
+        allowEmptyResponse: false
+      });
+      setSessionRuntime(targetSessionId, { abort: summaryStream.abort, loading: true });
+      const summaryText = await summaryStream.promise;
+      if (!isCurrentRun(targetSessionId, runId)) return existingSummary;
+      const nextSummary = buildMergedContextSummary({
+        previousSummary: existingSummary,
+        newSummary: summaryText,
+        coveredMessageIndex: cutIndex,
+        displayMessageIndex,
+        model: config.model
+      });
+      const normalized = setSessionContextSummary(targetSessionId, nextSummary);
+      await saveSessionMeta(targetSessionId, { contextSummary: normalized });
+      setSessionRuntime(targetSessionId, { contextCompaction: null });
+      toast("已压缩早期上下文", { duration: 1600 });
+      return normalized;
+    } catch (error) {
+      setSessionRuntime(targetSessionId, { contextCompaction: null });
+      if (error?.name === "AbortError") return existingSummary;
+      console.error("Failed to compact conversation context:", error);
+      toast.error(`上下文压缩失败：${error.message || String(error)}`);
+      return existingSummary;
+    }
+  }
+
   async function runConversation(config, targetSessionId, conversationMessages, runId) {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt(config);
     await loadSessionImagesIntoCache(targetSessionId);
     if (!isCurrentRun(targetSessionId, runId)) return;
+    const activeContextSummary = await maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId);
+    if (!isCurrentRun(targetSessionId, runId)) return;
+    const compactedConversationMessages = buildContextSummaryRequestMessages({
+      contextSummary: activeContextSummary,
+      messages: conversationMessages
+    });
     const requestConversationMessages = hydrateStoredImageRefsInMessages(
       targetSessionId,
-      attachKnownImageRefsToMessages(targetSessionId, conversationMessages)
+      attachKnownImageRefsToMessages(targetSessionId, compactedConversationMessages)
     );
     const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
@@ -2548,17 +2905,17 @@ export default function AgentPanel() {
     const abort = streamChat(config, fullMessages, {
       onText: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
-        if (activeSessionIdRef.current !== targetSessionId) return;
         streamedContent += chunk;
         sessionStreamingRef.current.set(targetSessionId, streamedContent);
+        if (activeSessionIdRef.current !== targetSessionId) return;
         setStreamingContent(streamedContent);
       },
 
       onThinking: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
-        if (activeSessionIdRef.current !== targetSessionId) return;
         streamedThinking += chunk;
         sessionStreamingThinkingRef.current.set(targetSessionId, streamedThinking);
+        if (activeSessionIdRef.current !== targetSessionId) return;
         setStreamingThinking(streamedThinking);
       },
 
@@ -2625,9 +2982,7 @@ export default function AgentPanel() {
               ...stampedMessages,
               buildFinalAssistantMessage(config.apiType, config.model, streamedContent, msg)
             ];
-            setSessionMessages(targetSessionId, finalMessages);
-            setSessionRuntime(targetSessionId, { loading: false, abort: null });
-            await autoSave(targetSessionId, finalMessages);
+            await completeSessionRun(targetSessionId, finalMessages);
             return;
           }
 
@@ -2771,6 +3126,7 @@ export default function AgentPanel() {
       supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
+      postdogToolsEnabled: config.postdogToolsEnabled === true,
       imageToolsEnabled: config.imageToolsEnabled === true
     });
 
@@ -2997,6 +3353,7 @@ export default function AgentPanel() {
       String(input || "").trim() ||
       pendingAttachments.length > 0 ||
       imageEditRequest ||
+      getSessionQueuedMessages(currentSessionId).length > 0 ||
       getSessionPlans(currentSessionId).length > 0;
     if (hasContent && shouldConfirm) {
       const ok = await requestClearCurrentSessionConfirm();
@@ -3005,8 +3362,10 @@ export default function AgentPanel() {
     stopSessionGeneration(currentSessionId);
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
+    setSessionContextSummary(currentSessionId, null);
     clearSessionImageState(currentSessionId);
     setSessionMessages(currentSessionId, []);
+    setSessionQueuedMessages(currentSessionId, []);
     sessionPlansRef.current.set(currentSessionId, []);
     applyLatestPlanFromPlans([]);
     setInput("");
@@ -3024,12 +3383,12 @@ export default function AgentPanel() {
       const preservedTitle = String(sessionTitle || "").trim() || "新会话";
       setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
       await saveSession(currentSessionId, [], preservedTitle, { nextImageRefIndex: 1 });
-      await saveSessionMeta(currentSessionId, { plans: [] });
+      await saveSessionMeta(currentSessionId, { plans: [], contextSummary: null, queuedMessages: [] });
       await clearSessionKeywords(currentSessionId);
     } else {
       setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
       await saveSession(currentSessionId, [], "新会话", { nextImageRefIndex: 1 });
-      await saveSessionMeta(currentSessionId, { plans: [] });
+      await saveSessionMeta(currentSessionId, { plans: [], contextSummary: null, queuedMessages: [] });
       await clearSessionKeywords(currentSessionId);
     }
     setSessions(await listSessions());
@@ -3469,6 +3828,12 @@ export default function AgentPanel() {
     const truncated = msgs.slice(0, index);
     enableAutoFollowBottom("auto");
     setSessionRuntime(currentSessionId, { contextUsage: null, requestBodySize: null });
+    const existingSummary = getSessionContextSummary(currentSessionId);
+    const nextSummary = clampContextSummaryForRewind(existingSummary, truncated.length);
+    setSessionContextSummary(currentSessionId, nextSummary);
+    if (JSON.stringify(nextSummary) !== JSON.stringify(existingSummary)) {
+      void saveSessionMeta(currentSessionId, { contextSummary: nextSummary });
+    }
     setSessionMessages(currentSessionId, truncated);
     setInput(text);
     setPendingAttachments(restoredAttachments);
@@ -3486,8 +3851,120 @@ export default function AgentPanel() {
     return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
+  function getQueuedMessageText(msg) {
+    if (!msg) return "";
+    if (typeof msg.displayContent === "string") return msg.displayContent;
+    if (typeof msg.content === "string") return msg.content;
+    if (Array.isArray(msg.content)) {
+      const textBlock = msg.content.find(block => block?.type === "text");
+      return typeof textBlock?.text === "string" ? textBlock.text : "";
+    }
+    return "";
+  }
+
+  function updateQueuedMessageText(msg, text) {
+    const nextText = String(text || "").trim();
+    if (!msg || typeof msg !== "object") {
+      return {
+        role: "user",
+        content: nextText,
+        displayContent: nextText,
+        createdAt: Date.now()
+      };
+    }
+    if (Array.isArray(msg.content)) {
+      let replaced = false;
+      const nextContent = msg.content.map(block => {
+        if (!replaced && block?.type === "text") {
+          replaced = true;
+          return { ...block, text: nextText };
+        }
+        return block;
+      });
+      return {
+        ...msg,
+        content: replaced ? nextContent : [{ type: "text", text: nextText }, ...nextContent],
+        displayContent: nextText
+      };
+    }
+    return {
+      ...msg,
+      content: nextText,
+      displayContent: nextText
+    };
+  }
+
+  function mergeQueuedMessages(existing, incoming) {
+    if (!existing) return incoming;
+    const existingText = getQueuedMessageText(existing);
+    const incomingText = getQueuedMessageText(incoming);
+    const mergedText = [existingText, incomingText].filter(Boolean).join("\n\n");
+    const existingContent = Array.isArray(existing.content) ? existing.content : null;
+    const incomingContent = Array.isArray(incoming.content) ? incoming.content : null;
+    if (!existingContent && !incomingContent) {
+      return {
+        ...existing,
+        content: mergedText,
+        displayContent: mergedText
+      };
+    }
+    const merged = updateQueuedMessageText(existing, mergedText);
+    if (incomingContent) {
+      const incomingNonTextBlocks = incomingContent.filter(block => block?.type !== "text");
+      if (incomingNonTextBlocks.length > 0) {
+        merged.content = [
+          ...(Array.isArray(merged.content) ? merged.content : [{ type: "text", text: mergedText }]),
+          ...incomingNonTextBlocks
+        ];
+      }
+    }
+    if (Array.isArray(incoming.imageRefs) && incoming.imageRefs.length > 0) {
+      merged.imageRefs = normalizeMessageImageRefs([
+        ...(Array.isArray(existing.imageRefs) ? existing.imageRefs : []),
+        ...incoming.imageRefs
+      ]);
+    }
+    return merged;
+  }
+
+  async function recallQueuedMessageToComposer() {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    const latestQueuedMessages = await loadSessionQueuedMessages(currentSessionId);
+    const [queuedMsg] = latestQueuedMessages.length > 0
+      ? latestQueuedMessages
+      : getSessionQueuedMessages(currentSessionId);
+    if (!queuedMsg) return;
+    const hydratedQueuedMsg = await hydrateQueuedMessageForSession(currentSessionId, queuedMsg);
+    const text = getQueuedMessageText(hydratedQueuedMsg);
+    const restoredAttachments = buildRewindRestoredAttachments(hydratedQueuedMsg);
+    const existingInput = String(input || "").trim();
+    setInput(existingInput ? `${existingInput}\n\n${text}` : text);
+    if (restoredAttachments.length > 0) {
+      setPendingAttachments(prev => [...prev, ...restoredAttachments]);
+    }
+    await saveSessionQueuedMessages(currentSessionId, []);
+    setSessionQueuedMessages(currentSessionId, []);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
   function isSessionLoading(targetSessionId) {
     return !!getSessionRuntime(targetSessionId).loading;
+  }
+
+  function isSessionQueued(targetSessionId) {
+    return getSessionQueuedMessages(targetSessionId).length > 0;
+  }
+
+  function clampContextSummaryForRewind(summary, messageCount) {
+    if (!summary || summary.coveredMessageIndex >= messageCount || messageCount <= 0) return null;
+    const displayMessageIndex = Number(summary.displayMessageIndex ?? summary.coveredMessageIndex);
+    const nextDisplayMessageIndex = Number.isFinite(displayMessageIndex)
+      ? Math.min(Math.floor(displayMessageIndex), messageCount - 1)
+      : messageCount - 1;
+    return nextDisplayMessageIndex === summary.displayMessageIndex
+      ? summary
+      : { ...summary, displayMessageIndex: nextDisplayMessageIndex };
   }
 
   // ==================== Render ====================
@@ -3502,7 +3979,8 @@ export default function AgentPanel() {
   const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
   const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
   const requestBodySizeTitle = `请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`;
-  const inputResizeDisabled = loading || !!pendingApproval;
+  const inputResizeDisabled = !!pendingApproval;
+  const queuedMessageSummary = queuedMessages.length > 0 ? getQueuedMessageText(queuedMessages[0]) : "";
 
   return (
     <div className="agent-panel">
@@ -3626,47 +4104,56 @@ export default function AgentPanel() {
                 {sessions.length === 0 && (
                   <div className="chat-history-empty">暂无历史会话</div>
                 )}
-                {sessions.map(s => (
-                  <div
-                    key={s.id}
-                    className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
-                    onClick={() => switchSession(s.id)}
-                  >
-                    <div className="chat-history-item-info">
-                      <span className="chat-history-item-title">
-                        {s.title}
-                        {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
-                          <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
-                        )}
-                        {s.id !== sessionId && isSessionLoading(s.id) && (
-                          <span className="chat-history-item-status">● 生成中</span>
-                        )}
-                      </span>
-                      {Array.isArray(s.keywords) && s.keywords.length > 0 && (
-                        <span className="chat-history-keywords">
-                          {s.keywords.slice(0, 3).map(keyword => (
-                            <span key={keyword} className="chat-history-keyword-badge" title={keyword}>{keyword}</span>
-                          ))}
+                {sessions.map(s => {
+                  const isDeleting = deletingSessionIds.has(s.id);
+                  return (
+                    <div
+                      key={s.id}
+                      className={`chat-history-item ${s.id === sessionId ? "chat-history-active" : ""}`}
+                      onClick={() => {
+                        if (!isDeleting) switchSession(s.id);
+                      }}
+                    >
+                      <div className="chat-history-item-info">
+                        <span className="chat-history-item-title">
+                          {s.title}
+                          {s.id !== sessionId && isSessionAwaitingApproval(s.id) && (
+                            <span className="chat-history-item-status chat-history-item-status-pending">● 待确认</span>
+                          )}
+                          {s.id !== sessionId && isSessionLoading(s.id) && (
+                            <span className="chat-history-item-status">● 生成中</span>
+                          )}
+                          {s.id !== sessionId && !isSessionLoading(s.id) && isSessionQueued(s.id) && (
+                            <span className="chat-history-item-status">● 排队中</span>
+                          )}
                         </span>
-                      )}
-                      <span className="chat-history-item-time">
-                        {formatTime(s.startedAt || s.updatedAt)}
-                        {hasHistoryContextUsage(s.contextUsage) && (
-                          <>
-                            {" · "}
-                            上下文：{formatContextUsageK(s.contextUsage)}
-                          </>
+                        {Array.isArray(s.keywords) && s.keywords.length > 0 && (
+                          <span className="chat-history-keywords">
+                            {s.keywords.slice(0, 3).map(keyword => (
+                              <span key={keyword} className="chat-history-keyword-badge" title={keyword}>{keyword}</span>
+                            ))}
+                          </span>
                         )}
-                      </span>
+                        <span className="chat-history-item-time">
+                          {formatTime(s.startedAt || s.updatedAt)}
+                          {hasHistoryContextUsage(s.contextUsage) && (
+                            <>
+                              {" · "}
+                              上下文：{formatContextUsageK(s.contextUsage)}
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        className={`chat-history-item-delete${isDeleting ? " chat-history-item-delete-loading" : ""}`}
+                        onClick={(e) => handleDeleteSession(s.id, e)}
+                        aria-label={`${isDeleting ? "正在删除会话" : "删除会话"} ${s.title || ""}`.trim()}
+                        title={isDeleting ? "删除中" : "删除"}
+                        disabled={isDeleting}
+                      >{isDeleting ? "删" : "✕"}</button>
                     </div>
-                    <button
-                      className="chat-history-item-delete"
-                      onClick={(e) => handleDeleteSession(s.id, e)}
-                      aria-label={`删除会话 ${s.title || ""}`.trim()}
-                      title="删除"
-                    >✕</button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -3736,6 +4223,8 @@ export default function AgentPanel() {
               <ChatMessageList
                 sessionId={sessionId || ""}
                 messages={messages}
+                contextSummary={contextSummary}
+                contextCompaction={contextCompaction}
                 onRewindToUserMessage={handleRewindToUserMessage}
                 searchState={searchMode && searchScope === "current" && searchQuery.trim() ? { query: searchQuery.trim() } : null}
                 imageEditingEnabled={imageEditingEnabled}
@@ -3952,6 +4441,13 @@ export default function AgentPanel() {
                 ))}
               </div>
             )}
+            {queuedMessages.length > 0 && (
+              <div className="chat-queued-message">
+                <span className="chat-queued-label">队列</span>
+                <span className="chat-queued-text" title={queuedMessageSummary}>{queuedMessageSummary}</span>
+                <button type="button" className="chat-queued-edit" onClick={recallQueuedMessageToComposer}>取回</button>
+              </div>
+            )}
             <div
               className={`chat-input-resize-handle${inputResizeDisabled ? " chat-input-resize-handle-disabled" : ""}`}
               role="separator"
@@ -3973,9 +4469,8 @@ export default function AgentPanel() {
               onPaste={handlePaste}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              placeholder={loading ? "模型正在输出，暂时不能输入..." : `输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
+              placeholder={loading ? "模型正在输出... (Enter 加入队列, Shift+Enter 换行)" : `输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
               rows={3}
-              readOnly={loading}
               disabled={!!pendingApproval}
             />
             <div className="chat-input-status-line">
@@ -4069,7 +4564,7 @@ export default function AgentPanel() {
               </div>
               <div className="chat-input-actions-right">
                 <div className="chat-attach-wrapper" ref={attachWrapperRef}>
-                  <Button className="!text-xs chat-attach-btn" onPress={toggleAttachMenu} isDisabled={loading || !!pendingApproval}>📎</Button>
+                  <Button className="!text-xs chat-attach-btn" onPress={toggleAttachMenu} isDisabled={!!pendingApproval}>📎</Button>
                   {showAttachMenu && (
                     <div className="chat-attach-menu">
                       {llmConfigInfo.supportsImageInput && (

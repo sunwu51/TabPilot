@@ -18,8 +18,9 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
     const requestBody = {
       model: config.model,
       input,
-      tools,
+      ...(tools.length > 0 ? { tools } : {}),
       stream: true,
+      ...buildResponsesMaxOutputTokens(options),
       ...(instructions ? { instructions } : {}),
       ...buildOpenAIResponsesReasoningFields(config),
       ...buildOpenAIResponsesIncludeFields(config, options),
@@ -180,6 +181,17 @@ function buildOpenAIResponsesIncludeFields(config = {}, options = {}) {
   const effort = normalizeReasoningEffort(config.reasoningEffort);
   if (!effort || options.enableBetaFeatures === false) return {};
   return { include: ["reasoning.encrypted_content"] };
+}
+
+function buildResponsesMaxOutputTokens(options = {}) {
+  const maxTokens = normalizeStreamMaxTokens(options.maxTokens);
+  return maxTokens ? { max_output_tokens: maxTokens } : {};
+}
+
+function normalizeStreamMaxTokens(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.min(8192, Math.floor(number));
 }
 
 export function buildResponsesRequestInput(messages, options = {}) {

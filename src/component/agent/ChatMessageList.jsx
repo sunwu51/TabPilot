@@ -9,58 +9,68 @@ const ChatMessageList = memo(function ChatMessageList({
   messages = [],
   onRewindToUserMessage,
   searchState,
+  contextSummary,
+  contextCompaction,
   imageEditingEnabled = false,
   onImageEditRequest,
   imageSrcResolver,
   imageRefNavigator
 }) {
-  const groups = useMemo(() => groupMessages(messages), [messages]);
+  const dividerState = buildContextDividerState(contextSummary, contextCompaction, messages.length);
+  const groups = useMemo(() => groupMessages(messages, dividerState.index), [messages, dividerState.index]);
+  const dividerGroupIndex = findDividerGroupIndex(groups, dividerState.index);
 
   return (
     <>
       {groups.map((group, groupIndex) => {
+        const divider = groupIndex === dividerGroupIndex
+          ? <ContextCompressedDivider key={`context-compressed-${dividerState.index}-${dividerState.status}`} status={dividerState.status} />
+          : null;
         if (group.type === "tools") {
           return (
-            <CollapsedToolGroup
-              key={group.key || `tools-${groupIndex}`}
-              items={group.items}
-              toolCallCount={group.toolCallCount}
-              onRewindToUserMessage={onRewindToUserMessage}
-              sessionId={sessionId}
-              imageEditingEnabled={imageEditingEnabled}
-              onImageEditRequest={onImageEditRequest}
-              imageSrcResolver={imageSrcResolver}
-              imageRefNavigator={imageRefNavigator}
-            />
+            <FragmentWithDivider key={group.key || `tools-${groupIndex}`} divider={divider}>
+              <CollapsedToolGroup
+                items={group.items}
+                toolCallCount={group.toolCallCount}
+                onRewindToUserMessage={onRewindToUserMessage}
+                sessionId={sessionId}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
+                imageSrcResolver={imageSrcResolver}
+                imageRefNavigator={imageRefNavigator}
+              />
+            </FragmentWithDivider>
           );
         }
         if (group.type === "tool-sequence") {
           return (
-            <ToolMessageSequence
-              key={group.key || `tool-sequence-${groupIndex}`}
-              items={group.items}
+            <FragmentWithDivider key={group.key || `tool-sequence-${groupIndex}`} divider={divider}>
+              <ToolMessageSequence
+                items={group.items}
+                onRewindToUserMessage={onRewindToUserMessage}
+                sessionId={sessionId}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
+                imageSrcResolver={imageSrcResolver}
+                imageRefNavigator={imageRefNavigator}
+              />
+            </FragmentWithDivider>
+          );
+        }
+        return (
+          <FragmentWithDivider key={group.key || `msg-${group.index}`} divider={divider}>
+            <ChatMessage
+              msg={group.message}
+              messageIndex={group.index}
               onRewindToUserMessage={onRewindToUserMessage}
               sessionId={sessionId}
+              searchState={searchState}
               imageEditingEnabled={imageEditingEnabled}
               onImageEditRequest={onImageEditRequest}
               imageSrcResolver={imageSrcResolver}
               imageRefNavigator={imageRefNavigator}
             />
-          );
-        }
-        return (
-          <ChatMessage
-            key={group.key || `msg-${group.index}`}
-            msg={group.message}
-            messageIndex={group.index}
-            onRewindToUserMessage={onRewindToUserMessage}
-            sessionId={sessionId}
-            searchState={searchState}
-            imageEditingEnabled={imageEditingEnabled}
-            onImageEditRequest={onImageEditRequest}
-            imageSrcResolver={imageSrcResolver}
-            imageRefNavigator={imageRefNavigator}
-          />
+          </FragmentWithDivider>
         );
       })}
     </>
@@ -69,12 +79,58 @@ const ChatMessageList = memo(function ChatMessageList({
   prevProps.messages === nextProps.messages &&
   prevProps.sessionId === nextProps.sessionId &&
   prevProps.searchState === nextProps.searchState &&
+  prevProps.contextSummary === nextProps.contextSummary &&
+  prevProps.contextCompaction === nextProps.contextCompaction &&
   prevProps.imageEditingEnabled === nextProps.imageEditingEnabled &&
   prevProps.imageSrcResolver === nextProps.imageSrcResolver &&
   prevProps.imageRefNavigator === nextProps.imageRefNavigator
 );
 
 export default ChatMessageList;
+
+/* eslint-disable react/prop-types */
+function FragmentWithDivider({ children, divider }) {
+  return (
+    <>
+      {children}
+      {divider}
+    </>
+  );
+}
+
+function ContextCompressedDivider({ status }) {
+  const isCompressing = status === "compressing";
+  return (
+    <div className="context-compressed-divider" title={isCompressing ? "正在生成摘要，后续请求将使用摘要代替以上历史" : "后续请求将使用摘要代替以上历史"}>
+      <span className="context-compressed-line" />
+      <span className="context-compressed-text">{isCompressing ? "正在压缩会话内容" : "以上消息已经被压缩"}</span>
+      <span className="context-compressed-line" />
+    </div>
+  );
+}
+
+function buildContextDividerState(contextSummary, contextCompaction, messageCount) {
+  const compactionIndex = normalizeDividerMessageIndex(contextCompaction, messageCount);
+  if (contextCompaction?.status === "compressing" && compactionIndex >= 0) {
+    return { index: compactionIndex, status: "compressing" };
+  }
+  const summaryIndex = normalizeDividerMessageIndex(contextSummary, messageCount);
+  return { index: summaryIndex, status: summaryIndex >= 0 ? "compressed" : "" };
+}
+
+function normalizeDividerMessageIndex(contextSummary, messageCount) {
+  const preferredIndex = Number(contextSummary?.displayMessageIndex);
+  const fallbackIndex = Number(contextSummary?.coveredMessageIndex);
+  const index = Number.isFinite(preferredIndex) ? preferredIndex : fallbackIndex;
+  if (!Number.isFinite(index) || index < 0 || index >= messageCount) return -1;
+  return Math.floor(index);
+}
+
+function findDividerGroupIndex(groups, dividerIndex) {
+  if (!Array.isArray(groups) || groups.length === 0 || dividerIndex < 0) return -1;
+  const index = groups.findIndex(group => Number(group?.endIndex) >= dividerIndex);
+  return index >= 0 ? index : groups.length - 1;
+}
 
 /* eslint-disable react/prop-types */
 function CollapsedToolGroup({
@@ -218,14 +274,14 @@ function handleToggleKeyDown(event, toggleExpanded) {
   toggleExpanded();
 }
 
-function groupMessages(messages) {
+function groupMessages(messages, dividerIndex = -1) {
   const result = [];
   let index = 0;
 
   while (index < messages.length) {
     const message = messages[index];
     if (!isToolLikeMessage(message)) {
-      result.push({ type: "message", message, index, key: `msg-${index}` });
+      result.push({ type: "message", message, index, endIndex: index, key: `msg-${index}` });
       index += 1;
       continue;
     }
@@ -235,6 +291,7 @@ function groupMessages(messages) {
     while (index < messages.length && isToolLikeMessage(messages[index])) {
       group.push(messages[index]);
       index += 1;
+      if (index - 1 === dividerIndex && !isToolResultForPreviousAssistant(messages, index)) break;
     }
 
     const items = buildToolSequenceItems(group, start);
@@ -242,7 +299,8 @@ function groupMessages(messages) {
 
     const toolCallCount = items.filter(item => item.type === "tool").length;
     if (toolCallCount > 5) {
-      const trailingThinking = splitTrailingThinkingMessage(messages[index], index);
+      const splitAtDivider = index - 1 === dividerIndex && isToolLikeMessage(messages[index]);
+      const trailingThinking = splitAtDivider ? null : splitTrailingThinkingMessage(messages[index], index);
       if (trailingThinking) {
         items.push(...trailingThinking.items);
         index += 1;
@@ -252,13 +310,15 @@ function groupMessages(messages) {
         type: "tools",
         items,
         toolCallCount,
-        key: `tools-${start}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
+        endIndex: trailingThinking?.remainingMessage ? trailingThinking.messageIndex - 1 : index - 1,
+        key: `tools-${start}-${index - 1}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
       });
       if (trailingThinking?.remainingMessage) {
         result.push({
           type: "message",
           message: trailingThinking.remainingMessage,
           index: trailingThinking.messageIndex,
+          endIndex: trailingThinking.messageIndex,
           key: `msg-${trailingThinking.messageIndex}-without-thinking`
         });
       }
@@ -266,6 +326,7 @@ function groupMessages(messages) {
       result.push({
         type: "tool-sequence",
         items,
+        endIndex: index - 1,
         key: `tool-sequence-${start}-${group.length}-${toolCallCount}`
       });
     }
@@ -661,6 +722,24 @@ function isToolLikeMessage(message) {
   if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
   if (message.role === "assistant" && Array.isArray(message.content)) {
     return message.content.some((block) => block?.type === "tool_use");
+  }
+  return false;
+}
+
+function isToolResultForPreviousAssistant(messages, index) {
+  const current = messages[index];
+  const previous = messages[index - 1];
+  if (current?.role !== "tool") return false;
+  return messageHasToolCallId(previous, current.tool_call_id);
+}
+
+function messageHasToolCallId(message, toolCallId) {
+  if (!message || message.role !== "assistant" || !toolCallId) return false;
+  if (Array.isArray(message.tool_calls)) {
+    return message.tool_calls.some(call => (call?.id || call?.tool_call_id) === toolCallId);
+  }
+  if (Array.isArray(message.content)) {
+    return message.content.some(block => block?.type === "tool_use" && block.id === toolCallId);
   }
   return false;
 }

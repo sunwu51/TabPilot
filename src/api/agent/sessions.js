@@ -5,6 +5,7 @@ const LAST_ACTIVE_SESSION_ID_KEY = "agent_last_active_session_id";
 const LAST_ACTIVE_SESSION_BY_WINDOW_KEY = "agent_last_active_session_by_window";
 const SESSION_LOCKS_KEY = "agent_session_locks";
 const SESSION_LOCK_TTL_MS = 30 * 1000;
+const CONTEXT_SUMMARY_MAX_CHARS = 2400;
 
 /**
  * Generate a unique session ID: s_{timestamp}_{random4chars}
@@ -228,16 +229,88 @@ export async function loadHydratedSession(id) {
 /**
  * Load optional metadata for a specific session.
  * @param {string} id - session ID
- * @returns {Promise<{systemPrompt: string, plans: Array}>}
+ * @returns {Promise<{systemPrompt: string, plans: Array, nextImageRefIndex: number, contextSummary: object | null, queuedMessages: Array}>}
  */
 export async function loadSessionMeta(id) {
   const key = `session_${id}`;
-  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1 } });
+  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null, queuedMessages: [] } });
   return {
     systemPrompt: result[key]?.systemPrompt || "",
     plans: Array.isArray(result[key]?.plans) ? result[key].plans : [],
-    nextImageRefIndex: normalizeNextImageRefIndex(result[key]?.nextImageRefIndex)
+    nextImageRefIndex: normalizeNextImageRefIndex(result[key]?.nextImageRefIndex),
+    contextSummary: normalizeStoredContextSummary(result[key]?.contextSummary),
+    queuedMessages: normalizeQueuedMessages(result[key]?.queuedMessages)
   };
+}
+
+export async function loadSessionQueuedMessages(id) {
+  const key = `session_${id}`;
+  const result = await chrome.storage.local.get({ [key]: { queuedMessages: [] } });
+  return normalizeQueuedMessages(result[key]?.queuedMessages);
+}
+
+export async function saveSessionQueuedMessages(id, queuedMessages = []) {
+  const key = `session_${id}`;
+  const imageStoreKey = getSessionImageStoreKey(id);
+  const result = await chrome.storage.local.get({ [key]: { messages: [] }, [imageStoreKey]: {} });
+  const existingImageStore = result[imageStoreKey] && typeof result[imageStoreKey] === "object"
+    ? result[imageStoreKey]
+    : {};
+  const { messages: compactQueuedMessages, imageStore } = compactSessionMessages(queuedMessages, {
+    existingImageStore,
+    pruneUnreferencedImageStore: false
+  });
+  await chrome.storage.local.set({
+    [key]: {
+      ...result[key],
+      queuedMessages: normalizeQueuedMessages(compactQueuedMessages)
+    },
+    [imageStoreKey]: imageStore || existingImageStore || {}
+  });
+
+  const { sessions_index } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(s => s.id === id);
+  if (entry) {
+    entry.updatedAt = Date.now();
+  }
+  await chrome.storage.local.set({ sessions_index });
+}
+
+function normalizeQueuedMessages(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(item => item && typeof item === "object" && item.role === "user")
+    .map((item, index) => ({
+      ...item,
+      id: String(item.id || `queued_${Date.now()}_${index}`),
+      role: "user",
+      createdAt: Number(item.createdAt) || Date.now()
+    }));
+}
+
+function normalizeStoredContextSummary(contextSummary) {
+  if (!contextSummary || typeof contextSummary !== "object") return null;
+  const summary = normalizeStoredContextSummaryText(contextSummary.summary);
+  const coveredMessageIndex = Number(contextSummary.coveredMessageIndex);
+  if (!summary || !Number.isFinite(coveredMessageIndex) || coveredMessageIndex < 0) return null;
+  const normalizedCoveredMessageIndex = Math.floor(coveredMessageIndex);
+  const displayMessageIndex = Number(contextSummary.displayMessageIndex);
+  return {
+    ...contextSummary,
+    summary,
+    coveredMessageIndex: normalizedCoveredMessageIndex,
+    displayMessageIndex: Number.isFinite(displayMessageIndex) && displayMessageIndex >= 0
+      ? Math.floor(displayMessageIndex)
+      : normalizedCoveredMessageIndex
+  };
+}
+
+function normalizeStoredContextSummaryText(value) {
+  const text = String(value || "").trim();
+  if (text.length <= CONTEXT_SUMMARY_MAX_CHARS) return text;
+  const suffix = "\n[摘要已按长度上限截断]";
+  const maxTextLength = Math.max(0, CONTEXT_SUMMARY_MAX_CHARS - suffix.length);
+  return `${Array.from(text).slice(0, maxTextLength).join("").trimEnd()}${suffix}`;
 }
 
 /**
@@ -259,7 +332,8 @@ export async function saveSession(id, messages, title, options = {}) {
     ? result[imageStoreKey]
     : {};
   const { messages: compactMessages, imageStore } = compactSessionMessages(messages, {
-    existingImageStore
+    existingImageStore,
+    additionalReferencedMessages: normalizeQueuedMessages(result[key]?.queuedMessages)
   });
   const nextImageRefIndex = deriveNextImageRefIndex({
     messages: compactMessages,
@@ -394,15 +468,20 @@ export function compactSessionMessages(messages, options = {}) {
 
   const imageStore = cloneImageStore(options.existingImageStore);
 
-  // Pre-sweep: drop any imageStore entry that no input message references.
-  // This must happen before computing nextIndex / byValue so that allocations
-  // can re-use freed slots and the resulting index stays tight. It also fully
-  // recovers from latent bugs that leave orphan entries behind.
-  const referencedKeys = collectReferencedImageStoreKeys(messages);
-  for (const key of Object.keys(imageStore)) {
-    if (!referencedKeys.has(key)) {
-      console.warn(`[sessions] compactSessionMessages dropping orphan image ref ${key}`);
-      delete imageStore[key];
+  if (options.pruneUnreferencedImageStore !== false) {
+    // Pre-sweep: drop any imageStore entry that no input message references.
+    // This must happen before computing nextIndex / byValue so that allocations
+    // can re-use freed slots and the resulting index stays tight. It also fully
+    // recovers from latent bugs that leave orphan entries behind.
+    const referencedKeys = collectReferencedImageStoreKeys([
+      ...messages,
+      ...(Array.isArray(options.additionalReferencedMessages) ? options.additionalReferencedMessages : [])
+    ]);
+    for (const key of Object.keys(imageStore)) {
+      if (!referencedKeys.has(key)) {
+        console.warn(`[sessions] compactSessionMessages dropping orphan image ref ${key}`);
+        delete imageStore[key];
+      }
     }
   }
 
@@ -704,7 +783,7 @@ export async function resetSessionTitle(id, title = "新会话") {
 /**
  * Save optional metadata for a session without replacing messages.
  * @param {string} id - session ID
- * @param {{systemPrompt?: string, plans?: Array}} meta - partial session metadata
+ * @param {{systemPrompt?: string, plans?: Array, contextSummary?: object | null, queuedMessages?: Array}} meta - partial session metadata
  */
 export async function saveSessionMeta(id, meta = {}) {
   const key = `session_${id}`;

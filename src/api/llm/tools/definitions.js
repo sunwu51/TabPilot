@@ -8,11 +8,14 @@ const DOM_LOCATOR_PROPERTIES = {
   matchExact: { type: "boolean", description: "Whether text matching should be exact. Defaults to false." },
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
 };
-const BETA_TOOL_NAMES = new Set(["list_macros", "describe_macro", "run_macro"]);
 const IMAGE_TOOL_NAMES = new Set(["image_gen", "image_edit"]);
 
 export function isImageToolName(toolName) {
   return IMAGE_TOOL_NAMES.has(String(toolName || "").trim());
+}
+
+export function isPostdogToolName(toolName) {
+  return String(toolName || "").trim().startsWith("postdog_");
 }
 
 // ==================== Tool Definitions ====================
@@ -644,6 +647,90 @@ export const TOOLS = [
     }
   },
   {
+    name: "network_capture_start",
+    description: "Start a temporary HTTP/HTTPS request capture session for browser actions. The capture lasts at most 5 minutes and stores matching request metadata in extension storage until it is stopped or cleaned up. Use this before clicking or navigating when you need to inspect the network requests caused by that operation. WebSocket traffic and response bodies are not captured.",
+    schema: {
+      type: "object",
+      properties: {
+        scope: {
+          type: "string",
+          enum: ["active_tab", "all"],
+          description: "Capture scope. Defaults to active_tab, which binds this capture to the currently active HTTP/HTTPS tab at start time. Use all to capture matching HTTP/HTTPS requests from every tab."
+        },
+        durationSeconds: { type: "number", description: "Optional capture duration in seconds. Defaults to 300 and is capped at 300." },
+        filters: {
+          type: "object",
+          description: "Optional filters applied to captured HTTP/HTTPS requests.",
+          properties: {
+            methods: {
+              type: "array",
+              items: { type: "string" },
+              description: "HTTP methods to include, e.g. GET or POST."
+            },
+            hostIncludes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Case-insensitive host substrings to include."
+            },
+            pathIncludes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Path or query substrings to include, e.g. /api/."
+            },
+            pathRegex: {
+              type: "array",
+              items: { type: "string" },
+              description: "Regular expressions matched against path plus query."
+            },
+            urlRegex: {
+              type: "array",
+              items: { type: "string" },
+              description: "Regular expressions matched against the full URL."
+            },
+            resourceTypes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Chrome webRequest resource types such as xmlhttprequest, fetch, main_frame, script, image."
+            },
+            contentTypes: {
+              type: "array",
+              items: { type: "string" },
+              description: "Response Content-Type substrings to include, e.g. application/json. Applied when response headers arrive."
+            }
+          }
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: "network_capture_stop",
+    description: "Stop the active network capture session. This operation is idempotent. It returns the number of captured requests and a compact list containing each endpoint and uuid. Use network_capture_get_details with those uuids to inspect selected requests.",
+    schema: {
+      type: "object",
+      properties: {
+        captureId: { type: "string", description: "Optional capture id returned by network_capture_start. If omitted, stops the active capture." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "network_capture_get_details",
+    description: "Fetch full details for selected captured HTTP requests by uuid. Call network_capture_stop first to get the uuid list, then batch the uuids you need here.",
+    schema: {
+      type: "object",
+      properties: {
+        captureId: { type: "string", description: "Capture id returned by network_capture_start or network_capture_stop." },
+        uuids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Captured request uuids to fetch. Maximum 100 per call."
+        }
+      },
+      required: ["captureId", "uuids"]
+    }
+  },
+  {
     name: "postdog_list_folders",
     description: "List Postdog folders used to organize saved API requests.",
     schema: { type: "object", properties: {}, required: [] }
@@ -920,11 +1007,13 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {Object} [options]
  * @param {boolean} [options.includeBuiltins=true] - Whether to include built-in browser tools
  * @param {boolean} [options.supportsImageInput=false] - Whether the selected model accepts image inputs
- * @param {boolean} [options.enableBetaFeatures=true] - Whether to include beta built-in tools.
+ * @param {boolean} [options.enableBetaFeatures=true] - Whether to enable beta-only provider behavior.
  * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
+ * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false } = {}) {
+  void enableBetaFeatures;
   // Convert MCP tools to our internal format
   const externalTools = mcpTools.map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
@@ -935,8 +1024,8 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
   const builtInTools = includeBuiltins
     ? TOOLS.filter(tool => {
       if (!supportsImageInput && tool.name === "tab_screenshot") return false;
-      if (enableBetaFeatures === false && BETA_TOOL_NAMES.has(tool.name)) return false;
       if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
+      if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
       return true;
     })
     : [];

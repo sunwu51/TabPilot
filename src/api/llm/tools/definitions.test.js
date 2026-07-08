@@ -33,7 +33,7 @@ describe("llm tool definitions", () => {
     expect(isMcpToolCallName("mcp__mcpcenter__tavily_tavily_search")).toBe(false);
   });
 
-  it("keeps beta macro tools enabled by default", () => {
+  it("keeps macro tools enabled by default", () => {
     const names = namesFor(API_TYPES.OPENAI_RESPONSES);
 
     expect(names).toContain("list_macros");
@@ -41,12 +41,12 @@ describe("llm tool definitions", () => {
     expect(names).toContain("run_macro");
   });
 
-  it("filters beta macro tools when beta features are disabled", () => {
+  it("keeps macro tools when beta features are disabled", () => {
     const names = namesFor(API_TYPES.OPENAI_RESPONSES, { enableBetaFeatures: false });
 
-    expect(names).not.toContain("list_macros");
-    expect(names).not.toContain("describe_macro");
-    expect(names).not.toContain("run_macro");
+    expect(names).toContain("list_macros");
+    expect(names).toContain("describe_macro");
+    expect(names).toContain("run_macro");
     expect(names).toContain("tab_open");
   });
 
@@ -127,8 +127,18 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("image_edit");
   });
 
-  it("exposes Postdog tools for saved API request workflows", () => {
+  it("hides Postdog tools by default", () => {
     const names = namesFor(API_TYPES.OPENAI_RESPONSES);
+
+    expect(names).not.toContain("postdog_list_requests");
+    expect(names).not.toContain("postdog_run_request");
+    expect(names).not.toContain("postdog_list_history");
+    expect(names).not.toContain("postdog_get_history_run");
+    expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
+  });
+
+  it("exposes Postdog tools for saved API request workflows when enabled", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, { postdogToolsEnabled: true });
 
     expect(names).toContain("postdog_list_requests");
     expect(names).toContain("postdog_run_request");
@@ -136,7 +146,20 @@ describe("llm tool definitions", () => {
     expect(names).toContain("postdog_get_history_run");
     expect(names).not.toContain("postdog_import");
     expect(names).not.toContain("postdog_export");
-    expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
+  });
+
+  it("exposes network capture tools by default", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES);
+
+    expect(names).toContain("network_capture_start");
+    expect(names).toContain("network_capture_stop");
+    expect(names).toContain("network_capture_get_details");
+
+    const startTool = getTools(API_TYPES.OPENAI_RESPONSES)
+      .find(tool => tool.name === "network_capture_start");
+    expect(startTool.parameters.properties.scope.enum).toEqual(["active_tab", "all"]);
+    expect(startTool.parameters.properties.scope.description).toContain("Defaults to active_tab");
+    expect(startTool.parameters.properties.filters.properties.contentTypes.description).toContain("Content-Type");
   });
 
   it("describes image_model_id as a configured image profile selector", () => {

@@ -28,6 +28,29 @@
 .chat-jump-to-bottom:hover {
   background: #f9fafb;
 }
+
+.context-compressed-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.2;
+  user-select: none;
+}
+
+.context-compressed-line {
+  flex: 1 1 auto;
+  height: 1px;
+  background: #cbd5e1;
+}
+
+.context-compressed-text {
+  flex: 0 0 auto;
+  padding: 0 2px;
+  white-space: nowrap;
+}
 /* ========== Message bubbles ========== */
 .chat-msg {
   display: flex;

@@ -63,6 +63,11 @@ import {
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
 import {
+  _execNetworkCaptureGetDetails,
+  _execNetworkCaptureStart,
+  _execNetworkCaptureStop
+} from "./builtins/networkCapture";
+import {
   _execPostdogGetHistoryRun,
   _execPostdogGetRequest,
   _execPostdogListEnvironments,
@@ -185,6 +190,10 @@ const BUILTIN_TOOL_HANDLERS = {
   download: (args) => _execDownload(args),
   download_list: (args) => _execDownloadList(args),
   download_search: (args) => _execDownloadSearch(args),
+
+  network_capture_start: (args) => _execNetworkCaptureStart(args),
+  network_capture_stop: (args) => _execNetworkCaptureStop(args),
+  network_capture_get_details: (args) => _execNetworkCaptureGetDetails(args),
 
   postdog_list_folders: () => _execPostdogListFolders(),
   postdog_save_folder: (args) => _execPostdogSaveFolder(args),
