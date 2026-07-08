@@ -25,6 +25,7 @@ import {
   saveDefaultNewSessionSystemPrompt,
   saveSession,
   saveSessionMeta,
+  saveSessionQueuedMessages,
   updateSessionTitle,
 } from "./sessions";
 import { resetChromeMock } from "../../../test/setup";
@@ -59,7 +60,7 @@ describe("sessions storage", () => {
 
   it("loads missing session data with safe defaults", async () => {
     expect(await loadSession("missing")).toEqual([]);
-    expect(await loadSessionMeta("missing")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null });
+    expect(await loadSessionMeta("missing")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null, queuedMessages: [] });
   });
 
   it("saves messages without replacing existing metadata", async () => {
@@ -72,7 +73,7 @@ describe("sessions storage", () => {
     await saveSession("a", [{ role: "user", content: "hello" }], "Auto title");
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }], nextImageRefIndex: 1, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [{ text: "todo" }], nextImageRefIndex: 1, contextSummary: null, queuedMessages: [] });
     const [entry] = await listSessions();
     expect(entry).toMatchObject({ title: "Auto title", startedAt: 100, updatedAt: 100 });
   });
@@ -95,6 +96,7 @@ describe("sessions storage", () => {
       systemPrompt: "",
       plans: [],
       nextImageRefIndex: 1,
+      queuedMessages: [],
       contextSummary: {
         version: 1,
         coveredMessageIndex: 3,
@@ -171,7 +173,7 @@ describe("sessions storage", () => {
         { ref: "img_1", dataUrl }
       ]
     }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [], nextImageRefIndex: 2, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "keep", plans: [], nextImageRefIndex: 2, contextSummary: null, queuedMessages: [] });
   });
 
   it("stores user image blocks out of the main message payload", async () => {
@@ -292,7 +294,7 @@ describe("sessions storage", () => {
 
     // Only the freshly referenced image survives; the three orphan entries are swept.
     expect(await loadSessionImageStore("a")).toEqual({ img_1: dataUrl });
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 2, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 2, contextSummary: null, queuedMessages: [] });
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
   });
@@ -324,7 +326,7 @@ describe("sessions storage", () => {
     // img_3 data GC'd, but the counter does not recycle: it stays at 4 so that
     // the next allocation is img_4, not img_3.
     expect(await loadSessionImageStore("a")).toEqual({ img_1: img1, img_2: img2 });
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null, queuedMessages: [] });
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("img_3"));
     warnSpy.mockRestore();
   });
@@ -403,7 +405,72 @@ describe("sessions storage", () => {
     }], "A");
 
     expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null, queuedMessages: [] });
+  });
+
+  it("does not garbage-collect session images when saving or clearing queued messages", async () => {
+    const historyImage = "data:image/png;base64,aGlzdG9yeQ==";
+    const queuedImage = "data:image/png;base64,cXVldWU=";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 3 },
+      session_a_images: { img_1: historyImage },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    await saveSessionQueuedMessages("a", [{
+      role: "user",
+      imageRefs: [{ ref: "img_2", dataUrl: queuedImage }],
+      content: [
+        { type: "text", text: "queued" },
+        {
+          type: "image",
+          ref: "img_2",
+          source: { type: "base64", media_type: "image/png", data: "cXVldWU=", ref: "img_2" }
+        }
+      ]
+    }]);
+
+    expect(await loadSessionImageStore("a")).toEqual({
+      img_1: historyImage,
+      img_2: queuedImage
+    });
+
+    await saveSessionQueuedMessages("a", []);
+
+    expect(await loadSessionImageStore("a")).toEqual({
+      img_1: historyImage,
+      img_2: queuedImage
+    });
+  });
+
+  it("keeps queued image store entries alive when autosaving active messages", async () => {
+    const queuedImage = "data:image/png;base64,cXVldWU=";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 2 },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    await saveSessionQueuedMessages("a", [{
+      role: "user",
+      imageRefs: [{ ref: "img_1", dataUrl: queuedImage }],
+      content: [
+        { type: "text", text: "queued" },
+        {
+          type: "image",
+          ref: "img_1",
+          source: { type: "base64", media_type: "image/png", data: "cXVldWU=", ref: "img_1" }
+        }
+      ]
+    }]);
+
+    expect(Object.keys(await loadSessionImageStore("a"))).toEqual(["img_1"]);
+
+    await saveSession("a", [{ role: "user", content: "active run" }], "A");
+
+    expect(await loadSessionImageStore("a")).toEqual({ img_1: queuedImage });
+    expect((await loadSessionMeta("a")).queuedMessages[0].imageRefs).toEqual([
+      { ref: "img_1", dataUrl: "session-image:img_1" }
+    ]);
   });
 
   it("persists nextImageRefIndex so future refs continue increasing after removed messages", async () => {
@@ -422,7 +489,7 @@ describe("sessions storage", () => {
       }]
     }], "A", { nextImageRefIndex: 4 });
 
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "", plans: [], nextImageRefIndex: 4, contextSummary: null, queuedMessages: [] });
     expect(await loadSessionImageStore("a")).toEqual({ img_3: "data:image/png;base64,dXNlcg==" });
   });
 
@@ -498,7 +565,7 @@ describe("sessions storage", () => {
     await saveSessionMeta("a", { systemPrompt: "sys", plans: [{ step: "one" }] });
 
     expect(await loadSession("a")).toEqual([{ role: "user", content: "hello" }]);
-    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }], nextImageRefIndex: 1, contextSummary: null });
+    expect(await loadSessionMeta("a")).toEqual({ systemPrompt: "sys", plans: [{ step: "one" }], nextImageRefIndex: 1, contextSummary: null, queuedMessages: [] });
   });
 
   it("clears stored session keywords from the index entry", async () => {
