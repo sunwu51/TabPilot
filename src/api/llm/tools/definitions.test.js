@@ -148,18 +148,13 @@ describe("llm tool definitions", () => {
     expect(names).not.toContain("postdog_export");
   });
 
-  it("exposes network capture tools by default", () => {
-    const names = namesFor(API_TYPES.OPENAI_RESPONSES);
+  it("describes eval_js as usable for fetch/xhr proxy debugging", () => {
+    const evalJs = getTools(API_TYPES.OPENAI_RESPONSES)
+      .find(tool => tool.name === "eval_js");
 
-    expect(names).toContain("network_capture_start");
-    expect(names).toContain("network_capture_stop");
-    expect(names).toContain("network_capture_get_details");
-
-    const startTool = getTools(API_TYPES.OPENAI_RESPONSES)
-      .find(tool => tool.name === "network_capture_start");
-    expect(startTool.parameters.properties.scope.enum).toEqual(["active_tab", "all"]);
-    expect(startTool.parameters.properties.scope.description).toContain("Defaults to active_tab");
-    expect(startTool.parameters.properties.filters.properties.contentTypes.description).toContain("Content-Type");
+    expect(evalJs.description).toContain("fetch");
+    expect(evalJs.description).toContain("XMLHttpRequest");
+    expect(evalJs.description).toContain("network requests and responses");
   });
 
   it("describes image_model_id as a configured image profile selector", () => {

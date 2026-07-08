@@ -194,7 +194,7 @@ export const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page in the page's main JavaScript context. Use only when structured DOM tools are insufficient. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
+    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page in the page's main JavaScript context. Use only when structured DOM tools are insufficient. This can also be used to temporarily proxy or monkey-patch page APIs such as fetch and XMLHttpRequest so you can observe network requests and responses while debugging. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
     schema: {
       type: "object",
       properties: {
@@ -644,90 +644,6 @@ export const TOOLS = [
         limit: { type: "number", description: "Maximum number of records to return (default 50, max 100)." }
       },
       required: []
-    }
-  },
-  {
-    name: "network_capture_start",
-    description: "Start a temporary HTTP/HTTPS request capture session for browser actions. The capture lasts at most 5 minutes and stores matching request metadata in extension storage until it is stopped or cleaned up. Use this before clicking or navigating when you need to inspect the network requests caused by that operation. WebSocket traffic and response bodies are not captured.",
-    schema: {
-      type: "object",
-      properties: {
-        scope: {
-          type: "string",
-          enum: ["active_tab", "all"],
-          description: "Capture scope. Defaults to active_tab, which binds this capture to the currently active HTTP/HTTPS tab at start time. Use all to capture matching HTTP/HTTPS requests from every tab."
-        },
-        durationSeconds: { type: "number", description: "Optional capture duration in seconds. Defaults to 300 and is capped at 300." },
-        filters: {
-          type: "object",
-          description: "Optional filters applied to captured HTTP/HTTPS requests.",
-          properties: {
-            methods: {
-              type: "array",
-              items: { type: "string" },
-              description: "HTTP methods to include, e.g. GET or POST."
-            },
-            hostIncludes: {
-              type: "array",
-              items: { type: "string" },
-              description: "Case-insensitive host substrings to include."
-            },
-            pathIncludes: {
-              type: "array",
-              items: { type: "string" },
-              description: "Path or query substrings to include, e.g. /api/."
-            },
-            pathRegex: {
-              type: "array",
-              items: { type: "string" },
-              description: "Regular expressions matched against path plus query."
-            },
-            urlRegex: {
-              type: "array",
-              items: { type: "string" },
-              description: "Regular expressions matched against the full URL."
-            },
-            resourceTypes: {
-              type: "array",
-              items: { type: "string" },
-              description: "Chrome webRequest resource types such as xmlhttprequest, fetch, main_frame, script, image."
-            },
-            contentTypes: {
-              type: "array",
-              items: { type: "string" },
-              description: "Response Content-Type substrings to include, e.g. application/json. Applied when response headers arrive."
-            }
-          }
-        }
-      },
-      required: []
-    }
-  },
-  {
-    name: "network_capture_stop",
-    description: "Stop the active network capture session. This operation is idempotent. It returns the number of captured requests and a compact list containing each endpoint and uuid. Use network_capture_get_details with those uuids to inspect selected requests.",
-    schema: {
-      type: "object",
-      properties: {
-        captureId: { type: "string", description: "Optional capture id returned by network_capture_start. If omitted, stops the active capture." }
-      },
-      required: []
-    }
-  },
-  {
-    name: "network_capture_get_details",
-    description: "Fetch full details for selected captured HTTP requests by uuid. Call network_capture_stop first to get the uuid list, then batch the uuids you need here.",
-    schema: {
-      type: "object",
-      properties: {
-        captureId: { type: "string", description: "Capture id returned by network_capture_start or network_capture_stop." },
-        uuids: {
-          type: "array",
-          items: { type: "string" },
-          description: "Captured request uuids to fetch. Maximum 100 per call."
-        }
-      },
-      required: ["captureId", "uuids"]
     }
   },
   {

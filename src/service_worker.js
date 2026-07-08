@@ -58,13 +58,6 @@ import {
     markGithubSyncDirtyFromStorageChanges,
     runGithubSync
 } from "./api/sync/engine";
-import {
-    cleanupNetworkCapture,
-    getNetworkCaptureIdFromCleanupAlarm,
-    handleNetworkCaptureMessage,
-    initializeNetworkCapture,
-    isNetworkCaptureCleanupAlarm
-} from "./api/networkCapture";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -1003,17 +996,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return true;
     }
 
-    if (msg?.type === "network_capture") {
-        (async () => {
-            try {
-                sendResponse(await handleNetworkCaptureMessage(msg.action, msg.payload || {}));
-            } catch (error) {
-                sendResponse({ success: false, error: error?.message || String(error) });
-            }
-        })();
-        return true;
-    }
-
     if (msg?.type === "macro_manager") {
         (async () => {
             try {
@@ -1409,7 +1391,6 @@ chrome.runtime.onInstalled.addListener(() => {
     void restoreScheduledJobs();
     void startWsBridge();
     void ensureGithubSyncAlarm();
-    void initializeNetworkCapture();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -1417,14 +1398,12 @@ chrome.runtime.onStartup.addListener(() => {
     void restoreScheduledJobs();
     void startWsBridge();
     void ensureGithubSyncAlarm();
-    void initializeNetworkCapture();
 });
 
 void ensureSettingsMigrated();
 void restoreScheduledJobs();
 void startWsBridge();
 void ensureGithubSyncAlarm();
-void initializeNetworkCapture();
 
 if (chrome.alarms) {
     chrome.alarms.get("ws-bridge-health", (alarm) => {
@@ -1444,11 +1423,6 @@ if (chrome.alarms) {
 
         if (alarm.name.startsWith(SCHEDULE_CLEANUP_ALARM_PREFIX)) {
             await cleanupScheduledJob(alarm.name.slice(SCHEDULE_CLEANUP_ALARM_PREFIX.length));
-            return;
-        }
-
-        if (isNetworkCaptureCleanupAlarm(alarm.name)) {
-            await cleanupNetworkCapture(getNetworkCaptureIdFromCleanupAlarm(alarm.name));
             return;
         }
 
