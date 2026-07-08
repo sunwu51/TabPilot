@@ -148,6 +148,15 @@ describe("llm tool definitions", () => {
     expect(names).not.toContain("postdog_export");
   });
 
+  it("describes eval_js as usable for fetch/xhr proxy debugging", () => {
+    const evalJs = getTools(API_TYPES.OPENAI_RESPONSES)
+      .find(tool => tool.name === "eval_js");
+
+    expect(evalJs.description).toContain("fetch");
+    expect(evalJs.description).toContain("XMLHttpRequest");
+    expect(evalJs.description).toContain("network requests and responses");
+  });
+
   it("describes image_model_id as a configured image profile selector", () => {
     const imageGen = getTools(API_TYPES.OPENAI_RESPONSES, [], { imageToolsEnabled: true })
       .find(tool => tool.name === "image_gen");

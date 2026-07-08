@@ -194,7 +194,7 @@ export const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page in the page's main JavaScript context. Use only when structured DOM tools are insufficient. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
+    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page in the page's main JavaScript context. Use only when structured DOM tools are insufficient. This can also be used to temporarily proxy or monkey-patch page APIs such as fetch and XMLHttpRequest so you can observe network requests and responses while debugging. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
     schema: {
       type: "object",
       properties: {
@@ -929,6 +929,7 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @returns {Array} formatted tool definitions
  */
 export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false } = {}) {
+  void enableBetaFeatures;
   // Convert MCP tools to our internal format
   const externalTools = mcpTools.map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
