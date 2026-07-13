@@ -85,7 +85,7 @@ export { captureFullPageScreenshotToTab, openHelloWorldPlayground };
  * All executors return a result object (never throw).
  * @param {string} name - tool name
  * @param {Object} args - tool arguments
- * @param {Array} [mcpRegistry] - MCP tool registry [{name, _serverUrl, _serverHeaders, _toolCallName}]
+ * @param {Array} [mcpRegistry] - MCP tool registry [{name, _serverUrl, _serverHeaders, _serverType, _serverExtensionId, _toolCallName}]
  * @returns {Promise<Object>} result to send back to LLM
  */
 export async function executeTool(name, args, mcpRegistry = []) {
@@ -97,7 +97,10 @@ export async function executeTool(name, args, mcpRegistry = []) {
         mcpToolTimeoutSeconds: DEFAULT_MCP_TOOL_TIMEOUT_SECONDS
       });
       const timeoutMs = Math.max(1, Number(mcpToolTimeoutSeconds) || DEFAULT_MCP_TOOL_TIMEOUT_SECONDS) * 1000;
-      return await callMcpTool(mcpTool._serverUrl, mcpTool._serverHeaders, mcpTool.name, args, timeoutMs);
+      const endpoint = mcpTool._serverType === "extension"
+        ? { type: "extension", extensionId: mcpTool._serverExtensionId, name: mcpTool._serverName }
+        : { type: "http", url: mcpTool._serverUrl, headers: mcpTool._serverHeaders };
+      return await callMcpTool(endpoint, mcpTool._serverHeaders, mcpTool.name, args, timeoutMs);
     }
 
     const handler = BUILTIN_TOOL_HANDLERS[name];

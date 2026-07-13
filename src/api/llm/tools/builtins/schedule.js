@@ -15,8 +15,10 @@ function _snapshotScheduleMcpRegistry(mcpRegistry = []) {
     _serverName: tool?._serverName,
     _serverUrl: tool?._serverUrl,
     _serverHeaders: tool?._serverHeaders || {},
+    _serverType: tool?._serverType || "http",
+    _serverExtensionId: tool?._serverExtensionId || "",
     _toolCallName: tool?._toolCallName || buildMcpToolCallName(tool?._serverName || "server", tool?.name)
-  })).filter(tool => tool.name && tool._toolCallName && tool._serverUrl);
+  })).filter(tool => tool.name && tool._toolCallName && (tool._serverUrl || tool._serverExtensionId));
 }
 
 function _isTerminalScheduledStatus(status) {

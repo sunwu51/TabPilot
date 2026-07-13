@@ -45,13 +45,37 @@ describe("built-in tool execution", () => {
     ]);
 
     expect(callMcpTool).toHaveBeenCalledWith(
-      "https://mcp.example/rpc",
+      { type: "http", url: "https://mcp.example/rpc", headers: { Authorization: "Bearer token" } },
       { Authorization: "Bearer token" },
       "lookup",
       { query: "tabs" },
       2000
     );
     expect(result).toMatchObject({ name: "lookup", args: { query: "tabs" } });
+  });
+
+  it("routes extension-backed MCP tools with the extension endpoint descriptor", async () => {
+    const { callMcpTool } = await import("../../mcp");
+    chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
+
+    await executeTool("mcp_cookie_helper_get_cookie", { url: "https://example.com", name: "sid" }, [
+      {
+        name: "get_cookie",
+        _toolCallName: "mcp_cookie_helper_get_cookie",
+        _serverName: "cookie_helper",
+        _serverType: "extension",
+        _serverExtensionId: "cookie-helper-id",
+        _serverHeaders: {}
+      }
+    ]);
+
+    expect(callMcpTool).toHaveBeenCalledWith(
+      { type: "extension", extensionId: "cookie-helper-id", name: "cookie_helper" },
+      {},
+      "get_cookie",
+      { url: "https://example.com", name: "sid" },
+      2000
+    );
   });
 
   it("uses a longer timeout for image tools", () => {

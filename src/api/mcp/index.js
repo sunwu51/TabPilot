@@ -2,6 +2,29 @@ let _rpcId = 0;
 const DEFAULT_MCP_TOOL_TIMEOUT_MS = 60000;
 const MCP_SESSION_ID_HEADER = "Mcp-Session-Id";
 const _sessionIds = new Map();
+const EXTENSION_PROTOCOL_VERSION = "2025-03-26";
+
+function _normalizeEndpoint(endpointOrUrl, headers = {}) {
+  if (endpointOrUrl && typeof endpointOrUrl === "object") {
+    if (endpointOrUrl.type === "extension") {
+      return {
+        type: "extension",
+        extensionId: String(endpointOrUrl.extensionId || "").trim(),
+        name: endpointOrUrl.name || ""
+      };
+    }
+    return {
+      type: "http",
+      url: String(endpointOrUrl.url || "").trim(),
+      headers: endpointOrUrl.headers || headers || {}
+    };
+  }
+  return {
+    type: "http",
+    url: String(endpointOrUrl || "").trim(),
+    headers: headers || {}
+  };
+}
 
 function _sessionKey(url, headers = {}) {
   return JSON.stringify({ url, headers: _normalizeHeadersForSessionKey(headers) });
@@ -61,6 +84,54 @@ async function rpcCall(url, headers, method, params, timeoutMs, options = {}) {
     const refreshedSessionId = _sessionIds.get(sessionKey) || "";
     return await _rpcCallOnce(url, headers, method, params, timeoutMs, refreshedSessionId, sessionKey);
   }
+}
+
+function _sendExtensionMessage(extensionId, message, timeoutMs = 0) {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const effectiveTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 0;
+    const timerId = effectiveTimeoutMs > 0
+      ? setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        reject(new Error(`MCP extension request timed out after ${effectiveTimeoutMs}ms`));
+      }, effectiveTimeoutMs)
+      : null;
+
+    try {
+      chrome.runtime.sendMessage(extensionId, message, (response) => {
+        if (finished) return;
+        finished = true;
+        if (timerId) clearTimeout(timerId);
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError) {
+          reject(new Error(runtimeError.message || String(runtimeError)));
+          return;
+        }
+        resolve(response);
+      });
+    } catch (error) {
+      if (timerId) clearTimeout(timerId);
+      reject(error);
+    }
+  });
+}
+
+async function _rpcCallExtension(extensionId, method, params, timeoutMs) {
+  const id = ++_rpcId;
+  const response = await _sendExtensionMessage(extensionId, {
+    jsonrpc: "2.0",
+    id,
+    method,
+    ...(params !== undefined ? { params } : {})
+  }, timeoutMs);
+  if (!response || typeof response !== "object") {
+    throw new Error("Extension MCP returned an invalid response");
+  }
+  if (response.error) {
+    throw new Error(`MCP RPC error: ${response.error.message || JSON.stringify(response.error)}`);
+  }
+  return response.result;
 }
 
 async function _rpcCallOnce(url, headers, method, params, timeoutMs, sessionId = "", sessionKey = _sessionKey(url, headers)) {
@@ -168,8 +239,14 @@ async function _parseSSEResponse(res) {
  * @returns {Promise<{serverInfo: Object, capabilities: Object}>}
  */
 export async function initializeMcp(url, headers = {}, options = {}) {
-  _sessionIds.delete(_sessionKey(url, headers));
-  const result = await rpcCall(url, headers, "initialize", {
+  const endpoint = _normalizeEndpoint(url, headers);
+  if (endpoint.type === "extension") {
+    return await _rpcCallExtension(endpoint.extensionId, "initialize", {
+      protocolVersion: EXTENSION_PROTOCOL_VERSION
+    });
+  }
+  _sessionIds.delete(_sessionKey(endpoint.url, endpoint.headers));
+  const result = await rpcCall(endpoint.url, endpoint.headers, "initialize", {
     protocolVersion: "2025-03-26",
     capabilities: {},
     clientInfo: {
@@ -187,7 +264,12 @@ export async function initializeMcp(url, headers = {}, options = {}) {
  * @returns {Promise<Array<{name: string, description: string, inputSchema: Object}>>}
  */
 export async function listMcpTools(url, headers = {}) {
-  const result = await rpcCall(url, headers, "tools/list");
+  const endpoint = _normalizeEndpoint(url, headers);
+  if (endpoint.type === "extension") {
+    const result = await _rpcCallExtension(endpoint.extensionId, "tools/list");
+    return result.tools || [];
+  }
+  const result = await rpcCall(endpoint.url, endpoint.headers, "tools/list");
   return result.tools || [];
 }
 
@@ -198,7 +280,12 @@ export async function listMcpTools(url, headers = {}) {
  * @returns {Promise<Array<{name: string, uri: string, description?: string, mimeType?: string}>>}
  */
 export async function listMcpResources(url, headers = {}) {
-  const result = await rpcCall(url, headers, "resources/list");
+  const endpoint = _normalizeEndpoint(url, headers);
+  if (endpoint.type === "extension") {
+    const result = await _rpcCallExtension(endpoint.extensionId, "resources/list");
+    return result.resources || [];
+  }
+  const result = await rpcCall(endpoint.url, endpoint.headers, "resources/list");
   return result.resources || [];
 }
 
@@ -210,7 +297,11 @@ export async function listMcpResources(url, headers = {}) {
  * @returns {Promise<Object>} raw MCP resource read result
  */
 export async function readMcpResource(url, headers = {}, uri) {
-  return await rpcCall(url, headers, "resources/read", { uri });
+  const endpoint = _normalizeEndpoint(url, headers);
+  if (endpoint.type === "extension") {
+    return await _rpcCallExtension(endpoint.extensionId, "resources/read", { uri });
+  }
+  return await rpcCall(endpoint.url, endpoint.headers, "resources/read", { uri });
 }
 
 /**
@@ -222,7 +313,22 @@ export async function readMcpResource(url, headers = {}, uri) {
  * @returns {Promise<Object>} tool result
  */
 export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs = DEFAULT_MCP_TOOL_TIMEOUT_MS) {
-  const result = await rpcCall(url, headers, "tools/call", {
+  const endpoint = _normalizeEndpoint(url, headers);
+  if (endpoint.type === "extension") {
+    const result = await _rpcCallExtension(endpoint.extensionId, "tools/call", {
+      name: toolName,
+      arguments: args
+    }, timeoutMs);
+    if (result.content && Array.isArray(result.content)) {
+      const texts = result.content
+        .filter(c => c.type === "text")
+        .map(c => c.text);
+      if (texts.length === 1) return { result: texts[0] };
+      if (texts.length > 1) return { result: texts.join("\n") };
+    }
+    return result;
+  }
+  const result = await rpcCall(endpoint.url, endpoint.headers, "tools/call", {
     name: toolName,
     arguments: args
   }, timeoutMs);
@@ -248,8 +354,9 @@ export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs =
  */
 export async function connectMcpServer(url, headers = {}) {
   try {
-    const info = await initializeMcp(url, headers);
-    const tools = await listMcpTools(url, headers);
+    const endpoint = _normalizeEndpoint(url, headers);
+    const info = await initializeMcp(endpoint, endpoint.headers || {});
+    const tools = await listMcpTools(endpoint, endpoint.headers || {});
     return {
       name: info.serverInfo?.name || "MCP Server",
       tools,

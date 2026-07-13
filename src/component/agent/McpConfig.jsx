@@ -19,9 +19,11 @@ const MCP_SILENT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 /* eslint-disable react/prop-types */
 export default function McpConfig({ onToolsChanged }) {
   const [servers, setServers] = useState([]);
+  const [newType, setNewType] = useState("http");
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newHeaders, setNewHeaders] = useState("");
+  const [newExtensionId, setNewExtensionId] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [expandedServers, setExpandedServers] = useState({});
   const overLimitRef = useRef(false);
@@ -141,9 +143,13 @@ export default function McpConfig({ onToolsChanged }) {
     const { mcpServers } = await chrome.storage.local.get({ mcpServers: [] });
     let reconnected = await Promise.all(
       mcpServers.map(async (s) => {
-        const result = await connectMcpServer(s.url, s.headers || {});
+        const endpoint = s.type === "extension"
+          ? { type: "extension", extensionId: s.extensionId, name: s.name }
+          : { type: "http", url: s.url, headers: s.headers || {} };
+        const result = await connectMcpServer(endpoint);
         return {
           ...s,
+          type: s.type === "extension" ? "extension" : "http",
           name: s.name || normalizeServerName(result.name) || normalizeServerName(s.url) || `server_${Date.now()}`,
           serverInfoName: result.name || s.serverInfoName || "",
           tools: result.tools,
@@ -168,9 +174,11 @@ export default function McpConfig({ onToolsChanged }) {
         allTools.push({
           ...t,
           _serverId: s.id,
-          _serverName: s.name || s.url,
+          _serverName: s.name || s.url || s.extensionId,
           _serverUrl: s.url,
           _serverHeaders: s.headers || {},
+          _serverType: s.type === "extension" ? "extension" : "http",
+          _serverExtensionId: s.extensionId || "",
           _dangerous: !!settings.dangerous,
           _toolCallName: buildMcpToolCallName(s.name || "server", t.name)
         });
@@ -187,8 +195,10 @@ export default function McpConfig({ onToolsChanged }) {
   async function _saveServers(serverList) {
     const toSave = serverList.map(s => ({
       id: s.id,
+      type: s.type === "extension" ? "extension" : "http",
       url: s.url,
       headers: s.headers,
+      extensionId: s.extensionId || "",
       name: s.name,
       serverInfoName: s.serverInfoName || "",
       enabled: s.enabled,
@@ -200,6 +210,7 @@ export default function McpConfig({ onToolsChanged }) {
   async function handleConnect() {
     const name = normalizeServerName(newName);
     const url = newUrl.trim();
+    const extensionId = newExtensionId.trim();
     if (!name) {
       toast.error("请填写 MCP 名称");
       return;
@@ -212,10 +223,17 @@ export default function McpConfig({ onToolsChanged }) {
       toast.error("MCP 名称不能重复");
       return;
     }
-    if (!url) return;
+    if (newType === "http" && !url) {
+      toast.error("请填写服务器 URL");
+      return;
+    }
+    if (newType === "extension" && !extensionId) {
+      toast.error("请填写插件 ID");
+      return;
+    }
 
     let headers = {};
-    if (newHeaders.trim()) {
+    if (newType === "http" && newHeaders.trim()) {
       try {
         headers = JSON.parse(newHeaders.trim());
       } catch (e) {
@@ -225,13 +243,18 @@ export default function McpConfig({ onToolsChanged }) {
     }
 
     setConnecting(true);
-    const result = await connectMcpServer(url, headers);
+    const endpoint = newType === "extension"
+      ? { type: "extension", extensionId, name }
+      : { type: "http", url, headers };
+    const result = await connectMcpServer(endpoint);
     setConnecting(false);
 
     const server = {
       id: `mcp_${Date.now()}`,
-      url,
-      headers,
+      type: newType,
+      url: newType === "http" ? url : "",
+      headers: newType === "http" ? headers : {},
+      extensionId: newType === "extension" ? extensionId : "",
       name,
       serverInfoName: result.name || "",
       tools: result.tools,
@@ -244,9 +267,11 @@ export default function McpConfig({ onToolsChanged }) {
       toast.error(`连接失败: ${result.error}`);
     } else {
       toast.success(`已连接「${name}」(${result.tools.length} 个工具)`);
+      setNewType("http");
       setNewName("");
       setNewUrl("");
       setNewHeaders("");
+      setNewExtensionId("");
     }
 
     const updated = [...servers, server];
@@ -263,7 +288,10 @@ export default function McpConfig({ onToolsChanged }) {
   }
 
   async function handleReconnect(server) {
-    const result = await connectMcpServer(server.url, server.headers || {});
+    const endpoint = server.type === "extension"
+      ? { type: "extension", extensionId: server.extensionId, name: server.name }
+      : { type: "http", url: server.url, headers: server.headers || {} };
+    const result = await connectMcpServer(endpoint);
     const updated = servers.map(s =>
       s.id === server.id
         ? {
@@ -359,9 +387,11 @@ export default function McpConfig({ onToolsChanged }) {
                 <div
                   className="text-xs text-gray-500 break-all whitespace-normal"
                   style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
-                  title={s.url}
+                  title={s.type === "extension" ? s.extensionId : s.url}
                 >
-                  HTTP URL：{s.url || "—"}
+                  {s.type === "extension"
+                    ? `插件 ID：${s.extensionId || "—"}`
+                    : `HTTP URL：${s.url || "—"}`}
                 </div>
                 {[...s.tools].sort((a, b) => {
                   const aNest = !!getToolSetting(s, a.name).nesting;
@@ -415,6 +445,23 @@ export default function McpConfig({ onToolsChanged }) {
         )}
 
         {/* Add new server */}
+        <div className="mb-2">
+          <div className="text-xs text-gray-500 mb-1">类型</div>
+          <div className="flex gap-2">
+            <Button
+              className={newType === "http" ? "!bg-gray-900 !text-white" : "!bg-gray-100 !text-gray-700"}
+              onPress={() => setNewType("http")}
+            >
+              HTTP
+            </Button>
+            <Button
+              className={newType === "extension" ? "!bg-gray-900 !text-white" : "!bg-gray-100 !text-gray-700"}
+              onPress={() => setNewType("extension")}
+            >
+              Extension
+            </Button>
+          </div>
+        </div>
         <Input
           label="名称"
           labelClassName="!text-xs !text-gray-500"
@@ -424,25 +471,38 @@ export default function McpConfig({ onToolsChanged }) {
           onChange={setNewName}
           placeholder="my_server"
         />
-        <Input
-          label="服务器 URL"
-          labelClassName="!text-xs !text-gray-500"
-          inputClassName="!min-h-8"
-          defaultValue={newUrl}
-          onChange={setNewUrl}
-          placeholder="http://localhost:3000/mcp"
-        />
-        <Input
-          label="Headers (JSON, 可选)"
-          labelClassName="!text-xs !text-gray-500"
-          inputClassName="!min-h-8"
-          defaultValue={newHeaders}
-          onChange={setNewHeaders}
-          placeholder='{"Authorization":"Bearer xx"}'
-        />
+        {newType === "http" ? (
+          <>
+            <Input
+              label="服务器 URL"
+              labelClassName="!text-xs !text-gray-500"
+              inputClassName="!min-h-8"
+              defaultValue={newUrl}
+              onChange={setNewUrl}
+              placeholder="http://localhost:3000/mcp"
+            />
+            <Input
+              label="Headers (JSON, 可选)"
+              labelClassName="!text-xs !text-gray-500"
+              inputClassName="!min-h-8"
+              defaultValue={newHeaders}
+              onChange={setNewHeaders}
+              placeholder='{"Authorization":"Bearer xx"}'
+            />
+          </>
+        ) : (
+          <Input
+            label="插件 ID"
+            labelClassName="!text-xs !text-gray-500"
+            inputClassName="!min-h-8"
+            defaultValue={newExtensionId}
+            onChange={setNewExtensionId}
+            placeholder="abcdefghijklmnopabcdefghijklmnop"
+          />
+        )}
         <Button
           className="mt-2 w-full"
-          isDisabled={connecting || !newName.trim() || !newUrl.trim()}
+          isDisabled={connecting || !newName.trim() || (newType === "http" ? !newUrl.trim() : !newExtensionId.trim())}
           onPress={handleConnect}
         >
           {connecting ? "连接中..." : "连接"}
