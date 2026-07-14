@@ -1,6 +1,7 @@
 /* global chrome */
 import { Badge, Button, Card, Input, } from "@sunwu51/camel-ui"
 import { useEffect, useRef, useState } from "react"
+import { useLocalizedDom } from "../../i18n"
 import './Search.css'
 
 /**
@@ -9,6 +10,7 @@ import './Search.css'
  * Supports keyboard navigation (ArrowUp/Down, Enter, Escape, Cmd+Delete).
  */
 function Search() {
+  const rootRef = useLocalizedDom()
   const [filter, setFilter] = useState("");
   const [curWindow, setCurWindow] = useState(null);
   const [fromTabs, setFromTabs] = useState([])
@@ -113,6 +115,7 @@ function Search() {
 
   return (
     <>
+      <div ref={rootRef}>
       <Card>
         <div style={{ padding: "0" }} ref={searchRef} tabIndex="0" onKeyDown={handleKeyDown}>
           <span className="text-sm text-gray-500 font-bold block mb-1">搜索</span>
@@ -223,6 +226,7 @@ function Search() {
             </Card>}
         </div>
       </Card>
+      </div>
     </>
   )
 }

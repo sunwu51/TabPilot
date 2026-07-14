@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { executeTool } from "../../../../api/llm";
 import { Button, Card } from "@sunwu51/camel-ui";
 import toast from "react-hot-toast";
+import { useLocalizedDom } from "../../../../i18n";
 import {
   formatRemainingSeconds,
   formatScheduleStatus,
@@ -11,6 +12,7 @@ import {
 } from "../utils/scheduleStatus";
 
 export function ScheduleJobsDialogBody() {
+  const rootRef = useLocalizedDom();
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,7 +102,7 @@ export function ScheduleJobsDialogBody() {
   }
 
   return (
-    <div className="schedule-dialog">
+    <div ref={rootRef} className="schedule-dialog">
       <div className="schedule-dialog-header">
         <div>
           <div className="schedule-dialog-title">Schedule Jobs</div>
@@ -168,7 +170,6 @@ export function ScheduleJobsDialogBody() {
     </div>
   );
 }
-
 
 
 

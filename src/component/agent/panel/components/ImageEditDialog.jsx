@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Switch } from "@sunwu51/camel-ui";
 import { isImageFile, getClipboardImageFiles, imageFileToAttachmentItem } from "../messages/userMessage";
+import { useLocalizedDom } from "../../../../i18n";
 
 const IMAGE_EDIT_MODE = {
   ANNOTATION: "annotation",
@@ -28,6 +29,7 @@ function drawClosedMaskPath(ctx, path, { fillStyle, strokeStyle }) {
 }
 
 export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm }) {
+  const rootRef = useLocalizedDom();
   const [suggestion, setSuggestion] = useState("");
   const [error, setError] = useState("");
   const [editMode, setEditMode] = useState(IMAGE_EDIT_MODE.ANNOTATION);
@@ -413,6 +415,7 @@ export function ImageEditDialog({ request, disabled = false, onCancel, onConfirm
   return (
     <div className="dialog-backdrop image-edit-backdrop" onClick={onCancel}>
       <div
+        ref={rootRef}
         className="dialog-dialog image-edit-dialog"
         role="dialog"
         aria-modal="true"

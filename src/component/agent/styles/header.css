@@ -86,6 +86,21 @@
   display: none;
 }
 
+/* English toolbar labels are wider than the original Chinese labels. */
+.agent-panel-en .chat-toolbar {
+  gap: 2px;
+  padding-inline: 5px;
+}
+
+.agent-panel-en .chat-toolbar-btn {
+  font-size: 10px;
+}
+
+.agent-panel-en .chat-header:hover .chat-toolbar-btn,
+.agent-panel-en .chat-header-expanded .chat-toolbar-btn {
+  padding-inline: 5px;
+}
+
 .chat-session-title {
   flex: 1;
   font-size: 12px;

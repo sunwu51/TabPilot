@@ -7,8 +7,10 @@ import {
   setProfileEnabled,
 } from "../../api/agent/userProfile";
 import toast from "react-hot-toast";
+import { useLocalizedDom } from "../../i18n";
 
 export default function UserProfilePanel() {
+  const rootRef = useLocalizedDom();
   const [summary, setSummary] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -52,6 +54,7 @@ export default function UserProfilePanel() {
       }
     >
       <div
+        ref={rootRef}
         style={{
           width: "min(720px, calc(100vw - 32px))",
           maxWidth: "100%",

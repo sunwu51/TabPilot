@@ -9,6 +9,7 @@ import Macro from "./component/tabManager/Macro";
 import AgentPanel from "./component/agent/AgentPanel";
 import BridgePanel from "./component/bridge/BridgePanel";
 import SettingsDialog from "./component/SettingsDialog";
+import { LocaleProvider, useI18n } from "./i18n";
 
 /**
  * Root application component with tabs:
@@ -16,7 +17,8 @@ import SettingsDialog from "./component/SettingsDialog";
  * - Agent: LLM chat with browser context awareness
  * Settings button floats at top-right, visible across all tabs.
  */
-function App() {
+function AppContent() {
+  const { t } = useI18n();
   const [bridgeEnabled, setBridgeEnabled] = useState(false);
   const bridgeEnabledRef = useRef(false);
 
@@ -63,7 +65,7 @@ function App() {
   }, []);
 
   const tabs = [
-    <TabsItem key="tab-mgr" title="标签管理">
+    <TabsItem key="tab-mgr" title={t("tabManagement")}>
       <div className="p-1 relative flex flex-col gap-2">
         <Search />
         <Group />
@@ -71,11 +73,11 @@ function App() {
         <Macro />
       </div>
     </TabsItem>,
-    <TabsItem key="agent" title="小助手" className="agent-tab-panel">
+    <TabsItem key="agent" title={t("assistant")} className="agent-tab-panel">
       <AgentPanel />
     </TabsItem>,
     bridgeEnabled ? (
-      <TabsItem key="bridge" title="工具透出">
+      <TabsItem key="bridge" title={t("toolBridge")}>
         <BridgePanel />
       </TabsItem>
     ) : null,
@@ -94,5 +96,9 @@ function App() {
       </Tabs>
     </div>
   );
+}
+
+function App() {
+  return <LocaleProvider><AppContent /></LocaleProvider>;
 }
 export default App;

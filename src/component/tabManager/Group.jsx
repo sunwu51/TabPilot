@@ -2,8 +2,10 @@
 import { Button, Card, Input } from "@sunwu51/camel-ui";
 import { useState } from "react";
 import toast from "react-hot-toast";
+import { useLocalizedDom } from "../../i18n";
 
 export default function Group() {
+    const rootRef = useLocalizedDom();
     let [groupRule, setGroupRule] = useState("");
 
     async function triggerGroup() {
@@ -101,6 +103,7 @@ export default function Group() {
     }
 
     return <>
+        <div ref={rootRef}>
         <Card>
             <span className="text-sm text-gray-500 font-bold block mb-1">分组</span>
             <div className="flex gap-1 mb-2">
@@ -118,5 +121,6 @@ export default function Group() {
                 <Button className="flex-1 !text-xs" onPress={ungroupAll}>取消分组</Button>
             </div>
         </Card>
+        </div>
     </>
 }
