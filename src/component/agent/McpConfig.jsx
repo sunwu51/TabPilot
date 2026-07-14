@@ -2,12 +2,13 @@
 import { Button, Card, Input, Dialog, Checkbox } from "@sunwu51/camel-ui";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { connectMcpServer } from "../../api/mcp";
-import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
+import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_GROUPS, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
 import toast from "react-hot-toast";
 
 const MCP_WARNING_LIMIT = 120 - BUILTIN_TOOL_COUNT;
 const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 const MCP_SILENT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const RESERVED_LAZY_SERVER_NAMES = new Set(Object.keys(BUILTIN_TOOL_GROUPS));
 
 /**
  * MCP Server configuration component using camel-ui Dialog.
@@ -24,6 +25,8 @@ export default function McpConfig({ onToolsChanged }) {
   const [newUrl, setNewUrl] = useState("");
   const [newHeaders, setNewHeaders] = useState("");
   const [newExtensionId, setNewExtensionId] = useState("");
+  const [newLazyLoadTools, setNewLazyLoadTools] = useState(false);
+  const [newLazyLoadDescription, setNewLazyLoadDescription] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [expandedServers, setExpandedServers] = useState({});
   const overLimitRef = useRef(false);
@@ -180,6 +183,8 @@ export default function McpConfig({ onToolsChanged }) {
           _serverType: s.type === "extension" ? "extension" : "http",
           _serverExtensionId: s.extensionId || "",
           _dangerous: !!settings.dangerous,
+          _lazyLoad: s.lazyLoadTools === true,
+          _lazyDescription: s.lazyLoadDescription || "",
           _toolCallName: buildMcpToolCallName(s.name || "server", t.name)
         });
       }
@@ -202,6 +207,8 @@ export default function McpConfig({ onToolsChanged }) {
       name: s.name,
       serverInfoName: s.serverInfoName || "",
       enabled: s.enabled,
+      lazyLoadTools: s.lazyLoadTools === true,
+      lazyLoadDescription: s.lazyLoadDescription || "",
       toolSettings: s.toolSettings || {}
     }));
     await chrome.storage.local.set({ mcpServers: toSave });
@@ -221,6 +228,14 @@ export default function McpConfig({ onToolsChanged }) {
     }
     if (servers.some(server => server.name === name)) {
       toast.error("MCP 名称不能重复");
+      return;
+    }
+    if (newLazyLoadTools && RESERVED_LAZY_SERVER_NAMES.has(name)) {
+      toast.error("惰性加载 MCP 名称不能与内置工具组重名");
+      return;
+    }
+    if (newLazyLoadTools && !newLazyLoadDescription.trim()) {
+      toast.error("请填写惰性加载 MCP 的功能描述");
       return;
     }
     if (newType === "http" && !url) {
@@ -259,6 +274,8 @@ export default function McpConfig({ onToolsChanged }) {
       serverInfoName: result.name || "",
       tools: result.tools,
       toolSettings: buildToolSettings({}, result.tools),
+      lazyLoadTools: newLazyLoadTools,
+      lazyLoadDescription: newLazyLoadDescription.trim(),
       error: result.error,
       enabled: !result.error
     };
@@ -272,6 +289,8 @@ export default function McpConfig({ onToolsChanged }) {
       setNewUrl("");
       setNewHeaders("");
       setNewExtensionId("");
+      setNewLazyLoadTools(false);
+      setNewLazyLoadDescription("");
     }
 
     const updated = [...servers, server];
@@ -331,6 +350,28 @@ export default function McpConfig({ onToolsChanged }) {
     _notifyTools(updated, { showWarning: true });
   }
 
+  async function handleLazyLoadChange(server, lazyLoadTools) {
+    if (lazyLoadTools && RESERVED_LAZY_SERVER_NAMES.has(server.name)) {
+      toast.error("惰性加载 MCP 名称不能与内置工具组重名");
+      return;
+    }
+    if (lazyLoadTools && !String(server.lazyLoadDescription || "").trim()) {
+      toast.error("请先填写此 MCP 的功能描述");
+      return;
+    }
+    const updated = servers.map(item => item.id === server.id ? { ...item, lazyLoadTools } : item);
+    setServers(updated);
+    await _saveServers(updated);
+    _notifyTools(updated, { showWarning: true });
+  }
+
+  async function handleLazyLoadDescriptionChange(server, lazyLoadDescription) {
+    const updated = servers.map(item => item.id === server.id ? { ...item, lazyLoadDescription } : item);
+    setServers(updated);
+    await _saveServers(updated);
+    _notifyTools(updated, { showWarning: false });
+  }
+
   function toggleExpanded(serverId) {
     setExpandedServers(prev => ({ ...prev, [serverId]: !prev[serverId] }));
   }
@@ -373,6 +414,9 @@ export default function McpConfig({ onToolsChanged }) {
                 {s.serverInfoName && s.serverInfoName !== s.name && (
                   <div className="text-xs text-gray-300 truncate">{s.serverInfoName}</div>
                 )}
+                {s.lazyLoadTools && (
+                  <div className="text-xs text-amber-600 truncate">惰性加载：{s.lazyLoadDescription || "缺少功能描述"}</div>
+                )}
               </div>
               <div className="flex gap-1 flex-shrink-0 flex-wrap justify-end">
                 <Button className="!text-xs !p-0 !px-2 !min-h-6" onPress={() => toggleExpanded(s.id)}>
@@ -384,6 +428,24 @@ export default function McpConfig({ onToolsChanged }) {
             </div>
             {expandedServers[s.id] && s.tools?.length > 0 && (
               <div className="mt-2 border-t border-gray-100 pt-2 flex flex-col gap-2 min-w-0">
+                <div className="rounded border border-gray-100 p-2">
+                  <Checkbox
+                    isSelected={s.lazyLoadTools === true}
+                    onChange={(checked) => handleLazyLoadChange(s, checked)}
+                  >
+                    <span className="text-xs">惰性加载工具</span>
+                  </Checkbox>
+                  <Input
+                    label="功能描述"
+                    labelClassName="!text-xs !text-gray-500"
+                    inputClassName="!min-h-8"
+                    defaultValue={s.lazyLoadDescription || ""}
+                    isDisabled={s.lazyLoadTools !== true}
+                    onChange={(value) => handleLazyLoadDescriptionChange(s, value)}
+                    placeholder="例如：GitHub repositories, issues, and pull requests"
+                  />
+                  <div className="text-xs text-gray-400 mt-1">启用后，工具仅在当前会话按需加载；功能描述为必填。</div>
+                </div>
                 <div
                   className="text-xs text-gray-500 break-all whitespace-normal"
                   style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
@@ -500,6 +562,21 @@ export default function McpConfig({ onToolsChanged }) {
             placeholder="abcdefghijklmnopabcdefghijklmnop"
           />
         )}
+        <div className="mt-2 rounded border border-gray-100 p-2">
+          <Checkbox isSelected={newLazyLoadTools} onChange={setNewLazyLoadTools}>
+            <span className="text-xs">惰性加载工具</span>
+          </Checkbox>
+          {newLazyLoadTools && (
+            <Input
+              label="功能描述"
+              labelClassName="!text-xs !text-gray-500"
+              inputClassName="!min-h-8"
+              defaultValue={newLazyLoadDescription}
+              onChange={setNewLazyLoadDescription}
+              placeholder="例如：GitHub repositories, issues, and pull requests"
+            />
+          )}
+        </div>
         <Button
           className="mt-2 w-full"
           isDisabled={connecting || !newName.trim() || (newType === "http" ? !newUrl.trim() : !newExtensionId.trim())}

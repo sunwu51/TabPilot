@@ -9,6 +9,48 @@ const DOM_LOCATOR_PROPERTIES = {
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
 };
 const IMAGE_TOOL_NAMES = new Set(["image_gen", "image_edit"]);
+const TOOL_SELECTION_CORE_NAMES = new Set([
+  "tool_list_group",
+  "tool_enable",
+  "plan_create_for_session",
+  "plan_update_for_session",
+  "tab_list",
+  "tab_get_active",
+  "tab_extract",
+  "tab_scroll",
+  "tab_open",
+  "tab_focus",
+  "tab_close",
+  "tab_group",
+  "tab_screenshot",
+  "dom_query",
+  "dom_click",
+  "dom_set_value",
+  "dom_style",
+  "dom_get_html",
+  "dom_highlight",
+  "eval_js",
+  "get_current_time",
+  "sleep",
+  "html_playground",
+  "image_gen",
+  "image_edit",
+  "stash_in_browser",
+  "unstash_in_browser",
+  "list_stashes_in_browser",
+  "remove_stash_in_browser"
+]);
+
+export const BUILTIN_TOOL_GROUPS = {
+  groups: "Browser tab group operations",
+  windows: "Browser window operations",
+  history: "Browsing history search",
+  downloads: "Download management",
+  automation: "Macros, stashes, and HTML playgrounds",
+  schedule: "Scheduled tasks and reminders",
+  images: "Image generation and editing",
+  postdog: "HTTP request management"
+};
 
 export function isImageToolName(toolName) {
   return IMAGE_TOOL_NAMES.has(String(toolName || "").trim());
@@ -21,6 +63,34 @@ export function isPostdogToolName(toolName) {
 // ==================== Tool Definitions ====================
 
 export const TOOLS = [
+
+  {
+    name: "tool_list_group",
+    description: "List the available tools in one capability group. Use this before calling a tool that is not currently available. Built-in group names are English identifiers such as groups, downloads, and automation. Lazy MCP servers are also available by their configured server names.",
+    schema: {
+      type: "object",
+      properties: {
+        group: { type: "string", description: "A built-in capability group or configured lazy MCP server name." }
+      },
+      required: ["group"]
+    }
+  },
+  {
+    name: "tool_enable",
+    description: "Enable listed tools for the current conversation after discovering them with tool_list_group. Enabled tools become callable on the next request and remain available for this conversation.",
+    schema: {
+      type: "object",
+      properties: {
+        names: {
+          type: "array",
+          description: "Function names returned by tool_list_group. Enable only the tools needed for the task.",
+          items: { type: "string" },
+          maxItems: 10
+        }
+      },
+      required: ["names"]
+    }
+  },
 
   {
     name: "plan_create_for_session",
@@ -847,6 +917,21 @@ export const TOOLS = [
 export const BUILTIN_TOOL_COUNT = TOOLS.length;
 export const BUILTIN_TOOL_NAMES = TOOLS.map(t => t.name);
 
+export function getBuiltinToolGroup(toolName) {
+  const name = String(toolName || "").trim();
+  if (name.startsWith("tab_")) return "tabs";
+  if (name.startsWith("dom_") || name === "eval_js") return "page";
+  if (name.startsWith("group_")) return "groups";
+  if (name.startsWith("window_")) return "windows";
+  if (name.startsWith("history_")) return "history";
+  if (name.startsWith("download")) return "downloads";
+  if (name.startsWith("postdog_")) return "postdog";
+  if (IMAGE_TOOL_NAMES.has(name)) return "images";
+  if (name === "schedule_tool" || name === "list_scheduled" || name === "cancel_scheduled" || name === "clear_completed_scheduled" || name === "get_current_time" || name === "sleep") return "schedule";
+  if (name.includes("macro") || name.includes("stash") || name === "html_playground") return "automation";
+  return "automation";
+}
+
 export function buildMcpToolCallName(serverName, toolName) {
   return `mcp_${serverName}_${toolName}`;
 }
@@ -928,10 +1013,14 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, useToolSelection = false, activeToolNames = [] } = {}) {
   void enableBetaFeatures;
+  const activeNames = new Set(Array.isArray(activeToolNames) ? activeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
   // Convert MCP tools to our internal format
-  const externalTools = mcpTools.map(t => ({
+  const externalTools = mcpTools.filter(t => {
+    if (!useToolSelection || t?._lazyLoad !== true) return true;
+    return activeNames.has(t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name));
+  }).map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
     description: `[MCP] ${t.description || t.name}`,
     schema: t.inputSchema || { type: "object", properties: {} }
@@ -939,13 +1028,38 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 
   const builtInTools = includeBuiltins
     ? TOOLS.filter(tool => {
-      if (!supportsImageInput && tool.name === "tab_screenshot") return false;
-      if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
-      if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
+      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled })) return false;
+      if (useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
       return true;
     })
     : [];
-  const allTools = [...builtInTools, ...externalTools];
+  const allTools = [...builtInTools, ...externalTools].map(tool => {
+    if (tool.name !== "tool_list_group" || !useToolSelection) return tool;
+    const lazyServers = new Map();
+    for (const item of mcpTools) {
+      if (item?._lazyLoad !== true || !item?._serverName) continue;
+      lazyServers.set(String(item._serverName), String(item._lazyDescription || "MCP tools"));
+    }
+    const groupEntries = [
+      ...Object.entries(BUILTIN_TOOL_GROUPS),
+      ...lazyServers.entries()
+    ];
+    const groupSummary = groupEntries.map(([name, summary]) => `${name}: ${summary}`).join("; ");
+    return {
+      ...tool,
+      description: `${tool.description} Available groups: ${groupSummary}.`,
+      schema: {
+        ...tool.schema,
+        properties: {
+          ...tool.schema.properties,
+          group: {
+            ...tool.schema.properties.group,
+            description: `Select one group. Available groups: ${groupSummary}.`
+          }
+        }
+      }
+    };
+  });
 
   const normalizedApiType = normalizeApiType(apiType);
 
@@ -973,4 +1087,36 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
       parameters: t.schema
     }
   }));
+}
+
+function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled }) {
+  if (!supportsImageInput && tool.name === "tab_screenshot") return false;
+  if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
+  if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
+  return true;
+}
+
+export function listToolGroup(group, mcpTools = [], options = {}) {
+  const normalizedGroup = String(group || "").trim();
+  if (!normalizedGroup) return [];
+  const builtinTools = Object.prototype.hasOwnProperty.call(BUILTIN_TOOL_GROUPS, normalizedGroup)
+    ? TOOLS.filter(tool => !TOOL_SELECTION_CORE_NAMES.has(tool.name))
+      .filter(tool => getBuiltinToolGroup(tool.name) === normalizedGroup)
+      .filter(tool => isBuiltinToolAvailable(tool, options))
+    : [];
+  const lazyMcpTools = mcpTools.filter(tool => tool?._lazyLoad === true && tool?._serverName === normalizedGroup);
+  return [...builtinTools, ...lazyMcpTools].map(tool => ({
+    name: tool._toolCallName || tool.name,
+    summary: String(tool.description || tool.name || "").replace(/\s+/g, " ").trim()
+  }));
+}
+
+export function normalizeActiveToolNames(names, mcpTools = [], options = {}) {
+  const availableBuiltinNames = new Set(TOOLS
+    .filter(tool => isBuiltinToolAvailable(tool, options))
+    .map(tool => tool.name));
+  const availableMcpNames = new Set(mcpTools.map(tool => tool?._toolCallName || buildMcpToolCallName(tool?._serverName || "server", tool?.name)));
+  return [...new Set((Array.isArray(names) ? names : [])
+    .map(name => String(name || "").trim())
+    .filter(name => availableBuiltinNames.has(name) || availableMcpNames.has(name)))];
 }
