@@ -13,6 +13,7 @@ import {
   createModelProfileId,
   createImageModelProfileId,
   getDefaultApiType,
+  isBuiltinLlmModelProfileId,
   normalizeApiType,
   normalizeImageModelProfiles,
   normalizeImageApiProtocol,
@@ -516,6 +517,7 @@ function SettingsDialogBody() {
   }
 
   function handleRemoveLlmModel(id) {
+    if (isBuiltinLlmModelProfileId(id)) return;
     setLlmModels(prev => {
       const next = prev.filter(item => item.id !== id);
       if (activeLlmModelId === id) {
@@ -692,25 +694,27 @@ function SettingsDialogBody() {
                 title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
               >
                 <span className="settings-model-badge-name">{item.name}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="settings-model-badge-remove"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleRemoveLlmModel(item.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleRemoveLlmModel(item.id);
-                  }}
-                  aria-label={`删除 ${item.name}`}
-                  title="删除"
-                >
-                  ×
-                </span>
+                {!isBuiltinLlmModelProfileId(item.id) && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="settings-model-badge-remove"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleRemoveLlmModel(item.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleRemoveLlmModel(item.id);
+                    }}
+                    aria-label={`删除 ${item.name}`}
+                    title="删除"
+                  >
+                    ×
+                  </span>
+                )}
               </button>
             ))}
           </div>

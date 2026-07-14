@@ -7,6 +7,7 @@ import {
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
   IMAGE_API_PROTOCOLS,
   getDefaultApiType,
+  isLlmConfigUsable,
   isImageApiConfigured,
   normalizeImageModelProfiles,
   normalizeApiType,
@@ -2672,7 +2673,7 @@ export default function AgentPanel() {
     }
 
     const config = await getLLMConfig();
-    if (!config.apiKey || !config.baseUrl) {
+    if (!isLlmConfigUsable(config)) {
       toast.error("请先在设置中配置 LLM API");
       return;
     }
@@ -2731,7 +2732,7 @@ export default function AgentPanel() {
     }
 
     const config = await getLLMConfig();
-    if (!config.apiKey || !config.baseUrl) {
+    if (!isLlmConfigUsable(config)) {
       toast.error("请先在设置中配置 LLM API");
       setSessionQueuedMessages(targetSessionId, latest);
       setSessionRuntime(targetSessionId, { loading: false, abort: null });

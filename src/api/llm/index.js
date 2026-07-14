@@ -8,8 +8,14 @@ export {
   normalizeModelContextLimitTokens
 } from "./core/config";
 export {
+  buildLlmAuthHeaders,
   createModelProfileId,
   createImageModelProfileId,
+  DEFAULT_LLM_MODEL_PROFILES,
+  DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+  DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE,
+  isLlmConfigUsable,
+  isBuiltinLlmModelProfileId,
   isConfiguredImageProfile,
   normalizeImageModelProfiles,
   normalizeImageProfileProtocol,

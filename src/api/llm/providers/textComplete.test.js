@@ -80,6 +80,33 @@ describe("textComplete", () => {
     vi.unstubAllGlobals();
   });
 
+  it("omits Authorization when OpenAI-compatible config does not require an API key", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "done" } }]
+      })
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await textComplete(
+      {
+        apiType: "openai-chat-completions",
+        baseUrl: "https://opencode.ai/zen/v1/chat/completions",
+        apiKey: "",
+        model: "big-pickle",
+        requiresApiKey: false
+      },
+      [{ role: "user", content: "hello" }]
+    );
+
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      "Content-Type": "application/json"
+    });
+
+    vi.unstubAllGlobals();
+  });
+
   it("passes custom maxTokens to OpenAI chat completion requests", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -130,6 +157,40 @@ describe("textComplete", () => {
     const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(payload).toMatchObject({ max_tokens: 1800, stream: true });
     expect(payload.tools).toBeUndefined();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("streams OpenAI-compatible text without Authorization when API key is not required", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "hello" } }] })}\n\n`));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    });
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      body: stream
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { promise } = streamTextComplete(
+      {
+        apiType: "openai-chat-completions",
+        baseUrl: "https://opencode.ai/zen/v1/chat/completions",
+        apiKey: "",
+        model: "big-pickle",
+        requiresApiKey: false
+      },
+      [{ role: "user", content: "hello" }]
+    );
+
+    await expect(promise).resolves.toBe("hello");
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      "Content-Type": "application/json"
+    });
 
     vi.unstubAllGlobals();
   });

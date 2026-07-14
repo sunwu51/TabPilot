@@ -5,6 +5,7 @@ import { getTools } from "../tools/definitions";
 import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completions";
 import { isLongToolArgumentName } from "../core/longToolArgs";
 import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "../core/reasoning";
+import { buildLlmAuthHeaders } from "../core/modelProfiles";
 
 export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onRequestBodySize }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
@@ -37,7 +38,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`
+        ...buildLlmAuthHeaders(config)
       },
       body: requestBodyText,
       signal: timeoutState.signal
