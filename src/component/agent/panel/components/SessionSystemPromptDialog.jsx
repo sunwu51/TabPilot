@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@sunwu51/camel-ui";
 import toast from "react-hot-toast";
+import { useLocalizedDom } from "../../../../i18n";
 
 const SYSTEM_PROMPT_PLACEHOLDER =
   "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
@@ -11,6 +12,7 @@ export function SessionSystemPromptDialogBody({ initialValue = "", initiallyAppl
   const [applyToNewSessions, setApplyToNewSessions] = useState(!!initiallyApplyToNewSessions);
   const [saving, setSaving] = useState(false);
   const rootRef = useRef(null);
+  const localizedRootRef = useLocalizedDom();
 
   function closeDialog() {
     const closeButton = rootRef.current?.closest(".dialog-backdrop")?.querySelector(".dialog-close-button");
@@ -30,7 +32,10 @@ export function SessionSystemPromptDialogBody({ initialValue = "", initiallyAppl
   }
 
   return (
-    <div ref={rootRef} className="system-prompt-dialog">
+    <div ref={(node) => {
+      rootRef.current = node;
+      localizedRootRef(node);
+    }} className="system-prompt-dialog">
       <div>
         <div className="schedule-dialog-title">当前会话系统提示</div>
         <div className="schedule-dialog-subtitle">默认只影响当前会话，会作为额外 system prompt 注入。</div>
@@ -68,4 +73,3 @@ export function SessionSystemPromptDialogBody({ initialValue = "", initiallyAppl
     </div>
   );
 }
-

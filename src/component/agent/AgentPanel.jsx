@@ -166,6 +166,7 @@ import {
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
+import { useI18n, useLocalizedDom } from "../../i18n";
 import {
   mergeMcpToolLists,
   loadSkillsIndexFromSkillStation,
@@ -415,6 +416,9 @@ function normalizeImageEditPreviewImages(items = []) {
 }
 
 export default function AgentPanel() {
+  const { locale, t } = useI18n();
+  const agentRootRef = useLocalizedDom();
+  const newConversationTitle = t("newConversation");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1084,7 +1088,7 @@ export default function AgentPanel() {
 
   async function createAndOpenFreshSession(defaultSystemPrompt = { systemPrompt: "" }) {
     const id = generateSessionId();
-    await createSession(id, "新会话");
+    await createSession(id, newConversationTitle);
     if (defaultSystemPrompt.systemPrompt) {
       await saveSessionMeta(id, { systemPrompt: defaultSystemPrompt.systemPrompt });
     }
@@ -1095,7 +1099,7 @@ export default function AgentPanel() {
     activeSessionIdRef.current = id;
     await saveActiveSessionForWindow(id);
     setSessionId(id);
-    setSessionTitle("新会话");
+    setSessionTitle(newConversationTitle);
     setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
     setImageEditRequest(null);
     applyLatestPlanFromPlans([]);
@@ -2279,7 +2283,7 @@ export default function AgentPanel() {
       }
     }
     const id = generateSessionId();
-    await createSession(id, "新会话");
+    await createSession(id, newConversationTitle);
     const defaultSystemPrompt = await loadDefaultNewSessionSystemPrompt();
     setDefaultNewSessionSystemPrompt(defaultSystemPrompt);
     if (defaultSystemPrompt.systemPrompt) {
@@ -2297,7 +2301,7 @@ export default function AgentPanel() {
     activeSessionIdRef.current = id;
     await saveActiveSessionForWindow(id);
     setSessionId(id);
-    setSessionTitle("新会话");
+    setSessionTitle(newConversationTitle);
     setSessionSystemPrompt(defaultSystemPrompt.systemPrompt || "");
     applyLatestPlanFromPlans([]);
     shouldAutoFollowBottomRef.current = true;
@@ -3032,7 +3036,7 @@ export default function AgentPanel() {
           }
 
           const toolNames = [...new Set(msg.toolCalls.map(tc => tc.name))].join(", ");
-          toast(`🔧 执行: ${toolNames}`, { duration: 2000 });
+          toast(`🔧 tool: ${toolNames}`, { duration: 2000 });
 
           // Show assistant message + pending placeholders immediately
           const assistantMsg = buildAssistantToolCallMessage(config.apiType, config.model, streamedContent, msg);
@@ -3431,14 +3435,14 @@ export default function AgentPanel() {
     await chrome.storage.local.remove(`session_${currentSessionId}_images`);
     const currentSessionEntry = sessions.find(s => s.id === currentSessionId);
     if (currentSessionEntry?.manualTitle) {
-      const preservedTitle = String(sessionTitle || "").trim() || "新会话";
+      const preservedTitle = String(sessionTitle || "").trim() || newConversationTitle;
       setSessionTitle(await updateSessionTitle(currentSessionId, preservedTitle));
       await saveSession(currentSessionId, [], preservedTitle, { nextImageRefIndex: 1 });
       await saveSessionMeta(currentSessionId, { plans: [], contextSummary: null, queuedMessages: [] });
       await clearSessionKeywords(currentSessionId);
     } else {
-      setSessionTitle(await resetSessionTitle(currentSessionId, "新会话"));
-      await saveSession(currentSessionId, [], "新会话", { nextImageRefIndex: 1 });
+      setSessionTitle(await resetSessionTitle(currentSessionId, newConversationTitle));
+      await saveSession(currentSessionId, [], newConversationTitle, { nextImageRefIndex: 1 });
       await saveSessionMeta(currentSessionId, { plans: [], contextSummary: null, queuedMessages: [] });
       await clearSessionKeywords(currentSessionId);
     }
@@ -3485,7 +3489,7 @@ export default function AgentPanel() {
   }
 
   function startEditingSessionTitle() {
-    setTitleDraft(sessionTitle || "新会话");
+    setTitleDraft(sessionTitle || newConversationTitle);
     setEditingTitle(true);
   }
 
@@ -4026,6 +4030,8 @@ export default function AgentPanel() {
   const displayContextUsage = contextUsage || (loading ? getLatestContextUsageFromMessages(messages, llmConfigInfo) : null);
   const hasHistoryContextUsage = (usage) => usage?.usageStatus === "unrecognized" || Number.isFinite(Number(usage?.tokens));
   const contextUsageWarning = isContextUsageWarning(displayContextUsage, llmConfigInfo.modelContextLimitTokens);
+  const formattedContextUsage = formatContextUsageK(displayContextUsage);
+  const displayContextUsageText = locale === "en" && formattedContextUsage === "未返回" ? "-" : formattedContextUsage;
   const contextStatusTitle = `上下文：${formatContextUsageK(displayContextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
   const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
   const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
@@ -4034,17 +4040,17 @@ export default function AgentPanel() {
   const queuedMessageSummary = queuedMessages.length > 0 ? getQueuedMessageText(queuedMessages[0]) : "";
 
   return (
-    <div className="agent-panel">
+    <div ref={agentRootRef} className={`agent-panel${locale === "en" ? " agent-panel-en" : ""}`}>
       <div className={`chat-header ${(editingTitle || showHistory) ? "chat-header-expanded" : ""}`}>
         <div className="chat-toolbar">
-          <button className="chat-toolbar-btn" onClick={handleNewSession} title="新建">
+          <button className="chat-toolbar-btn" onClick={handleNewSession} title={t("newSession")}>
             <span className="chat-toolbar-icon">+</span>
-            <span className="chat-toolbar-full-text">新建</span>
+            <span className="chat-toolbar-full-text">{t("newSession")}</span>
           </button>
           <Dialog trigger={
-            <button className="chat-toolbar-btn" title="系统">
+            <button className="chat-toolbar-btn" title={t("systemPrompt")}>
               <span className="chat-toolbar-icon">⚙️</span>
-              <span className="chat-toolbar-full-text">系统</span>
+              <span className="chat-toolbar-full-text">{t("systemPrompt")}</span>
             </button>
           }>
             <SessionSystemPromptDialogBody
@@ -4053,9 +4059,9 @@ export default function AgentPanel() {
               onSave={handleSaveSessionSystemPrompt}
             />
           </Dialog>
-          <button className="chat-toolbar-btn" onClick={handleClearCurrentSession} title={`清空（${clearShortcutLabel}）`}>
+          <button className="chat-toolbar-btn" onClick={handleClearCurrentSession} title={`${t("clear")} (${clearShortcutLabel})`}>
             <span className="chat-toolbar-icon">🗑️</span>
-            <span className="chat-toolbar-full-text">清空</span>
+            <span className="chat-toolbar-full-text">{t("clear")}</span>
           </button>
           {showClearConfirm && (
             <div
@@ -4097,21 +4103,21 @@ export default function AgentPanel() {
             </div>
           )}
           <Dialog trigger={
-            <button className="chat-toolbar-btn" title="导出">
+            <button className="chat-toolbar-btn" title={t("export")}>
               <span className="chat-toolbar-icon">⬇️</span>
-              <span className="chat-toolbar-full-text">导出</span>
+              <span className="chat-toolbar-full-text">{t("export")}</span>
             </button>
           }>
             <SessionExportDialogBody
               sessionId={sessionId || ""}
-              title={sessionTitle || "新会话"}
+              title={sessionTitle || newConversationTitle}
               messages={messages}
             />
           </Dialog>
           <Dialog trigger={
-            <button className="chat-toolbar-btn" title="调度">
+            <button className="chat-toolbar-btn" title={t("schedule")}>
               <span className="chat-toolbar-icon">⏱️</span>
-              <span className="chat-toolbar-full-text">调度</span>
+              <span className="chat-toolbar-full-text">{t("schedule")}</span>
             </button>
           }>
             <ScheduleJobsDialogBody />
@@ -4130,7 +4136,7 @@ export default function AgentPanel() {
                 />
               ) : (
                 <>
-                  <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
+                  <span className="chat-session-title-text">{sessionTitle || newConversationTitle}</span>
                   <button
                     className="chat-session-title-edit"
                     type="button"
@@ -4145,9 +4151,9 @@ export default function AgentPanel() {
             </span>
           </div>
           <div className="chat-history-wrapper" ref={historyRef}>
-            <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }} title="历史">
+            <button className="chat-toolbar-btn" onClick={() => { setShowHistory(!showHistory); }} title={t("history")}>
               <span className="chat-toolbar-icon">🕘</span>
-              <span className="chat-toolbar-full-text">历史</span>
+              <span className="chat-toolbar-full-text">{t("history")}</span>
               <span className="chat-toolbar-caret">{showHistory ? "▲" : "▼"}</span>
             </button>
             {showHistory && (
@@ -4222,7 +4228,7 @@ export default function AgentPanel() {
               />
             ) : (
               <>
-                <span className="chat-session-title-text">{sessionTitle || "新会话"}</span>
+                <span className="chat-session-title-text">{sessionTitle || newConversationTitle}</span>
                 <button
                   className="chat-session-title-edit"
                   type="button"
@@ -4520,7 +4526,7 @@ export default function AgentPanel() {
               onPaste={handlePaste}
               onDragOver={handleDragOver}
               onDrop={handleDrop}
-              placeholder={loading ? "模型正在输出... (Enter 加入队列, Shift+Enter 换行)" : `输入消息... (Enter 发送, Shift+Enter 换行；${searchShortcutLabel} 搜索)`}
+              placeholder={loading ? t("modelOutput") : t("messagePlaceholder", { shortcut: searchShortcutLabel })}
               rows={3}
               disabled={!!pendingApproval}
             />
@@ -4531,9 +4537,9 @@ export default function AgentPanel() {
                     type="button"
                     className="chat-input-model-button"
                     onClick={() => toggleModelMenu("llm")}
-                    title={`模型：${formatModelName(llmConfigInfo.model)}`}
+                    title={formatModelName(llmConfigInfo.model)}
                   >
-                    模型：{formatModelName(llmConfigInfo.model)}
+                    {formatModelName(llmConfigInfo.model)}
                     <span className="chat-input-model-caret">⌃</span>
                   </button>
                   {modelMenuOpen === "llm" && (
@@ -4559,9 +4565,9 @@ export default function AgentPanel() {
                     type="button"
                     className="chat-input-model-button chat-input-image-model-button"
                     onClick={() => toggleModelMenu("image")}
-                    title={`默认图片：${formatModelName(llmConfigInfo.imageModel)}`}
+                    title={formatModelName(llmConfigInfo.imageModel)}
                   >
-                    默认图片：{formatModelName(llmConfigInfo.imageModel)}
+                    {formatModelName(llmConfigInfo.imageModel)}
                     <span className="chat-input-model-caret">⌃</span>
                   </button>
                   {modelMenuOpen === "image" && (
@@ -4595,7 +4601,7 @@ export default function AgentPanel() {
                 className={`chat-input-status-context${contextUsageWarning ? " chat-input-status-context-warning" : ""}`}
                 title={contextStatusTitle}
               >
-                上下文：{formatContextUsageK(displayContextUsage)}
+                {t("context")}: {displayContextUsageText}
               </span>
             </div>
             <div className="chat-input-actions">
@@ -4619,16 +4625,16 @@ export default function AgentPanel() {
                   {showAttachMenu && (
                     <div className="chat-attach-menu">
                       {llmConfigInfo.supportsImageInput && (
-                        <button onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}>🖼️ 图片</button>
+                        <button onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}>🖼️ {t("imageAttachment")}</button>
                       )}
-                      <button onClick={() => { textInputRef.current?.click(); setShowAttachMenu(false); }}>📄 文本文件</button>
+                      <button onClick={() => { textInputRef.current?.click(); setShowAttachMenu(false); }}>📄 {t("textFileAttachment")}</button>
                     </div>
                   )}
                 </div>
                 {loading ? (
-                  <Button className="!text-xs" onPress={stopGeneration}>停止</Button>
+                  <Button className="!text-xs" onPress={stopGeneration}>{t("stop")}</Button>
                 ) : (
-                  <Button className="!text-xs" onPress={sendMessage} isDisabled={!!pendingApproval}>发送</Button>
+                  <Button className="!text-xs" onPress={sendMessage} isDisabled={!!pendingApproval}>{t("send")}</Button>
                 )}
               </div>
             </div>

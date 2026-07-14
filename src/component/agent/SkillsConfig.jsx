@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { Button, Checkbox, Dialog, Input } from "@sunwu51/camel-ui";
 import { useEffect, useState } from "react";
+import { useLocalizedDom } from "../../i18n";
 
 export default function SkillsConfig({
   agentSkills,
@@ -11,6 +12,7 @@ export default function SkillsConfig({
   onBridgeToolDangerousChange,
   onLoad
 }) {
+  const rootRef = useLocalizedDom();
   const [serverUrl, setServerUrl] = useState(agentSkills.serverUrl || "");
 
   useEffect(() => {
@@ -27,6 +29,7 @@ export default function SkillsConfig({
       </Button>
     }>
       <div
+        ref={rootRef}
         style={{
           width: "min(720px, calc(100vw - 32px))",
           maxWidth: "100%",

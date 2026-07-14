@@ -5,8 +5,10 @@ import toast from "react-hot-toast";
 import { loadSessionImageStore } from "../../../../api/agent/sessions";
 import { buildSessionExportMarkdown, downloadMarkdownFile } from "../export/sessionExport";
 import { copyTextToClipboard, shareMarkdown } from "../export/sessionShare";
+import { useLocalizedDom } from "../../../../i18n";
 
 export function SessionExportDialogBody({ sessionId = "", title = "", messages = [] }) {
+  const rootRef = useLocalizedDom();
   const [password, setPassword] = useState("");
   const [exporting, setExporting] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -71,7 +73,7 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
   }
 
   return (
-    <div className="session-export-dialog">
+    <div ref={rootRef} className="session-export-dialog">
       <div>
         <div className="schedule-dialog-title">导出当前会话</div>
         <div className="schedule-dialog-subtitle">导出文件保持原有 markdown 格式，分享链接支持可选密码。</div>

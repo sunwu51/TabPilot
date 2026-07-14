@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { connectMcpServer } from "../../api/mcp";
 import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_GROUPS, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
 import toast from "react-hot-toast";
+import { useLocalizedDom } from "../../i18n";
 
 const MCP_WARNING_LIMIT = 120 - BUILTIN_TOOL_COUNT;
 const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
@@ -19,6 +20,7 @@ const RESERVED_LAZY_SERVER_NAMES = new Set(Object.keys(BUILTIN_TOOL_GROUPS));
  */
 /* eslint-disable react/prop-types */
 export default function McpConfig({ onToolsChanged }) {
+  const localizedBodyRef = useLocalizedDom();
   const [servers, setServers] = useState([]);
   const [newType, setNewType] = useState("http");
   const [newName, setNewName] = useState("");
@@ -44,6 +46,7 @@ export default function McpConfig({ onToolsChanged }) {
 
   const handleDialogBodyRef = useCallback((node) => {
     dialogBodyRef.current = node;
+    localizedBodyRef(node);
     if (node && !hasAutoFocusedRef.current) {
       hasAutoFocusedRef.current = true;
       focusServerNameInput(node);
@@ -51,7 +54,7 @@ export default function McpConfig({ onToolsChanged }) {
     if (!node) {
       hasAutoFocusedRef.current = false;
     }
-  }, []);
+  }, [localizedBodyRef]);
 
   function normalizeServerName(name) {
     const trimmed = String(name || "").trim();

@@ -2,8 +2,11 @@
 import { Button, Card, Input } from "@sunwu51/camel-ui"
 import { useEffect, useState } from "react"
 import toast from "react-hot-toast"
+import { useI18n, useLocalizedDom } from "../../i18n"
 
 export default function Workspace() {
+    const rootRef = useLocalizedDom()
+    const { locale } = useI18n()
     const [workspaces, setWorkspaces] = useState([])
     const [newName, setNewName] = useState("")
     const [showSave, setShowSave] = useState(false)
@@ -92,6 +95,7 @@ export default function Workspace() {
     }
 
     return (
+        <div ref={rootRef}>
         <Card>
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
                 <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>工作区</span>
@@ -119,7 +123,7 @@ export default function Workspace() {
                     <div key={ws.id} className="flex items-center justify-between py-1 px-1 hover:bg-gray-100 rounded text-xs">
                         <div className="flex-1 truncate">
                             <span className="font-bold">{ws.name}</span>
-                            <span className="text-gray-400 ml-1">{ws.tabs.length} 个标签 · {formatDate(ws.createdAt)}</span>
+                            <span className="text-gray-400 ml-1">{ws.tabs.length} {locale === "en" ? "tabs" : "个标签"} · {formatDate(ws.createdAt)}</span>
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
                             <Button
@@ -157,5 +161,6 @@ export default function Workspace() {
                 ))}
             </div>
         </Card>
+        </div>
     )
 }

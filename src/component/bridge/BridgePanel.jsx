@@ -7,6 +7,7 @@ import {
   getWsBridgeStateMeta,
   WS_BRIDGE_STATUS_STORAGE_KEY
 } from "../../api/bridge/wsBridgeStatus";
+import { useI18n, useLocalizedDom } from "../../i18n";
 
 const MAX_RECORDS = 100;
 
@@ -15,6 +16,8 @@ const MAX_RECORDS = 100;
  * Shows connection status and tool call history.
  */
 export default function BridgePanel() {
+  const { locale, t } = useI18n();
+  const rootRef = useLocalizedDom();
   const [url, setUrl] = useState("");
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [records, setRecords] = useState([]);
@@ -76,11 +79,11 @@ export default function BridgePanel() {
 
   const wsBridgeStateMeta = getWsBridgeStateMeta(wsBridgeStatus.state);
   const connectedLike = wsBridgeStatus.state === "connected" || wsBridgeStatus.state === "connecting" || wsBridgeStatus.state === "reconnecting";
-  const actionLabel = connectedLike ? "断开" : "连接";
+  const actionLabel = connectedLike ? t("disconnect") : t("connect");
   const heartbeatText = formatWsBridgeStatusTime(wsBridgeStatus.lastHeartbeatAckAt);
 
   return (
-    <div className="bridge-panel">
+    <div ref={rootRef} className="bridge-panel">
       <div className="bridge-config-bar">
         <div className="bridge-status-block">
           <div className="bridge-status-line">
@@ -88,8 +91,8 @@ export default function BridgePanel() {
             <span className="bridge-status-pill" style={{ color: wsBridgeStateMeta.color }}>
               {wsBridgeStateMeta.label}
             </span>
-            {wsBridgeStatus.tools > 0 ? <span className="bridge-status-meta">{wsBridgeStatus.tools} 个工具</span> : null}
-            {heartbeatText ? <span className="bridge-status-meta">最近心跳 {heartbeatText}</span> : null}
+            {wsBridgeStatus.tools > 0 ? <span className="bridge-status-meta">{locale === "en" ? `${wsBridgeStatus.tools} tools` : `${wsBridgeStatus.tools} 个工具`}</span> : null}
+            {heartbeatText ? <span className="bridge-status-meta">{locale === "en" ? `Last heartbeat ${heartbeatText}` : `最近心跳 ${heartbeatText}`}</span> : null}
           </div>
           <div className="bridge-status-url">
             {url || "请先在设置中填写 WS Server 地址"}

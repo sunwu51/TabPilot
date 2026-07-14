@@ -29,6 +29,7 @@ import {
   importSettingsBackupFromText
 } from "../api/settings/backup";
 import { ensureSettingsMigrated } from "../api/settings/migrations";
+import { useI18n, useLocalizedDom } from "../i18n";
 import {
   GITHUB_SYNC_DEFAULT_CONFIG,
   GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES,
@@ -82,8 +83,9 @@ const DEFAULT_SETTINGS = {
  * Draft values are only persisted when the user confirms.
  */
 export default function SettingsDialog() {
+  const { t } = useI18n();
   return (
-    <Dialog trigger={<Button className="w-16">设置</Button>}>
+    <Dialog trigger={<Button className="!min-w-16 !w-auto !px-3">{t("settings")}</Button>}>
       <SettingsDialogBody />
     </Dialog>
   );
@@ -104,6 +106,7 @@ const DEFAULT_IMAGE_MODEL_DRAFT = {
 };
 
 function SettingsDialogBody() {
+  const { locale, setLocale, t } = useI18n();
   const [apiType, setApiType] = useState(DEFAULT_LLM_MODEL_DRAFT.apiType);
   const [baseUrl, setBaseUrl] = useState(DEFAULT_LLM_MODEL_DRAFT.baseUrl);
   const [apiKey, setApiKey] = useState(DEFAULT_LLM_MODEL_DRAFT.apiKey);
@@ -157,6 +160,7 @@ function SettingsDialogBody() {
   const [saving, setSaving] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const rootRef = useRef(null);
+  const localizedRootRef = useLocalizedDom();
   const settingsImportInputRef = useRef(null);
   const extractTextLimitOptions = [
     { label: "8k", value: 8000 },
@@ -349,7 +353,7 @@ function SettingsDialogBody() {
         dangerousToolSkipApproval,
         postdogToolsEnabled
       });
-      toast.success("设置已保存");
+      toast.success(t("settingsSaved"));
       closeDialog();
     } catch (error) {
       toast.error(`保存失败: ${error?.message || String(error)}`);
@@ -678,8 +682,21 @@ function SettingsDialogBody() {
   const wsBridgeLastHeartbeat = formatWsBridgeStatusTime(wsBridgeStatus.lastHeartbeatAckAt);
 
   return (
-    <div ref={rootRef} key={formKey} className="settings-dialog-body">
+    <div ref={(node) => {
+      rootRef.current = node;
+      localizedRootRef(node);
+    }} key={formKey} className="settings-dialog-body">
       <div className="settings-dialog-scroll">
+        <div className="settings-card">
+          <div className="settings-card-title">{t("language")}</div>
+          <Select
+            label={t("language")}
+            items={[t("chinese"), t("english")]}
+            defaultIndex={locale === "zh" ? 0 : 1}
+            onSelectedItemChange={(changes) => setLocale(changes.selectedItem === t("chinese") ? "zh" : "en")}
+          />
+          <div className="settings-api-url-hint">{t("languageHint")}</div>
+        </div>
         <div className="settings-card">
           <div className="settings-card-title">LLM 配置</div>
           <div className="settings-model-badges" aria-label="已保存 LLM 模型">
@@ -750,7 +767,7 @@ function SettingsDialogBody() {
                 placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
               />
               <div className="settings-api-url-hint">
-                最终 URL 为 {resolvedApiUrl || "—"}
+                finalURL: {resolvedApiUrl || "—"}
               </div>
               <div className="settings-secret-field">
                 <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-api-key">API Key</label>
@@ -953,7 +970,7 @@ function SettingsDialogBody() {
               <div className="settings-api-url-hint">
                 {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
                   ? `Chat Completions ${resolvedImageChatUrl || "—"}`
-                  : `生成 ${resolvedImageGenUrl || "—"}；编辑 ${resolvedImageEditUrl || "—"}`}
+                  : `gen: ${resolvedImageGenUrl || "—"}; edit: ${resolvedImageEditUrl || "—"}`}
               </div>
               <div className="settings-secret-field">
                 <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-image-api-key">Image API Token</label>
@@ -1022,9 +1039,6 @@ function SettingsDialogBody() {
               </Button>
             </div>
           )}
-          <div className="settings-api-url-hint">
-            配置完整后会向模型开放 image_gen 和 image_edit 内置工具；Chat Completions 规范不支持 mask；工具结果只在本地预览/缓存图片。
-          </div>
           <div className="mt-2">
             <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
               <span className="text-sm">隐藏助手消息的操作按钮（复制 / 播报）</span>
@@ -1062,7 +1076,11 @@ function SettingsDialogBody() {
             </Checkbox>
           </div>
           <div className="settings-reuse-memory-row">
-            <span className="text-xs text-gray-500">已记住 {reusePolicyCount} 个域名的复用决策</span>
+            <span className="text-xs text-gray-500">
+              {locale === "en"
+                ? `Remembered reuse choices for ${reusePolicyCount} domains`
+                : `已记住 ${reusePolicyCount} 个域名的复用决策`}
+            </span>
             <Button
               className="!min-h-6 !px-2 !py-0 !text-xs"
               isDisabled={reusePolicyCount === 0}
@@ -1086,7 +1104,7 @@ function SettingsDialogBody() {
             </Checkbox>
           </div>
           <Input
-            label="WS Server 地址（开启后用于自动连接与重连）"
+            aria-label="WS Server URL"
             labelClassName="!text-sm !font-medium !text-gray-500"
             inputClassName="!min-h-8"
             defaultValue={wsServerUrl}
@@ -1288,21 +1306,8 @@ function SettingsDialogBody() {
                 }}
               />
               <div className="settings-api-url-hint">
-                规则是本地优先、定时拉取合并、再用 GitHub Contents API 覆盖上传；删除通过 tombstone 防止旧设备回灌。
-              </div>
-              <div className="settings-api-url-hint">
-                还没创建 token？可以先去{" "}
-                <a
-                  href="https://github.com/settings/personal-access-tokens"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  GitHub Personal Access Tokens
-                </a>{" "}
-                页面生成一个只给当前 repo 的 fine-grained token。
-              </div>
-              <div className="settings-api-url-hint">
-                最近同步：{githubSyncLastSyncAt ? new Date(githubSyncLastSyncAt).toLocaleString() : "从未"}{githubSyncLastError ? ` · 错误：${githubSyncLastError}` : ""}
+                {locale === "en" ? "Last synced at: " : "最近同步："}
+                {githubSyncLastSyncAt ? new Date(githubSyncLastSyncAt).toLocaleString() : (locale === "en" ? "Never" : "从未")}
               </div>
               <div className="settings-tab-action-row">
                 <Button

@@ -3,10 +3,12 @@ import { Button, Card, Input } from "@sunwu51/camel-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import MacroEditor from "./MacroEditor";
+import { useLocalizedDom } from "../../i18n";
 
 const RECORDING_KEY = "macroRecording";
 
 export default function Macro() {
+    const rootRef = useLocalizedDom();
     const [macros, setMacros] = useState([]);
     const [recording, setRecording] = useState(null);
     const [showStartForm, setShowStartForm] = useState(false);
@@ -175,6 +177,7 @@ export default function Macro() {
     }
 
     return (
+        <div ref={rootRef}>
         <Card>
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
                 <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏</span>
@@ -328,6 +331,7 @@ export default function Macro() {
             </div>
 
         </Card>
+        </div>
     );
 }
 

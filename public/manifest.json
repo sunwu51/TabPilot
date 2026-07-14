@@ -1,7 +1,8 @@
 {
-  "name": "tab manager",
-  "description": "tab manager",
-  "version": "1.5.5.18",
+  "name": "TabPilot - AI Tab Manager",
+  "short_name": "TabPilot",
+  "description": "TabPilot is an AI-powered tab manager for Chrome.\nTabPilot 是 AI 驱动的 Chrome 标签页管理助手。",
+  "version": "1.5.6",
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"
