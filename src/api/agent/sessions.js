@@ -229,18 +229,24 @@ export async function loadHydratedSession(id) {
 /**
  * Load optional metadata for a specific session.
  * @param {string} id - session ID
- * @returns {Promise<{systemPrompt: string, plans: Array, nextImageRefIndex: number, contextSummary: object | null, queuedMessages: Array}>}
+ * @returns {Promise<{systemPrompt: string, plans: Array, nextImageRefIndex: number, contextSummary: object | null, queuedMessages: Array, activeToolNames: Array}>}
  */
 export async function loadSessionMeta(id) {
   const key = `session_${id}`;
-  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null, queuedMessages: [] } });
+  const result = await chrome.storage.local.get({ [key]: { messages: [], systemPrompt: "", plans: [], nextImageRefIndex: 1, contextSummary: null, queuedMessages: [], activeToolNames: [] } });
   return {
     systemPrompt: result[key]?.systemPrompt || "",
     plans: Array.isArray(result[key]?.plans) ? result[key].plans : [],
     nextImageRefIndex: normalizeNextImageRefIndex(result[key]?.nextImageRefIndex),
     contextSummary: normalizeStoredContextSummary(result[key]?.contextSummary),
-    queuedMessages: normalizeQueuedMessages(result[key]?.queuedMessages)
+    queuedMessages: normalizeQueuedMessages(result[key]?.queuedMessages),
+    activeToolNames: normalizeActiveToolNames(result[key]?.activeToolNames)
   };
+}
+
+function normalizeActiveToolNames(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(name => String(name || "").trim()).filter(Boolean))];
 }
 
 export async function loadSessionQueuedMessages(id) {
@@ -783,7 +789,7 @@ export async function resetSessionTitle(id, title = "新会话") {
 /**
  * Save optional metadata for a session without replacing messages.
  * @param {string} id - session ID
- * @param {{systemPrompt?: string, plans?: Array, contextSummary?: object | null, queuedMessages?: Array}} meta - partial session metadata
+ * @param {{systemPrompt?: string, plans?: Array, contextSummary?: object | null, queuedMessages?: Array, activeToolNames?: Array}} meta - partial session metadata
  */
 export async function saveSessionMeta(id, meta = {}) {
   const key = `session_${id}`;

@@ -7,6 +7,7 @@ import {
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
   IMAGE_API_PROTOCOLS,
   getDefaultApiType,
+  isLlmConfigUsable,
   isImageApiConfigured,
   normalizeImageModelProfiles,
   normalizeApiType,
@@ -19,7 +20,10 @@ import {
   executeTool,
   findMcpToolByCallName,
   hasDownloadsPermission,
-  isMcpToolCallName
+  isMcpToolCallName,
+  BUILTIN_TOOL_GROUPS,
+  listToolGroup,
+  normalizeActiveToolNames
 } from "../../api/llm";
 import { ensureSettingsMigrated } from "../../api/settings/migrations";
 import {
@@ -498,6 +502,7 @@ export default function AgentPanel() {
   const sessionRuntimeRef = useRef(new Map());
   const sessionDraftsRef = useRef(new Map());
   const sessionQueuedMessagesRef = useRef(new Map());
+  const sessionActiveToolNamesRef = useRef(new Map());
   const sessionKeywordsRefreshingRef = useRef(false);
   const [pendingApproval, setPendingApproval] = useState(null);
   const approvalResolverRef = useRef(new Map());
@@ -1881,6 +1886,7 @@ export default function AgentPanel() {
     setSessionMessages(id, msgs);
     perf.mark("after-setSessionMessages");
     sessionPlansRef.current.set(id, normalizeSessionPlans(meta.plans));
+    sessionActiveToolNamesRef.current.set(id, meta.activeToolNames || []);
     const normalizedContextSummary = normalizeContextSummary(meta.contextSummary);
     if (normalizedContextSummary) {
       sessionContextSummaryRef.current.set(id, normalizedContextSummary);
@@ -2361,6 +2367,7 @@ export default function AgentPanel() {
       sessionMessagesRef.current.delete(id);
       clearSessionImageState(id);
       sessionPlansRef.current.delete(id);
+      sessionActiveToolNamesRef.current.delete(id);
       sessionContextSummaryRef.current.delete(id);
       sessionRuntimeRef.current.delete(id);
       await deleteSession(id);
@@ -2402,21 +2409,19 @@ export default function AgentPanel() {
     return (
       `You are a browser assistant running inside a browser environment.\n\n` +
       `The current date is ${new Date().toLocaleDateString()}.\n\n` +
-      `You can use browser tools to inspect open tabs, tab groups, and windows, focus tabs and windows, move tabs between windows, open tabs, close tabs, create windows, close windows, group tabs, update groups, inspect page DOM, interact with page elements, extract page content, and search browser history.\n\n` +
+      `Only the currently supplied tool definitions are callable. Use tool_list_group to discover an unavailable capability group, then tool_enable to enable the specific returned tools for this conversation. Built-in groups are: ${Object.entries(BUILTIN_TOOL_GROUPS).map(([name, summary]) => `${name} (${summary})`).join(", ")}. Lazy MCP server names may also be used as groups.\n\n` +
       platformBlock +
       `Important rules:\n` +
       `- Do not assume you already know the current browser state. Tabs and windows can change at any time.\n` +
       `- If the user asks about open tabs, browser context, which page they are on, or any page-related question where the target tab is unclear, first call tab_list and/or tab_get_active to refresh context.\n` +
-      `- If the user asks about tab groups, grouped tabs, or tab organization, first call group_list and/or group_get to refresh group context.\n` +
-      `- If the user asks about windows, tab placement across windows, or moving work between windows, first call window_list and/or window_get_current to refresh context.\n` +
-      `- If the user asks you to inspect, find, click, fill, style, or locate something on the current page, first use dom_query to inspect the DOM, then use dom_click, dom_set_value, dom_style, dom_get_html, or dom_highlight as needed.\n` +
-      `- Use dom_highlight when it would help the user visually locate the element on the page.\n` +
+      `- For tab groups, windows, page interaction, downloads, history, automation, scheduling, images, Postdog, or lazy MCP capabilities, first discover and enable the relevant group if its tools are not currently supplied.\n` +
+      `- For page interaction, inspect the DOM before clicking, filling, styling, or locating an element. Use highlighting when it would help the user visually locate the element.\n` +
       `- tab_list returns the currently open tabs with id, url, title, and capturedAt timing fields.\n` +
       `- group_list and group_get return tab group snapshots with their tabs and capturedAt timing fields.\n` +
       `- tab_get_active returns the active tab in the current extension/side-panel window with capturedAt timing fields.\n` +
       `- window_list and window_get_current return window snapshots with capturedAt timing fields.\n` +
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
-      `- If you need the actual page content, first identify the right tab, then call tab_extract.\n` +
+      `- If you need actual page content and tab_extract is not currently supplied, discover it in the tabs group before calling it.\n` +
       `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tab_focus to switch to and reactivate the tab, then retry the original tool.\n` +
       `Long-term memory rules:
 ` +
@@ -2533,6 +2538,45 @@ export default function AgentPanel() {
       enableBetaFeatures: betaFeaturesEnabled === true,
       postdogToolsEnabled: postdogToolsEnabled === true
     };
+  }
+
+  function getToolSelectionOptions(config = {}) {
+    return {
+      supportsImageInput: config.supportsImageInput === true,
+      imageToolsEnabled: config.imageToolsEnabled === true,
+      postdogToolsEnabled: config.postdogToolsEnabled === true
+    };
+  }
+
+  function getActiveToolNamesForSession(targetSessionId, config = {}) {
+    const currentNames = sessionActiveToolNamesRef.current.get(targetSessionId) || [];
+    const normalizedNames = normalizeActiveToolNames(currentNames, combinedMcpTools, getToolSelectionOptions(config));
+    if (normalizedNames.length !== currentNames.length || normalizedNames.some((name, index) => name !== currentNames[index])) {
+      sessionActiveToolNamesRef.current.set(targetSessionId, normalizedNames);
+      void saveSessionMeta(targetSessionId, { activeToolNames: normalizedNames });
+    }
+    return normalizedNames;
+  }
+
+  function buildToolGroupResult(group, config = {}) {
+    const normalizedGroup = String(group || "").trim();
+    const tools = listToolGroup(normalizedGroup, combinedMcpTools, getToolSelectionOptions(config));
+    const lazyServer = combinedMcpTools.find(tool => tool?._lazyLoad === true && tool?._serverName === normalizedGroup);
+    return {
+      group: normalizedGroup,
+      summary: BUILTIN_TOOL_GROUPS[normalizedGroup] || String(lazyServer?._lazyDescription || ""),
+      tools
+    };
+  }
+
+  async function enableToolsForSession(targetSessionId, names, config = {}) {
+    const currentNames = getActiveToolNamesForSession(targetSessionId, config);
+    const requestedNames = Array.isArray(names) ? names.slice(0, 10) : [];
+    const validNames = normalizeActiveToolNames(requestedNames, combinedMcpTools, getToolSelectionOptions(config));
+    const nextNames = [...new Set([...currentNames, ...validNames])];
+    sessionActiveToolNamesRef.current.set(targetSessionId, nextNames);
+    await saveSessionMeta(targetSessionId, { activeToolNames: nextNames });
+    return { enabled: validNames, activeToolNames: nextNames };
   }
 
   async function switchActiveModel(kind, id) {
@@ -2672,7 +2716,7 @@ export default function AgentPanel() {
     }
 
     const config = await getLLMConfig();
-    if (!config.apiKey || !config.baseUrl) {
+    if (!isLlmConfigUsable(config)) {
       toast.error("请先在设置中配置 LLM API");
       return;
     }
@@ -2731,7 +2775,7 @@ export default function AgentPanel() {
     }
 
     const config = await getLLMConfig();
-    if (!config.apiKey || !config.baseUrl) {
+    if (!isLlmConfigUsable(config)) {
       toast.error("请先在设置中配置 LLM API");
       setSessionQueuedMessages(targetSessionId, latest);
       setSessionRuntime(targetSessionId, { loading: false, abort: null });
@@ -2902,6 +2946,7 @@ export default function AgentPanel() {
     sessionStreamingThinkingRef.current.delete(targetSessionId);
     sessionStreamingToolArgsRef.current.delete(targetSessionId);
 
+    const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
     const abort = streamChat(config, fullMessages, {
       onText: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
@@ -3006,7 +3051,11 @@ export default function AgentPanel() {
             let result;
             const t0 = Date.now();
             const resolvedArgs = resolveToolImageRefs(targetSessionId, tc.args);
-            if (tc.name === "plan_create_for_session") {
+            if (tc.name === "tool_list_group") {
+              result = buildToolGroupResult(resolvedArgs?.group, config);
+            } else if (tc.name === "tool_enable") {
+              result = await enableToolsForSession(targetSessionId, resolvedArgs?.names, config);
+            } else if (tc.name === "plan_create_for_session") {
               result = await handlePlanCreateForSession(targetSessionId, runId, resolvedArgs || {});
               if (!isCurrentRun(targetSessionId, runId)) return;
               setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
@@ -3127,7 +3176,9 @@ export default function AgentPanel() {
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
       postdogToolsEnabled: config.postdogToolsEnabled === true,
-      imageToolsEnabled: config.imageToolsEnabled === true
+      imageToolsEnabled: config.imageToolsEnabled === true,
+      useToolSelection: true,
+      activeToolNames
     });
 
     if (!isCurrentRun(targetSessionId, runId)) {

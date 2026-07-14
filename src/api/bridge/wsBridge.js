@@ -21,6 +21,12 @@ let connectError = null;
 let disconnectReason = "";
 let bridgeEnabled = false;
 let wsBridgeStatus = { ...DEFAULT_WS_BRIDGE_STATUS };
+const BRIDGE_HIDDEN_TOOL_NAMES = new Set([
+  "plan_create_for_session",
+  "plan_update_for_session",
+  "tool_list_group",
+  "tool_enable"
+]);
 let storageListenerRegistered = false;
 
 function logWsBridge(message, data) {
@@ -542,7 +548,10 @@ async function handleRequest(req) {
 async function getBridgeTools() {
   const { llmConfig } = await chrome.storage.local.get({ llmConfig: {} });
   const imageToolsEnabled = isImageApiConfigured(llmConfig);
-  return TOOLS.filter(tool => imageToolsEnabled || !isImageToolName(tool.name));
+  return TOOLS.filter(tool =>
+    !BRIDGE_HIDDEN_TOOL_NAMES.has(tool.name) &&
+    (imageToolsEnabled || !isImageToolName(tool.name))
+  );
 }
 
 async function executeToolCall(id, params) {

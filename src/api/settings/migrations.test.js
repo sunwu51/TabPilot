@@ -45,6 +45,15 @@ describe("settings migrations", () => {
         activeLlmModelId: "llm_legacy",
         llmModels: [
           expect.objectContaining({
+            id: "llm_opencode_zen_big_pickle",
+            name: "OpenCode Zen Big Pickle",
+            apiType: "openai-chat-completions",
+            baseUrl: "https://opencode.ai/zen/v1/chat/completions",
+            apiKey: "",
+            model: "big-pickle",
+            requiresApiKey: false
+          }),
+          expect.objectContaining({
             id: "llm_legacy",
             name: "claude-test",
             apiType: "anthropic",
@@ -82,6 +91,14 @@ describe("settings migrations", () => {
       imageApiKey: "img-token",
       imageModel: "image-test"
     })).toMatchObject({
+      activeLlmModelId: "llm_opencode_zen_big_pickle",
+      llmModels: [
+        expect.objectContaining({
+          id: "llm_opencode_zen_big_pickle",
+          model: "big-pickle",
+          requiresApiKey: false
+        })
+      ],
       activeImageModelId: "",
       imageModels: []
     });

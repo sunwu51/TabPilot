@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { API_TYPES } from "../core/config";
-import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getMcpToolCallAliases, getTools, isMcpToolCallName } from "./definitions";
+import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getMcpToolCallAliases, getTools, isMcpToolCallName, listToolGroup, normalizeActiveToolNames } from "./definitions";
 
 function namesFor(apiType, options) {
   return getTools(apiType, [], options).map(tool => {
@@ -166,5 +166,64 @@ describe("llm tool definitions", () => {
     expect(imageGen.parameters.properties.image_model_id.description).toContain("configured Image model profile id");
     expect(imageGen.parameters.properties.image_model_id.description).toContain("img_a3f09c");
     expect(imageEdit.parameters.properties.image_model_id.description).toContain("configured Image model profile id");
+  });
+
+  it("keeps tab and page tools in the default core set when tool selection is active", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, {
+      useToolSelection: true
+    });
+
+    expect(names).toContain("tool_list_group");
+    expect(names).toContain("tool_enable");
+    expect(names).toContain("tab_extract");
+    expect(names).toContain("dom_query");
+    expect(names).not.toContain("download_search");
+  });
+
+  it("keeps configured image tools in the default core set", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, {
+      useToolSelection: true,
+      imageToolsEnabled: true
+    });
+
+    expect(names).toContain("image_gen");
+    expect(names).toContain("image_edit");
+  });
+
+  it("describes each available built-in and lazy MCP group in tool_list_group", () => {
+    const tool = getTools(API_TYPES.OPENAI_RESPONSES, [{
+      name: "search_issues",
+      _serverName: "github",
+      _lazyLoad: true,
+      _lazyDescription: "GitHub repositories, issues, and pull requests"
+    }], { useToolSelection: true }).find(item => item.name === "tool_list_group");
+
+    expect(tool.description).toContain("downloads: Download management");
+    expect(tool.description).toContain("github: GitHub repositories, issues, and pull requests");
+    expect(tool.parameters.properties.group.description).toContain("automation: Macros, stashes, and HTML playgrounds");
+    expect(tool.parameters.properties.group.enum).toBeUndefined();
+  });
+
+  it("lists lazy MCP tools by server group and silently drops unavailable active names", () => {
+    const mcpTools = [{
+      name: "search_issues",
+      description: "Search repository issues",
+      _serverName: "github",
+      _toolCallName: "mcp_github_search_issues",
+      _lazyLoad: true
+    }];
+
+    expect(listToolGroup("github", mcpTools)).toEqual([{
+      name: "mcp_github_search_issues",
+      summary: "Search repository issues"
+    }]);
+    expect(normalizeActiveToolNames(["tab_extract", "mcp_github_search_issues", "removed_tool"], mcpTools)).toEqual([
+      "tab_extract",
+      "mcp_github_search_issues"
+    ]);
+    expect(getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, {
+      useToolSelection: true,
+      activeToolNames: ["mcp_github_search_issues"]
+    }).map(tool => tool.name)).toContain("mcp_github_search_issues");
   });
 });

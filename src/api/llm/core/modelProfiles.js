@@ -1,9 +1,22 @@
 import {
+  API_TYPES,
   getDefaultApiType,
   normalizeApiType,
   normalizeModelContextLimitTokens
 } from "./config";
 
+export const DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID = "llm_opencode_zen_big_pickle";
+const LEGACY_BUILTIN_LLM_MODEL_IDS = new Set(["llm_opencode_zen_deepseek_v4_flash_free"]);
+export const DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE = Object.freeze({
+  id: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+  name: "OpenCode Zen Big Pickle",
+  apiType: API_TYPES.OPENAI_CHAT_COMPLETIONS,
+  baseUrl: "https://opencode.ai/zen/v1/chat/completions",
+  apiKey: "",
+  model: "big-pickle",
+  requiresApiKey: false
+});
+export const DEFAULT_LLM_MODEL_PROFILES = Object.freeze([DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE]);
 export const DEFAULT_IMAGE_MODEL_PROFILE = "gpt-image-2";
 export const DEFAULT_IMAGE_API_PROTOCOL = "generate";
 export const IMAGE_CHAT_COMPLETIONS_PROTOCOL = "chat_completions";
@@ -43,13 +56,21 @@ export function normalizeImageProfileProtocol(value) {
 
 export function normalizeLlmModelProfiles(llmConfig = {}) {
   const rawProfiles = Array.isArray(llmConfig.llmModels) ? llmConfig.llmModels : [];
-  const profiles = rawProfiles
+  const sourceProfiles = [
+    DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE,
+    ...rawProfiles.filter(item => !isBuiltinLlmModelProfileId(item?.id))
+  ];
+  const profiles = sourceProfiles
     .map((item, index) => normalizeLlmModelProfile(item, index))
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter(dedupeProfileById());
 
+  const fallbackProfile = rawProfiles.length > 0
+    ? (profiles.find(item => !isBuiltinLlmModelProfileId(item.id)) || profiles[0])
+    : profiles[0];
   const activeId = profiles.some(item => item.id === llmConfig.activeLlmModelId)
     ? llmConfig.activeLlmModelId
-    : (profiles[0]?.id || "");
+    : (fallbackProfile?.id || "");
   return { profiles, activeId, activeProfile: profiles.find(item => item.id === activeId) || null };
 }
 
@@ -75,6 +96,7 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
     baseUrl: activeProfile?.baseUrl ?? "",
     apiKey: activeProfile?.apiKey ?? "",
     model: activeProfile?.model ?? "",
+    requiresApiKey: activeProfile?.requiresApiKey !== false,
     modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig.modelContextLimitTokens),
     firstPacketTimeoutSeconds: Math.max(1, Number(llmConfig.firstPacketTimeoutSeconds) || 20),
     supportsImageInput: llmConfig.supportsImageInput === true,
@@ -160,7 +182,37 @@ function normalizeLlmModelProfile(item, index) {
     apiType,
     baseUrl,
     apiKey,
-    model
+    model,
+    ...(item.requiresApiKey === false ? { requiresApiKey: false } : {})
+  };
+}
+
+export function isLlmConfigUsable(config = {}) {
+  const activeConfig = Array.isArray(config.llmModels) ? resolveActiveLlmConfig(config) : config;
+  const requiresApiKey = activeConfig.requiresApiKey !== false;
+  return !!String(activeConfig.baseUrl || "").trim() &&
+    !!String(activeConfig.model || "").trim() &&
+    (!requiresApiKey || !!String(activeConfig.apiKey || "").trim());
+}
+
+export function buildLlmAuthHeaders(config = {}, headerName = "Authorization") {
+  const apiKey = String(config?.apiKey || "").trim();
+  if (!apiKey) return {};
+  if (headerName === "x-api-key") return { "x-api-key": apiKey };
+  return { [headerName]: `Bearer ${apiKey}` };
+}
+
+export function isBuiltinLlmModelProfileId(id) {
+  const normalizedId = String(id || "").trim();
+  return normalizedId === DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID || LEGACY_BUILTIN_LLM_MODEL_IDS.has(normalizedId);
+}
+
+function dedupeProfileById() {
+  const seen = new Set();
+  return (profile) => {
+    if (seen.has(profile.id)) return false;
+    seen.add(profile.id);
+    return true;
   };
 }
 

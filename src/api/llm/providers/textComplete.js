@@ -1,7 +1,7 @@
 /* global chrome */
 import { resolveLlmRequestUrl } from "../core/endpoint";
 import { API_TYPES, normalizeApiType } from "../core/config";
-import { syncActiveModelFields } from "../core/modelProfiles";
+import { buildLlmAuthHeaders, isLlmConfigUsable, syncActiveModelFields } from "../core/modelProfiles";
 import { ensureSettingsMigrated } from "../../settings/migrations";
 import { streamChat } from "./streamChat";
 
@@ -14,8 +14,8 @@ import { streamChat } from "./streamChat";
  * @returns {Promise<string>} the assistant text response
  */
 export async function textComplete(config, messages, options = {}) {
-  if (!config?.apiKey || !config?.baseUrl || !config?.model) {
-    throw new Error("LLM config incomplete (apiKey / baseUrl / model required)");
+  if (!isLlmConfigUsable(config)) {
+    throw new Error("LLM config incomplete (baseUrl / model / apiKey when required)");
   }
 
   const apiType = normalizeApiType(config.apiType);
@@ -100,7 +100,7 @@ async function _openaiComplete(config, messages, options = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+      ...buildLlmAuthHeaders(config),
     },
     body: JSON.stringify({
       model: config.model,
@@ -162,7 +162,7 @@ async function _openaiResponsesComplete(config, messages, options = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+      ...buildLlmAuthHeaders(config),
     },
     body: JSON.stringify({
       model: config.model,
@@ -226,7 +226,7 @@ async function _anthropicComplete(config, messages, options = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": config.apiKey,
+      ...buildLlmAuthHeaders(config, "x-api-key"),
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
@@ -275,7 +275,7 @@ export async function getLLMConfigForMemory() {
     llmConfig: { activeLlmModelId: "", llmModels: [] },
   });
   const activeConfig = syncActiveModelFields(llmConfig);
-  if (!activeConfig?.apiKey || !activeConfig?.baseUrl || !activeConfig?.model) {
+  if (!isLlmConfigUsable(activeConfig)) {
     return null;
   }
   return activeConfig;

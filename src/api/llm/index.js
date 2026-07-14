@@ -8,8 +8,14 @@ export {
   normalizeModelContextLimitTokens
 } from "./core/config";
 export {
+  buildLlmAuthHeaders,
   createModelProfileId,
   createImageModelProfileId,
+  DEFAULT_LLM_MODEL_PROFILES,
+  DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+  DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE,
+  isLlmConfigUsable,
+  isBuiltinLlmModelProfileId,
   isConfiguredImageProfile,
   normalizeImageModelProfiles,
   normalizeImageProfileProtocol,
@@ -25,12 +31,16 @@ export {
   TOOLS,
   BUILTIN_TOOL_COUNT,
   BUILTIN_TOOL_NAMES,
+  BUILTIN_TOOL_GROUPS,
   buildMcpToolCallName,
   findMcpToolByCallName,
   getMcpToolCallAliases,
+  getBuiltinToolGroup,
   getTools,
   isImageToolName,
-  isMcpToolCallName
+  isMcpToolCallName,
+  listToolGroup,
+  normalizeActiveToolNames
 } from "./tools/definitions";
 export { executeTool, captureFullPageScreenshotToTab, openHelloWorldPlayground, getBuiltinToolTimeoutSeconds } from "./tools/executor";
 export { triggerBrowserDownload, hasDownloadsPermission, DOWNLOADS_PERMISSION_REQUIRED } from "./tools/builtins/downloadHelper";

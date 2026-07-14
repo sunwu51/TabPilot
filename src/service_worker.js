@@ -181,8 +181,10 @@ function buildScheduleMcpSnapshot(mcpRegistry = []) {
         _serverName: tool?._serverName,
         _serverUrl: tool?._serverUrl,
         _serverHeaders: tool?._serverHeaders || {},
+        _serverType: tool?._serverType || "http",
+        _serverExtensionId: tool?._serverExtensionId || "",
         _toolCallName: tool?._toolCallName
-    })).filter(tool => tool.name && tool._toolCallName && tool._serverUrl);
+    })).filter(tool => tool.name && tool._toolCallName && (tool._serverUrl || tool._serverExtensionId));
 }
 
 function isKnownScheduledToolName(toolName, mcpRegistry = []) {

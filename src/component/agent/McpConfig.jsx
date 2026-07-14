@@ -2,12 +2,13 @@
 import { Button, Card, Input, Dialog, Checkbox } from "@sunwu51/camel-ui";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { connectMcpServer } from "../../api/mcp";
-import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
+import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_GROUPS, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
 import toast from "react-hot-toast";
 
 const MCP_WARNING_LIMIT = 120 - BUILTIN_TOOL_COUNT;
 const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 const MCP_SILENT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const RESERVED_LAZY_SERVER_NAMES = new Set(Object.keys(BUILTIN_TOOL_GROUPS));
 
 /**
  * MCP Server configuration component using camel-ui Dialog.
@@ -19,9 +20,13 @@ const MCP_SILENT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 /* eslint-disable react/prop-types */
 export default function McpConfig({ onToolsChanged }) {
   const [servers, setServers] = useState([]);
+  const [newType, setNewType] = useState("http");
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [newHeaders, setNewHeaders] = useState("");
+  const [newExtensionId, setNewExtensionId] = useState("");
+  const [newLazyLoadTools, setNewLazyLoadTools] = useState(false);
+  const [newLazyLoadDescription, setNewLazyLoadDescription] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [expandedServers, setExpandedServers] = useState({});
   const overLimitRef = useRef(false);
@@ -141,9 +146,13 @@ export default function McpConfig({ onToolsChanged }) {
     const { mcpServers } = await chrome.storage.local.get({ mcpServers: [] });
     let reconnected = await Promise.all(
       mcpServers.map(async (s) => {
-        const result = await connectMcpServer(s.url, s.headers || {});
+        const endpoint = s.type === "extension"
+          ? { type: "extension", extensionId: s.extensionId, name: s.name }
+          : { type: "http", url: s.url, headers: s.headers || {} };
+        const result = await connectMcpServer(endpoint);
         return {
           ...s,
+          type: s.type === "extension" ? "extension" : "http",
           name: s.name || normalizeServerName(result.name) || normalizeServerName(s.url) || `server_${Date.now()}`,
           serverInfoName: result.name || s.serverInfoName || "",
           tools: result.tools,
@@ -168,10 +177,14 @@ export default function McpConfig({ onToolsChanged }) {
         allTools.push({
           ...t,
           _serverId: s.id,
-          _serverName: s.name || s.url,
+          _serverName: s.name || s.url || s.extensionId,
           _serverUrl: s.url,
           _serverHeaders: s.headers || {},
+          _serverType: s.type === "extension" ? "extension" : "http",
+          _serverExtensionId: s.extensionId || "",
           _dangerous: !!settings.dangerous,
+          _lazyLoad: s.lazyLoadTools === true,
+          _lazyDescription: s.lazyLoadDescription || "",
           _toolCallName: buildMcpToolCallName(s.name || "server", t.name)
         });
       }
@@ -187,11 +200,15 @@ export default function McpConfig({ onToolsChanged }) {
   async function _saveServers(serverList) {
     const toSave = serverList.map(s => ({
       id: s.id,
+      type: s.type === "extension" ? "extension" : "http",
       url: s.url,
       headers: s.headers,
+      extensionId: s.extensionId || "",
       name: s.name,
       serverInfoName: s.serverInfoName || "",
       enabled: s.enabled,
+      lazyLoadTools: s.lazyLoadTools === true,
+      lazyLoadDescription: s.lazyLoadDescription || "",
       toolSettings: s.toolSettings || {}
     }));
     await chrome.storage.local.set({ mcpServers: toSave });
@@ -200,6 +217,7 @@ export default function McpConfig({ onToolsChanged }) {
   async function handleConnect() {
     const name = normalizeServerName(newName);
     const url = newUrl.trim();
+    const extensionId = newExtensionId.trim();
     if (!name) {
       toast.error("请填写 MCP 名称");
       return;
@@ -212,10 +230,25 @@ export default function McpConfig({ onToolsChanged }) {
       toast.error("MCP 名称不能重复");
       return;
     }
-    if (!url) return;
+    if (newLazyLoadTools && RESERVED_LAZY_SERVER_NAMES.has(name)) {
+      toast.error("惰性加载 MCP 名称不能与内置工具组重名");
+      return;
+    }
+    if (newLazyLoadTools && !newLazyLoadDescription.trim()) {
+      toast.error("请填写惰性加载 MCP 的功能描述");
+      return;
+    }
+    if (newType === "http" && !url) {
+      toast.error("请填写服务器 URL");
+      return;
+    }
+    if (newType === "extension" && !extensionId) {
+      toast.error("请填写插件 ID");
+      return;
+    }
 
     let headers = {};
-    if (newHeaders.trim()) {
+    if (newType === "http" && newHeaders.trim()) {
       try {
         headers = JSON.parse(newHeaders.trim());
       } catch (e) {
@@ -225,17 +258,24 @@ export default function McpConfig({ onToolsChanged }) {
     }
 
     setConnecting(true);
-    const result = await connectMcpServer(url, headers);
+    const endpoint = newType === "extension"
+      ? { type: "extension", extensionId, name }
+      : { type: "http", url, headers };
+    const result = await connectMcpServer(endpoint);
     setConnecting(false);
 
     const server = {
       id: `mcp_${Date.now()}`,
-      url,
-      headers,
+      type: newType,
+      url: newType === "http" ? url : "",
+      headers: newType === "http" ? headers : {},
+      extensionId: newType === "extension" ? extensionId : "",
       name,
       serverInfoName: result.name || "",
       tools: result.tools,
       toolSettings: buildToolSettings({}, result.tools),
+      lazyLoadTools: newLazyLoadTools,
+      lazyLoadDescription: newLazyLoadDescription.trim(),
       error: result.error,
       enabled: !result.error
     };
@@ -244,9 +284,13 @@ export default function McpConfig({ onToolsChanged }) {
       toast.error(`连接失败: ${result.error}`);
     } else {
       toast.success(`已连接「${name}」(${result.tools.length} 个工具)`);
+      setNewType("http");
       setNewName("");
       setNewUrl("");
       setNewHeaders("");
+      setNewExtensionId("");
+      setNewLazyLoadTools(false);
+      setNewLazyLoadDescription("");
     }
 
     const updated = [...servers, server];
@@ -263,7 +307,10 @@ export default function McpConfig({ onToolsChanged }) {
   }
 
   async function handleReconnect(server) {
-    const result = await connectMcpServer(server.url, server.headers || {});
+    const endpoint = server.type === "extension"
+      ? { type: "extension", extensionId: server.extensionId, name: server.name }
+      : { type: "http", url: server.url, headers: server.headers || {} };
+    const result = await connectMcpServer(endpoint);
     const updated = servers.map(s =>
       s.id === server.id
         ? {
@@ -301,6 +348,28 @@ export default function McpConfig({ onToolsChanged }) {
     setServers(updated);
     await _saveServers(updated);
     _notifyTools(updated, { showWarning: true });
+  }
+
+  async function handleLazyLoadChange(server, lazyLoadTools) {
+    if (lazyLoadTools && RESERVED_LAZY_SERVER_NAMES.has(server.name)) {
+      toast.error("惰性加载 MCP 名称不能与内置工具组重名");
+      return;
+    }
+    if (lazyLoadTools && !String(server.lazyLoadDescription || "").trim()) {
+      toast.error("请先填写此 MCP 的功能描述");
+      return;
+    }
+    const updated = servers.map(item => item.id === server.id ? { ...item, lazyLoadTools } : item);
+    setServers(updated);
+    await _saveServers(updated);
+    _notifyTools(updated, { showWarning: true });
+  }
+
+  async function handleLazyLoadDescriptionChange(server, lazyLoadDescription) {
+    const updated = servers.map(item => item.id === server.id ? { ...item, lazyLoadDescription } : item);
+    setServers(updated);
+    await _saveServers(updated);
+    _notifyTools(updated, { showWarning: false });
   }
 
   function toggleExpanded(serverId) {
@@ -345,6 +414,9 @@ export default function McpConfig({ onToolsChanged }) {
                 {s.serverInfoName && s.serverInfoName !== s.name && (
                   <div className="text-xs text-gray-300 truncate">{s.serverInfoName}</div>
                 )}
+                {s.lazyLoadTools && (
+                  <div className="text-xs text-amber-600 truncate">惰性加载：{s.lazyLoadDescription || "缺少功能描述"}</div>
+                )}
               </div>
               <div className="flex gap-1 flex-shrink-0 flex-wrap justify-end">
                 <Button className="!text-xs !p-0 !px-2 !min-h-6" onPress={() => toggleExpanded(s.id)}>
@@ -356,12 +428,32 @@ export default function McpConfig({ onToolsChanged }) {
             </div>
             {expandedServers[s.id] && s.tools?.length > 0 && (
               <div className="mt-2 border-t border-gray-100 pt-2 flex flex-col gap-2 min-w-0">
+                <div className="rounded border border-gray-100 p-2">
+                  <Checkbox
+                    isSelected={s.lazyLoadTools === true}
+                    onChange={(checked) => handleLazyLoadChange(s, checked)}
+                  >
+                    <span className="text-xs">惰性加载工具</span>
+                  </Checkbox>
+                  <Input
+                    label="功能描述"
+                    labelClassName="!text-xs !text-gray-500"
+                    inputClassName="!min-h-8"
+                    defaultValue={s.lazyLoadDescription || ""}
+                    isDisabled={s.lazyLoadTools !== true}
+                    onChange={(value) => handleLazyLoadDescriptionChange(s, value)}
+                    placeholder="例如：GitHub repositories, issues, and pull requests"
+                  />
+                  <div className="text-xs text-gray-400 mt-1">启用后，工具仅在当前会话按需加载；功能描述为必填。</div>
+                </div>
                 <div
                   className="text-xs text-gray-500 break-all whitespace-normal"
                   style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
-                  title={s.url}
+                  title={s.type === "extension" ? s.extensionId : s.url}
                 >
-                  HTTP URL：{s.url || "—"}
+                  {s.type === "extension"
+                    ? `插件 ID：${s.extensionId || "—"}`
+                    : `HTTP URL：${s.url || "—"}`}
                 </div>
                 {[...s.tools].sort((a, b) => {
                   const aNest = !!getToolSetting(s, a.name).nesting;
@@ -415,6 +507,23 @@ export default function McpConfig({ onToolsChanged }) {
         )}
 
         {/* Add new server */}
+        <div className="mb-2">
+          <div className="text-xs text-gray-500 mb-1">类型</div>
+          <div className="flex gap-2">
+            <Button
+              className={newType === "http" ? "!bg-gray-900 !text-white" : "!bg-gray-100 !text-gray-700"}
+              onPress={() => setNewType("http")}
+            >
+              HTTP
+            </Button>
+            <Button
+              className={newType === "extension" ? "!bg-gray-900 !text-white" : "!bg-gray-100 !text-gray-700"}
+              onPress={() => setNewType("extension")}
+            >
+              Extension
+            </Button>
+          </div>
+        </div>
         <Input
           label="名称"
           labelClassName="!text-xs !text-gray-500"
@@ -424,25 +533,53 @@ export default function McpConfig({ onToolsChanged }) {
           onChange={setNewName}
           placeholder="my_server"
         />
-        <Input
-          label="服务器 URL"
-          labelClassName="!text-xs !text-gray-500"
-          inputClassName="!min-h-8"
-          defaultValue={newUrl}
-          onChange={setNewUrl}
-          placeholder="http://localhost:3000/mcp"
-        />
-        <Input
-          label="Headers (JSON, 可选)"
-          labelClassName="!text-xs !text-gray-500"
-          inputClassName="!min-h-8"
-          defaultValue={newHeaders}
-          onChange={setNewHeaders}
-          placeholder='{"Authorization":"Bearer xx"}'
-        />
+        {newType === "http" ? (
+          <>
+            <Input
+              label="服务器 URL"
+              labelClassName="!text-xs !text-gray-500"
+              inputClassName="!min-h-8"
+              defaultValue={newUrl}
+              onChange={setNewUrl}
+              placeholder="http://localhost:3000/mcp"
+            />
+            <Input
+              label="Headers (JSON, 可选)"
+              labelClassName="!text-xs !text-gray-500"
+              inputClassName="!min-h-8"
+              defaultValue={newHeaders}
+              onChange={setNewHeaders}
+              placeholder='{"Authorization":"Bearer xx"}'
+            />
+          </>
+        ) : (
+          <Input
+            label="插件 ID"
+            labelClassName="!text-xs !text-gray-500"
+            inputClassName="!min-h-8"
+            defaultValue={newExtensionId}
+            onChange={setNewExtensionId}
+            placeholder="abcdefghijklmnopabcdefghijklmnop"
+          />
+        )}
+        <div className="mt-2 rounded border border-gray-100 p-2">
+          <Checkbox isSelected={newLazyLoadTools} onChange={setNewLazyLoadTools}>
+            <span className="text-xs">惰性加载工具</span>
+          </Checkbox>
+          {newLazyLoadTools && (
+            <Input
+              label="功能描述"
+              labelClassName="!text-xs !text-gray-500"
+              inputClassName="!min-h-8"
+              defaultValue={newLazyLoadDescription}
+              onChange={setNewLazyLoadDescription}
+              placeholder="例如：GitHub repositories, issues, and pull requests"
+            />
+          )}
+        </div>
         <Button
           className="mt-2 w-full"
-          isDisabled={connecting || !newName.trim() || !newUrl.trim()}
+          isDisabled={connecting || !newName.trim() || (newType === "http" ? !newUrl.trim() : !newExtensionId.trim())}
           onPress={handleConnect}
         >
           {connecting ? "连接中..." : "连接"}

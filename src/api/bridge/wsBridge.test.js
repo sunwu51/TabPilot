@@ -5,6 +5,10 @@ const executeTool = vi.fn();
 
 vi.mock("../llm", () => ({
   TOOLS: [
+    { name: "plan_create_for_session" },
+    { name: "plan_update_for_session" },
+    { name: "tool_list_group" },
+    { name: "tool_enable" },
     { name: "image_gen" },
     { name: "image_edit" },
     { name: "tab_list" }
@@ -43,6 +47,26 @@ function flushMicrotasks() {
 }
 
 describe("wsBridge tool execution queue", () => {
+  it("does not expose session-only planning and tool-selection helpers", async () => {
+    resetChromeMock();
+    chrome.runtime.sendMessage = vi.fn(() => Promise.resolve());
+    MockWebSocket.instances = [];
+    globalThis.WebSocket = MockWebSocket;
+    vi.resetModules();
+
+    const { connectWsBridge } = await import("./wsBridge");
+    await connectWsBridge("ws://localhost:8787");
+    const socket = MockWebSocket.instances[0];
+    socket.onopen?.();
+    socket.onmessage?.({
+      data: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })
+    });
+
+    await flushMicrotasks();
+    const response = socket.sent.map(item => JSON.parse(item)).find(item => item.id === 1);
+    expect(response.result.tools.map(tool => tool.name)).toEqual(["image_gen", "image_edit", "tab_list"]);
+  });
+
   it("does not queue image tools behind other image tools", async () => {
     resetChromeMock();
     chrome.runtime.sendMessage = vi.fn(() => Promise.resolve());

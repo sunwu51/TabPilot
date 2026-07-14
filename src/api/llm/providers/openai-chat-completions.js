@@ -4,6 +4,7 @@ import { buildFirstPacketTimeoutError, createFirstPacketTimeoutState, createLlmS
 import { getTools } from "../tools/definitions";
 import { isLongToolArgumentName } from "../core/longToolArgs";
 import { buildOpenAIChatReasoningFields } from "../core/reasoning";
+import { buildLlmAuthHeaders } from "../core/modelProfiles";
 
 export function buildOpenAICacheFields(options = {}) {
   const cacheKey = String(options?.sessionId || "").trim();
@@ -22,7 +23,7 @@ export async function streamOpenAIAttempt(config, messages, signal, { onText, on
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.apiKey}`
+        ...buildLlmAuthHeaders(config)
       },
       body: JSON.stringify({
         model: config.model,

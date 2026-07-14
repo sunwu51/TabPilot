@@ -164,3 +164,56 @@ describe("MCP Streamable HTTP session handling", () => {
     expect(fetch).toHaveBeenCalledTimes(5);
   });
 });
+
+describe("MCP extension transport", () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    globalThis.fetch = vi.fn();
+    chrome.runtime.sendMessage = vi.fn((extensionId, message, callback) => {
+      if (message.method === "initialize") {
+        callback({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { serverInfo: { name: "Cookie Helper" }, capabilities: { tools: {} } }
+        });
+        return;
+      }
+      if (message.method === "tools/list") {
+        callback({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { tools: [{ name: "get_cookie", inputSchema: { type: "object" } }] }
+        });
+        return;
+      }
+      if (message.method === "tools/call") {
+        callback({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { content: [{ type: "text", text: "cookie-value" }] }
+        });
+      }
+    });
+  });
+
+  it("connects and calls tools through another extension id", async () => {
+    const { connectMcpServer, callMcpTool } = await import("./index");
+
+    await expect(connectMcpServer({ type: "extension", extensionId: "cookie-helper-id", name: "cookie_helper" }))
+      .resolves.toMatchObject({ name: "Cookie Helper", tools: [{ name: "get_cookie" }] });
+    await expect(callMcpTool({ type: "extension", extensionId: "cookie-helper-id" }, {}, "get_cookie", { url: "https://example.com", name: "sid" }))
+      .resolves.toEqual({ result: "cookie-value" });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      "cookie-helper-id",
+      expect.objectContaining({ method: "initialize" }),
+      expect.any(Function)
+    );
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      "cookie-helper-id",
+      expect.objectContaining({ method: "tools/call" }),
+      expect.any(Function)
+    );
+  });
+});
