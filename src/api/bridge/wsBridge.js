@@ -497,7 +497,7 @@ async function handleRequest(req) {
     case "initialize":
       sendResponse(id, {
         protocolVersion: "2025-03-26",
-        serverInfo: { name: "TabManager", version: "1.4" },
+        serverInfo: { name: "TabPilot", version: "1.4" },
         capabilities: { tools: {} }
       });
       break;

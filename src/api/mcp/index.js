@@ -250,7 +250,7 @@ export async function initializeMcp(url, headers = {}, options = {}) {
     protocolVersion: "2025-03-26",
     capabilities: {},
     clientInfo: {
-      name: "TabManager",
+      name: "TabPilot",
       version: "1.0"
     }
   }, undefined, options);

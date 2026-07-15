@@ -33,7 +33,7 @@ const MESSAGES = {
     languageHint: "默认根据浏览器语言选择；保存后使用手动选择。"
   },
   en: {
-    tabManagement: "Tab Manager",
+    tabManagement: "TabPilot",
     assistant: "Assistant",
     toolBridge: "Tool Bridge",
     settings: "Settings",

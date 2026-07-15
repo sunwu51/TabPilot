@@ -1,266 +1,69 @@
-# Tab Manager
+<p align="center">
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:6D5DFB,50:20C6FF,100:00E5A8&height=260&section=header&text=TabPilot&fontSize=76&fontColor=FFFFFF&fontAlignY=38&desc=Your%20AI%20copilot%20for%20a%20calmer%20browser&descAlignY=58&animation=fadeIn" alt="TabPilot banner" width="100%" />
+</p>
 
-Tab Manager 是一个面向重度标签页用户的 Chrome 扩展，目标是把“找标签、整理标签、保存工作现场、用 AI 操作浏览器”放到同一个侧边栏里完成。
+<p align="center">
+  <strong>Turn tab chaos into a focused workspace — then let AI do the browser work.</strong>
+</p>
 
-## 当前功能
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/tab-manager/kklpijbnmbkpgcmnldimiagiehbakaec">Chrome Web Store</a>
+  · <a href="#features">Features</a>
+  · <a href="#quick-start">Quick start</a>
+  · <a href="README.zh-CN.md">中文版</a>
+</p>
 
-- 标签搜索：按标题和 URL 关键词搜索当前已打开的标签页，并同时补充最近浏览记录，方便快速切回页面或重新打开历史页面。
-- 标签分组：支持按自定义正则规则分组，也支持一键按域名分组，还可以快速折叠全部分组或取消全部分组。
-- 工作区保存与恢复：可以把当前打开的一组页面保存为工作区，之后一键恢复，恢复时会自动跳过已经打开的页面，减少重复标签。
-- AI Agent：内置浏览器助手，可结合当前标签页、标签组、窗口、DOM 操作、历史记录等能力完成浏览器内的查询和操作。
-- MCP / Skills 扩展：支持接入 MCP 工具和 skill-bridge，为 agent 增加额外工具能力。
-- 截图工具控制：可以在设置中配置当前模型是否支持图片输入，决定是否向模型暴露截图能力。
-- 会话与调度：agent 对话支持历史会话、导出，以及定时执行工具任务。
+<p align="center">
+  <img src="https://img.shields.io/badge/Chrome-Extension-4285F4?logo=googlechrome&logoColor=white" alt="Chrome Extension" />
+  <img src="https://img.shields.io/badge/AI-Powered-8B5CF6" alt="AI powered" />
+  <img src="https://img.shields.io/badge/MCP-Ready-00B894" alt="MCP ready" />
+</p>
 
-## 安装方式
+## One sidebar. Less tab switching. More flow.
 
-Chrome 商店安装地址：
+TabPilot is an AI-powered Chrome side panel for people who live in their browser. Put a browser-aware agent to work on the page in front of you, then find pages instantly, reshape crowded windows into meaningful groups, and save research sessions for later.
 
-[https://chromewebstore.google.com/detail/tab-manager/kklpijbnmbkpgcmnldimiagiehbakaec](https://chromewebstore.google.com/detail/tab-manager/kklpijbnmbkpgcmnldimiagiehbakaec)
+It combines practical tab management with browser-aware AI tools — without making you leave the tab you are already in.
 
-如果你不是使用 Chrome，或者希望自行修改源码，可以从 GitHub Releases 下载打包产物，然后通过浏览器开发者模式加载扩展。
+## Features
 
-## 开发说明
+| | What it does |
+| --- | --- |
+| ✨ **Your browser-aware AI Agent** | Ask AI to work with tabs, windows, groups, history, page DOM actions, screenshots, and page-side evaluation — all from the side panel. |
+| 🔌 **An agent that grows with you** | Connect HTTP or Chrome-extension MCP tools; optionally expose TabPilot's tools through a WebSocket bridge. |
+| ⏱️ **Turn repeat work into automation** | Record and replay macros, keep agent conversations, export them, and schedule tool-driven tasks. |
+| 🔎 **Find anything** | Search open tabs by title or URL and surface relevant browser history when the page is no longer open. |
+| 🗂️ **Make order fast** | Group tabs by domain or your own rules, collapse groups, and move through busy windows without losing context. |
+| 🧠 **Save your context** | Save workspaces and stashes, then restore them later while avoiding duplicate tabs. |
+| ☁️ **Keep settings portable** | Export/import settings and sync settings or stashes to a GitHub repository. |
 
-本项目基于 Vite + React。
+## Screenshots
 
-常用命令：
+> Add the following images under `docs/screenshots/` when they are ready. Keeping the filenames below lets this README render automatically.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/tab-overview.png" alt="TabPilot tab overview — open tabs, search, and grouped workspaces" /></td>
+    <td width="50%"><img src="docs/screenshots/ai-agent.png" alt="TabPilot AI Agent — a browser-aware conversation with tools" /></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>1. Tab overview</strong><br />Show search results, several tab groups, and workspace controls.</td>
+    <td align="center"><strong>2. AI Agent</strong><br />Show a real prompt plus tool calls/results, ideally with the current page context visible.</td>
+  </tr>
+</table>
+
+## Quick start
+
+1. Install TabPilot from the [Chrome Web Store](https://chromewebstore.google.com/detail/tab-manager/kklpijbnmbkpgcmnldimiagiehbakaec).
+2. Open the side panel and start with search, grouping, or a saved workspace.
+3. Add an LLM provider in Settings to unlock the AI Agent.
+4. Connect MCP tools when you want the agent to reach beyond the built-in browser toolkit.
+
+## Build from source
 
 ```bash
 npm install
 npm run build
 ```
 
-构建完成后，产物位于 `dist/` 目录。
-
-## MCP 扩展接入
-
-Agent 支持两种 MCP 接入方式：
-
-- `HTTP`：填写 MCP 服务名称、HTTP URL，以及可选的 Headers JSON。
-- `Extension`：填写一个名称和目标 Chrome 插件 ID，把另一个插件暴露的工具直接接入到当前小助手中。
-
-### 在设置里添加 Extension 类型 MCP
-
-1. 打开侧边栏里的 Agent。
-2. 点击 `MCP` 按钮。
-3. 在添加对话框里选择 `Extension`。
-4. 填写：
-   - `名称`：当前小助手里展示和命名工具时使用的前缀，建议只用字母、数字、下划线。
-   - `插件 ID`：目标插件在 `chrome://extensions` 或其自身页面中显示的扩展 ID。
-5. 点击连接。连接成功后，对方插件暴露的工具会自动加入当前会话。
-
-如果报错 `Could not establish connection. Receiving end does not exist.`，通常表示目标插件当前没有成功接住外部消息。常见原因是：
-
-- 插件 ID 填错。
-- 目标插件未启用或刚更新后还没 reload。
-- 目标插件的 background service worker 启动失败。
-- 目标插件没有实现 `onMessageExternal` 或没有配置 `externally_connectable`。
-
-## 如何开发一个可被接入的插件
-
-如果你希望自己的 Chrome 插件能被 Tab Manager 以 `Extension MCP` 的方式接入，需要让它对外暴露一个基于 `chrome.runtime.sendMessage(extensionId, ...)` 的 JSON-RPC 2.0 接口。
-
-### 1. Manifest 要求
-
-目标插件需要在 `manifest.json` 中至少包含：
-
-```json
-{
-  "manifest_version": 3,
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
-  "externally_connectable": {
-    "ids": ["*"],
-    "matches": []
-  }
-}
-```
-
-说明：
-
-- `background.service_worker` 用来接收外部扩展消息。
-- `externally_connectable` 决定哪些扩展可以调用你。开发阶段可以像上面一样先放开；正式发布时更建议收紧到明确的调用方 ID。
-
-### 2. Background 里监听外部消息
-
-目标插件需要实现：
-
-```js
-chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  handleJsonRpc(message).then((resp) => {
-    if (resp) sendResponse(resp);
-  });
-  return true;
-});
-```
-
-这里要点有两个：
-
-- 接口要走 `onMessageExternal`，不是普通的 `onMessage`。
-- 异步返回时要 `return true`，否则响应通道会提前关闭。
-
-### 3. 协议规范
-
-当前接入协议是一个轻量的 JSON-RPC 2.0 MCP 子集。Tab Manager 会向目标插件发送如下消息：
-
-#### `initialize`
-
-请求：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2025-03-26"
-  }
-}
-```
-
-响应至少应返回：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "protocolVersion": "2025-03-26",
-    "capabilities": { "tools": {} },
-    "serverInfo": {
-      "name": "your-extension",
-      "version": "1.0.0"
-    }
-  }
-}
-```
-
-#### `tools/list`
-
-请求：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "method": "tools/list"
-}
-```
-
-响应：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 2,
-  "result": {
-    "tools": [
-      {
-        "name": "your_tool",
-        "description": "Tool description",
-        "inputSchema": {
-          "type": "object",
-          "properties": {},
-          "required": []
-        }
-      }
-    ]
-  }
-}
-```
-
-每个工具至少需要：
-
-- `name`
-- `description`
-- `inputSchema`
-
-其中 `inputSchema` 建议使用标准 JSON Schema object 结构。
-
-#### `tools/call`
-
-请求：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "tools/call",
-  "params": {
-    "name": "your_tool",
-    "arguments": {
-      "foo": "bar"
-    }
-  }
-}
-```
-
-成功响应建议返回 MCP 常见的 `content` 结构：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "content": [
-      {
-        "type": "text",
-        "text": "tool result"
-      }
-    ]
-  }
-}
-```
-
-当前 Tab Manager 会优先读取 `content` 中 `type: "text"` 的内容并拼接为工具结果。
-
-### 4. 错误返回规范
-
-当请求非法、方法不存在或工具执行失败时，建议返回标准 JSON-RPC error：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 3,
-  "error": {
-    "code": -32601,
-    "message": "Unknown method: tools/call"
-  }
-}
-```
-
-推荐约定：
-
-- `-32600`：Invalid Request
-- `-32601`：Unknown method / Unknown tool
-- `-32602`：Invalid params
-- `-32000`：业务执行失败
-
-### 5. 最小实现建议
-
-一个可接入插件通常拆成三层会比较清晰：
-
-- `background.js`：负责 `onMessageExternal` 接线。
-- `jsonrpc.js`：负责解析 `initialize`、`tools/list`、`tools/call`。
-- `tool-impl.js`：真正执行浏览器能力或业务逻辑。
-
-这样既方便本地调试，也方便后续同时复用到 WebSocket bridge、postMessage bridge 或别的入口。
-
-## 参考实现
-
-可以参考 [sunwu51/cookie-helper](https://github.com/sunwu51/cookie-helper)：
-
-- 用 `externally_connectable + onMessageExternal` 暴露跨插件调用入口。
-- 用统一的 JSON-RPC 2.0 handler 处理 `initialize / tools/list / tools/call`。
-- 工具返回值使用 MCP 风格的 `content` 数组。
-
-它是一个很小但完整的参考样例，适合直接照着实现第一版。
-
-## 视频
-
-[https://www.bilibili.com/video/BV1TsdZBmEo5](https://www.bilibili.com/video/BV1TsdZBmEo5)
-
-[https://www.bilibili.com/video/BV1XKH7eEEM9/](https://www.bilibili.com/video/BV1XKH7eEEM9)
+Load the generated `dist/` folder from `chrome://extensions` with **Developer mode** enabled.
