@@ -51,7 +51,7 @@ export async function getGithubSyncFileSha(config, path) {
 
 export async function putGithubSyncFile(config, path, value, { sha = "" } = {}) {
   const body = {
-    message: `Sync TabManager ${path}`,
+    message: `Sync TabPilot ${path}`,
     content: encodeCompressedJson(value)
   };
   if (sha) body.sha = sha;
