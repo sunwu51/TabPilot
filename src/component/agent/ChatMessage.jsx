@@ -7,6 +7,7 @@ import "highlight.js/styles/atom-one-dark.css";
 import { Button, Dialog } from "@sunwu51/camel-ui";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeImageRefSource, normalizeMessageImageRefs } from "./imageRefs";
+import { buildWebSearchActionLabels } from "./webSearchActions";
 
 let activeSpeechController = null;
 
@@ -177,6 +178,9 @@ const ChatMessage = memo(function ChatMessage({
   // Assistant message
   if (role === "assistant") {
     const rendered = [];
+    if (Array.isArray(msg.web_searches) && msg.web_searches.length > 0) {
+      rendered.push(<AssistantWebSearchBubble key="web-searches" actions={msg.web_searches} />);
+    }
 
     // Anthropic format: content is array of blocks
     if (Array.isArray(content)) {
@@ -281,6 +285,23 @@ const ChatMessage = memo(function ChatMessage({
   return null;
 
 });
+
+/* eslint-disable react/prop-types */
+function AssistantWebSearchBubble({ actions = [] }) {
+  return (
+    <div className="chat-msg chat-msg-assistant">
+      <div className="chat-bubble chat-bubble-assistant native-web-search-bubble">
+        <strong>联网搜索</strong>
+        {actions.map((action, index) => {
+          return buildWebSearchActionLabels(action).map((label, labelIndex) => (
+            <div key={`${action?.type || "action"}-${index}-${labelIndex}`}>✓ {label}</div>
+          ));
+        })}
+      </div>
+    </div>
+  );
+}
+/* eslint-enable react/prop-types */
 
 export default ChatMessage;
 

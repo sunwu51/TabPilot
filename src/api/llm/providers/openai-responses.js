@@ -7,14 +7,18 @@ import { isLongToolArgumentName } from "../core/longToolArgs";
 import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "../core/reasoning";
 import { buildLlmAuthHeaders } from "../core/modelProfiles";
 
-export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onRequestBodySize }, mcpTools = [], options = {}) {
-  const tools = getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options);
+export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onNativeWebSearch, onRequestBodySize }, mcpTools = [], options = {}) {
+  const tools = [
+    ...(config.nativeWebSearch === true ? [{ type: "web_search" }] : []),
+    ...getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options)
+  ];
   const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 
   try {
     const { instructions, input } = buildResponsesRequestInput(messages, {
-      omitThinkingFromRequests: config.omitThinkingFromRequests === true || options.omitThinkingFromRequests === true
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true || options.omitThinkingFromRequests === true,
+      nativeWebSearch: config.nativeWebSearch === true
     });
     const requestBody = {
       model: config.model,
@@ -92,7 +96,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
             responseId = event.response.id;
           }
           usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
-          applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone });
+          applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone, onNativeWebSearch });
         } catch (error) {
           throw createLlmStreamError({
             code: "STREAM_PARSE_ERROR",
@@ -137,10 +141,24 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
         }
       });
 
-    const messageContent = orderedItems
+    const messageContent = dedupeResponsesOutputTextParts(orderedItems
       .filter(item => item.type === "message")
       .flatMap(item => item.content || [])
-      .filter(Boolean);
+      .filter(Boolean));
+    const citations = extractResponsesCitations(messageContent);
+    const normalizedText = buildResponsesDisplayText(messageContent);
+    const webSearches = orderedItems
+      .filter(item => item.type === "web_search_call")
+      .map(item => item.action)
+      .filter(action => action && typeof action === "object");
+    const webSearchItems = orderedItems
+      .filter(item => item.type === "web_search_call")
+      .map(item => ({
+        id: item.id,
+        type: item.type,
+        status: item.status,
+        action: item.action
+      }));
     const reasoning = orderedItems
       .map(extractResponsesReasoningText)
       .filter(Boolean)
@@ -148,13 +166,21 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
     const reasoningItems = orderedItems
       .map(normalizeResponsesReasoningInputItem)
       .filter(Boolean);
+    const replayItems = orderedItems
+      .filter(item => item.type === "reasoning" || item.type === "thinking" || item.type === "web_search_call")
+      .map(item => item.type === "web_search_call" ? normalizeResponsesWebSearchInputItem(item) : normalizeResponsesReasoningInputItem(item))
+      .filter(Boolean);
 
     onDone?.({
       role: "assistant",
-      content: textParts.join("") || null,
+      content: normalizedText || textParts.join("") || null,
       ...(reasoning ? { reasoning } : {}),
       ...(reasoningItems.length > 0 ? { response_reasoning_items: reasoningItems } : {}),
+      ...(replayItems.length > 0 ? { response_replay_items: replayItems } : {}),
       ...(messageContent.length > 0 ? { response_content: messageContent } : {}),
+      ...(citations.length > 0 ? { citations } : {}),
+      ...(webSearches.length > 0 ? { web_searches: webSearches } : {}),
+      ...(webSearchItems.length > 0 ? { web_search_items: webSearchItems } : {}),
       ...(usage ? { usage } : {}),
       ...(responseId ? { response_id: responseId } : {}),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
@@ -176,6 +202,139 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
   } finally {
     timeoutState.cleanup();
   }
+}
+
+export function extractResponsesCitations(content = []) {
+  const citations = [];
+  for (const part of content) {
+    for (const annotation of part?.annotations || []) {
+      if (annotation?.type !== "url_citation" || !annotation.url) continue;
+      citations.push({
+        type: "url_citation",
+        title: annotation.title || annotation.url,
+        url: annotation.url,
+        startIndex: Number.isInteger(annotation.start_index) ? annotation.start_index : undefined,
+        endIndex: Number.isInteger(annotation.end_index) ? annotation.end_index : undefined
+      });
+    }
+  }
+  return citations.filter((item, index, all) => all.findIndex(other => other.url === item.url) === index);
+}
+
+export function buildResponsesDisplayText(content = []) {
+  return dedupeResponsesOutputTextParts(content)
+    .filter(part => (part?.type === "output_text" || part?.type === "text") && typeof part.text === "string")
+    .map(part => applyResponsesUrlCitations(part.text, part.annotations))
+    .join("");
+}
+
+export function dedupeResponsesOutputTextParts(content = []) {
+  const result = [];
+  const indexByText = new Map();
+  for (const part of Array.isArray(content) ? content : []) {
+    if (part?.type !== "output_text" || typeof part.text !== "string") {
+      result.push(part);
+      continue;
+    }
+    const existingIndex = indexByText.get(part.text);
+    if (existingIndex == null) {
+      indexByText.set(part.text, result.length);
+      result.push(part);
+      continue;
+    }
+    const existing = result[existingIndex];
+    result[existingIndex] = {
+      ...existing,
+      ...part,
+      annotations: mergeResponsesAnnotations(existing?.annotations, part.annotations)
+    };
+  }
+  return result;
+}
+
+function mergeResponsesAnnotations(first, second) {
+  const result = [];
+  const seen = new Set();
+  for (const annotation of [...(Array.isArray(first) ? first : []), ...(Array.isArray(second) ? second : [])]) {
+    if (!annotation || typeof annotation !== "object") continue;
+    const key = `${annotation.type || ""}:${annotation.url || ""}:${annotation.start_index ?? ""}:${annotation.end_index ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ ...annotation });
+  }
+  return result;
+}
+
+export function applyResponsesUrlCitations(text, annotations = []) {
+  const source = String(text || "");
+  if (hasLeakedCitationMarker(source)) {
+    return replaceLeakedCitationMarkers(source, annotations);
+  }
+  const replacements = (Array.isArray(annotations) ? annotations : [])
+    .filter(annotation => annotation?.type === "url_citation" && annotation.url)
+    .map(annotation => ({
+      start: Number(annotation.start_index),
+      end: Number(annotation.end_index),
+      title: String(annotation.title || annotation.url),
+      url: String(annotation.url)
+    }))
+    .filter(item => Number.isInteger(item.start) && Number.isInteger(item.end) && item.start >= 0 && item.end > item.start && item.end <= source.length)
+    .sort((a, b) => b.start - a.start);
+
+  let result = source;
+  for (const item of replacements) {
+    const citedText = source.slice(item.start, item.end);
+    const label = item.title || stripLeakedCitationMarkers(citedText).trim() || item.url;
+    result = `${result.slice(0, item.start)}[${escapeMarkdownLinkLabel(label)}](${item.url})${result.slice(item.end)}`;
+  }
+  return stripLeakedCitationMarkers(result);
+}
+
+function stripLeakedCitationMarkers(text) {
+  return String(text || "")
+    .replace(/\[?(?:(?:\uE200)?cite(?:\uE202|\[)?)?turn\d+(?:search|news)\d+(?:\uE201|\])?/gi, "")
+    .replace(/\[?cite(?:turn\d+(?:search|news)\d+)?\]?/gi, "")
+    .replace(/[\uE000-\uF8FF]/g, "");
+}
+
+function hasLeakedCitationMarker(text) {
+  return /\[?(?:(?:\uE200)?cite(?:\uE202|\[)?)?turn\d+(?:search|news)\d+/i.test(String(text || ""));
+}
+
+function replaceLeakedCitationMarkers(text, annotations = []) {
+  const usableAnnotations = (Array.isArray(annotations) ? annotations : [])
+    .filter(annotation => annotation?.type === "url_citation" && annotation.url);
+  let annotationIndex = 0;
+  const annotationsByToken = new Map();
+  const replaced = String(text || "").replace(
+    /\[?(?:(?:\uE200)?cite(?:\uE202|\[)?)?(turn\d+(?:search|news)\d+)(?:\uE201|\])?/gi,
+    (_match, rawToken) => {
+      const token = String(rawToken || "").toLowerCase();
+      let annotation = annotationsByToken.get(token);
+      if (!annotation) {
+        annotation = usableAnnotations[annotationIndex++];
+        if (annotation) annotationsByToken.set(token, annotation);
+      }
+      if (!annotation) return "";
+      const title = escapeMarkdownLinkLabel(annotation.title || annotation.url);
+      return `[${title}](${annotation.url})`;
+    }
+  );
+  return promoteReferenceListTitles(stripLeakedCitationMarkers(replaced));
+}
+
+function promoteReferenceListTitles(text) {
+  return String(text || "").replace(
+    /^(\s*[-*+]\s+)(.+?)[：:]\s*\(?\[[^\]]+\]\((https?:\/\/[^\s)]+)\)\)?\s*$/gm,
+    (_match, prefix, title, url) => `${prefix}[${escapeMarkdownLinkLabel(title.trim())}](${url})`
+  );
+}
+
+function escapeMarkdownLinkLabel(text) {
+  return String(text || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
 }
 
 function buildOpenAIResponsesIncludeFields(config = {}, options = {}) {
@@ -219,15 +378,31 @@ export function buildResponsesRequestInput(messages, options = {}) {
     }
 
     if (msg.role === "assistant") {
-      if (!omitThinking) {
+      const replayItems = options.nativeWebSearch === true && Array.isArray(msg._responsesReplayItems)
+        ? msg._responsesReplayItems.filter(item => !omitThinking || item?.type === "web_search_call")
+        : null;
+      if (replayItems) {
+        input.push(...replayItems);
+      } else if (!omitThinking) {
         input.push(...normalizeResponsesReasoningInputItems(msg._responsesReasoningItems));
       }
 
       if (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0) {
+        const storedResponsesContent = options.nativeWebSearch === true && Array.isArray(msg._responsesContent)
+          ? msg._responsesContent
+          : msg.content;
+        const content = dedupeResponsesOutputTextParts(
+          normalizeResponsesMessageContent(storedResponsesContent, "assistant", options)
+        );
+        const trace = options.nativeWebSearch === true ? formatWebSearchTrace(msg.web_searches) : "";
+        const searchItems = !replayItems && options.nativeWebSearch === true && Array.isArray(msg.web_search_items)
+          ? msg.web_search_items
+          : [];
+        input.push(...searchItems);
         input.push({
           type: "message",
           role: "assistant",
-          content: normalizeResponsesMessageContent(msg.content, "assistant", options)
+          content: trace ? [...content, { type: "input_text", text: `\n\n[Previous web search actions]\n${trace}` }] : content
         });
         continue;
       }
@@ -259,6 +434,21 @@ export function buildResponsesRequestInput(messages, options = {}) {
   };
 }
 
+function formatWebSearchTrace(actions) {
+  if (!Array.isArray(actions) || actions.length === 0) return "";
+  return actions.flatMap((action, index) => {
+    if (action?.type === "search") {
+      const queries = [
+        ...(Array.isArray(action.query) ? action.query : [action.query]),
+        ...(Array.isArray(action.queries) ? action.queries : [action.queries])
+      ].map(value => String(value || "").trim()).filter(Boolean);
+      return queries.map((query, queryIndex) => `${index + 1}.${queryIndex + 1}. search: ${query}`);
+    }
+    if (action?.type === "open_page") return `${index + 1}. fetch: ${action.url || ""}`;
+    return `${index + 1}. ${action?.type || "web_search"}`;
+  }).join("\n");
+}
+
 function shouldOmitThinkingFromRequests(options = {}) {
   return options.omitThinkingFromRequests === true;
 }
@@ -288,6 +478,10 @@ function sanitizeResponsesRequestInputItem(item) {
     };
   }
 
+  if (item.type === "web_search_call") {
+    return normalizeResponsesWebSearchInputItem(item);
+  }
+
   if (item.type === "message") {
     return {
       type: "message",
@@ -300,6 +494,16 @@ function sanitizeResponsesRequestInputItem(item) {
   delete sanitized.status;
   delete sanitized.order;
   return sanitized;
+}
+
+function normalizeResponsesWebSearchInputItem(item) {
+  if (!item || item.type !== "web_search_call") return null;
+  return {
+    type: "web_search_call",
+    id: item.id || "",
+    status: item.status || "completed",
+    action: item.action || {}
+  };
 }
 
 function measureUtf8Bytes(text) {
@@ -488,7 +692,7 @@ function extractPlainMessageText(content) {
   return String(content).trim();
 }
 
-function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone } = {}) {
+function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone, onNativeWebSearch } = {}) {
   const eventType = String(event?.type || "");
   const encryptedReasoningDelta = extractResponsesEncryptedReasoningDelta(event);
   if (encryptedReasoningDelta) {
@@ -508,7 +712,10 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, 
   if (eventType === "response.output_item.added" || eventType === "response.output_item.done") {
     const item = normalizeResponsesOutputItem(event?.item, event?.output_index);
     if (item) {
-      outputItems.set(item.id || `${item.type}:${item.order}`, item);
+      storeResponsesOutputItem(outputItems, item);
+      if (item.type === "web_search_call") {
+        onNativeWebSearch?.({ id: item.id, status: item.status || "completed", action: item.action || null });
+      }
       if (item.type === "function_call") {
         const call = mergeResponsesFunctionCall(toolCallsById, item.call_id || item.id, {
           id: item.id || "",
@@ -541,6 +748,28 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, 
     if (text) {
       ensureMessageTextPart(item).text += text;
       onText?.(text);
+    }
+    return;
+  }
+
+  if (eventType === "response.output_text.annotation.added") {
+    const item = ensureResponsesOutputItem(outputItems, event?.item_id, event?.output_index, "message");
+    const textPart = ensureMessageTextPart(item);
+    if (!Array.isArray(textPart.annotations)) textPart.annotations = [];
+    const annotation = event?.annotation;
+    if (annotation && typeof annotation === "object") {
+      const index = Number.isInteger(event?.annotation_index) ? event.annotation_index : textPart.annotations.length;
+      textPart.annotations[index] = { ...annotation };
+    }
+    return;
+  }
+
+  if (eventType === "response.output_text.done") {
+    const item = ensureResponsesOutputItem(outputItems, event?.item_id, event?.output_index, "message");
+    const textPart = ensureMessageTextPart(item);
+    if (typeof event?.text === "string") textPart.text = event.text;
+    if (Array.isArray(event?.annotations)) {
+      textPart.annotations = event.annotations.map(annotation => ({ ...annotation }));
     }
     return;
   }
@@ -584,7 +813,7 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, 
       event.response.output.forEach((item, index) => {
         const normalized = normalizeResponsesOutputItem(item, index);
         if (normalized) {
-          outputItems.set(normalized.id || `${normalized.type}:${normalized.order}`, normalized);
+          storeResponsesOutputItem(outputItems, normalized);
           if (normalized.type === "function_call") {
             const call = mergeResponsesFunctionCall(toolCallsById, normalized.call_id || normalized.id, {
               id: normalized.id || "",
@@ -736,13 +965,65 @@ export function normalizeResponsesReasoningInputItem(item) {
 function normalizeResponsesOutputContentPart(part) {
   if (!part || typeof part !== "object") return null;
   if ((part.type === "output_text" || part.type === "text") && typeof part.text === "string") {
-    return { type: "output_text", text: part.text };
+    return {
+      ...part,
+      type: "output_text",
+      text: part.text,
+      annotations: Array.isArray(part.annotations) ? part.annotations.map(annotation => ({ ...annotation })) : []
+    };
   }
   return { ...part };
 }
 
+function storeResponsesOutputItem(outputItems, incoming) {
+  if (!incoming) return null;
+  let merged = incoming;
+  for (const [key, existing] of outputItems.entries()) {
+    if (existing?.type !== incoming.type || existing?.order !== incoming.order) continue;
+    merged = mergeResponsesOutputItems(existing, merged);
+    outputItems.delete(key);
+  }
+  outputItems.set(merged.id || `${merged.type}:${merged.order}`, merged);
+  return merged;
+}
+
+function mergeResponsesOutputItems(existing, incoming) {
+  if (incoming.type !== "message") return { ...existing, ...incoming };
+  const existingContent = Array.isArray(existing.content) ? existing.content : [];
+  const incomingContent = Array.isArray(incoming.content) ? incoming.content : [];
+  const contentLength = Math.max(existingContent.length, incomingContent.length);
+  const content = [];
+  for (let index = 0; index < contentLength; index += 1) {
+    const previous = existingContent[index];
+    const next = incomingContent[index];
+    if (!previous) {
+      content.push(next);
+      continue;
+    }
+    if (!next) {
+      content.push(previous);
+      continue;
+    }
+    const previousText = typeof previous.text === "string" ? previous.text : "";
+    const nextText = typeof next.text === "string" ? next.text : "";
+    content.push({
+      ...previous,
+      ...next,
+      text: nextText.length >= previousText.length ? nextText : previousText,
+      annotations: Array.isArray(next.annotations) && next.annotations.length > 0
+        ? next.annotations
+        : (Array.isArray(previous.annotations) ? previous.annotations : [])
+    });
+  }
+  return { ...existing, ...incoming, content };
+}
+
 function ensureResponsesOutputItem(outputItems, itemId, order = 0, type = "message") {
   const key = itemId || `${type}:${order}`;
+  if (!outputItems.has(key)) {
+    const existing = [...outputItems.values()].find(item => item?.type === type && item?.order === order);
+    if (existing) return existing;
+  }
   if (!outputItems.has(key)) {
     outputItems.set(key, {
       id: itemId || key,
@@ -884,7 +1165,11 @@ export function normalizeResponsesMessageContent(content, role = "user", options
         if (dataUrl) return [{ type: "input_image", image_url: dataUrl }];
       }
       if ((block.type === "output_text" || block.type === "input_text") && typeof block.text === "string") {
-        return [{ type: block.type, text: block.text }];
+        return [{
+          type: block.type,
+          text: block.text,
+          ...(Array.isArray(block.annotations) ? { annotations: block.annotations.map(annotation => ({ ...annotation })) } : {})
+        }];
       }
       return [];
     });

@@ -96,6 +96,7 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
     baseUrl: activeProfile?.baseUrl ?? "",
     apiKey: activeProfile?.apiKey ?? "",
     model: activeProfile?.model ?? "",
+    nativeWebSearch: activeProfile?.nativeWebSearch === true,
     requiresApiKey: activeProfile?.requiresApiKey !== false,
     modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig.modelContextLimitTokens),
     firstPacketTimeoutSeconds: Math.max(1, Number(llmConfig.firstPacketTimeoutSeconds) || 20),
@@ -183,6 +184,7 @@ function normalizeLlmModelProfile(item, index) {
     baseUrl,
     apiKey,
     model,
+    nativeWebSearch: item.nativeWebSearch === true,
     ...(item.requiresApiKey === false ? { requiresApiKey: false } : {})
   };
 }

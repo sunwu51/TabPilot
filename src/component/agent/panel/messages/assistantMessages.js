@@ -7,7 +7,9 @@ export function buildFinalAssistantMessage(apiType, model, textContent, doneMsg 
 
   const message = {
     role: "assistant",
-    content: textContent || doneMsg.content || ""
+    content: normalizeApiType(apiType) === API_TYPES.OPENAI_RESPONSES
+      ? (doneMsg.content || textContent || "")
+      : (textContent || doneMsg.content || "")
   };
   if (doneMsg?.response_id) {
     message._responsesResponseId = doneMsg.response_id;
@@ -15,8 +17,14 @@ export function buildFinalAssistantMessage(apiType, model, textContent, doneMsg 
   if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
     message._responsesContent = doneMsg.response_content;
   }
+  if (Array.isArray(doneMsg?.citations) && doneMsg.citations.length > 0) message.citations = doneMsg.citations;
+  if (Array.isArray(doneMsg?.web_searches) && doneMsg.web_searches.length > 0) message.web_searches = doneMsg.web_searches;
+  if (Array.isArray(doneMsg?.web_search_items) && doneMsg.web_search_items.length > 0) message.web_search_items = doneMsg.web_search_items;
   if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
     message._responsesReasoningItems = doneMsg.response_reasoning_items;
+  }
+  if (Array.isArray(doneMsg?.response_replay_items) && doneMsg.response_replay_items.length > 0) {
+    message._responsesReplayItems = doneMsg.response_replay_items;
   }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }
@@ -36,8 +44,14 @@ export function buildAssistantToolCallMessage(apiType, model, textContent, doneM
   if (Array.isArray(doneMsg?.response_content) && doneMsg.response_content.length > 0) {
     message._responsesContent = doneMsg.response_content;
   }
+  if (Array.isArray(doneMsg?.citations) && doneMsg.citations.length > 0) message.citations = doneMsg.citations;
+  if (Array.isArray(doneMsg?.web_searches) && doneMsg.web_searches.length > 0) message.web_searches = doneMsg.web_searches;
+  if (Array.isArray(doneMsg?.web_search_items) && doneMsg.web_search_items.length > 0) message.web_search_items = doneMsg.web_search_items;
   if (Array.isArray(doneMsg?.response_reasoning_items) && doneMsg.response_reasoning_items.length > 0) {
     message._responsesReasoningItems = doneMsg.response_reasoning_items;
+  }
+  if (Array.isArray(doneMsg?.response_replay_items) && doneMsg.response_replay_items.length > 0) {
+    message._responsesReplayItems = doneMsg.response_replay_items;
   }
   return copyAssistantUsageFields(apiType, model, doneMsg, copyAssistantReasoningFields(doneMsg, message));
 }

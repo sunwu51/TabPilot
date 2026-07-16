@@ -83,6 +83,7 @@ import {
   normalizeMessageImageRefs
 } from "./imageRefs";
 import "./chat.css";
+import { buildWebSearchActionLabels } from "./webSearchActions";
 
 // === Extracted helper modules (see ./panel/) ===
 import {
@@ -462,6 +463,7 @@ export default function AgentPanel() {
   const [streamingContent, setStreamingContent] = useState(null);
   const [streamingThinking, setStreamingThinking] = useState(null);
   const [streamingToolArgs, setStreamingToolArgs] = useState(null);
+  const [streamingWebSearches, setStreamingWebSearches] = useState(null);
   const [searchMode, setSearchMode] = useState(false);
   const [searchScope, setSearchScope] = useState("current");
   const [searchQuery, setSearchQuery] = useState("");
@@ -501,6 +503,7 @@ export default function AgentPanel() {
   const sessionImageStoreVersionRef = useRef(new Map());
   const sessionSaveStateRef = useRef(new Map());
   const sessionStreamingToolArgsRef = useRef(new Map());
+  const sessionStreamingWebSearchesRef = useRef(new Map());
   const sessionPlansRef = useRef(new Map());
   const sessionContextSummaryRef = useRef(new Map());
   const sessionRuntimeRef = useRef(new Map());
@@ -554,11 +557,11 @@ export default function AgentPanel() {
    */
   useEffect(() => {
     if (!shouldAutoFollowBottomRef.current) {
-      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingThinking !== null || streamingToolArgs !== null);
+      setShowJumpToBottom(messages.length > 0 || streamingContent !== null || streamingThinking !== null || streamingToolArgs !== null || streamingWebSearches !== null);
       return;
     }
     scrollMessagesToBottom("auto");
-  }, [messages, streamingContent, streamingThinking, streamingToolArgs]);
+  }, [messages, streamingContent, streamingThinking, streamingToolArgs, streamingWebSearches]);
 
   useEffect(() => {
     if (loading || pendingApproval || !shouldFocusInputWhenReadyRef.current) return;
@@ -1872,6 +1875,7 @@ export default function AgentPanel() {
     setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
     setStreamingThinking(sessionStreamingThinkingRef.current.get(id) ?? null);
     setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
+    setStreamingWebSearches(sessionStreamingWebSearchesRef.current.get(id) ?? null);
     perf.mark("before-load");
     const [msgs, meta] = await Promise.all([
       loadSession(id),
@@ -1943,6 +1947,8 @@ export default function AgentPanel() {
       sessionStreamingThinkingRef.current.delete(targetSessionId);
       setStreamingToolArgs(null);
       sessionStreamingToolArgsRef.current.delete(targetSessionId);
+      setStreamingWebSearches(null);
+      sessionStreamingWebSearchesRef.current.delete(targetSessionId);
     }
     if (runtime.abort) {
       runtime.abort();
@@ -2313,6 +2319,7 @@ export default function AgentPanel() {
     setStreamingContent(null);
     setStreamingThinking(null);
     setStreamingToolArgs(null);
+    setStreamingWebSearches(null);
     setInput("");
     setPendingAttachments([]);
     setImageEditRequest(null);
@@ -2488,8 +2495,10 @@ export default function AgentPanel() {
       `- Keep plan steps concise, concrete, and outcome-oriented.
 ` +
       `- Treat questions about "latest", "current", "today", recent releases, prices, availability, laws, policies, API fields/schemas, model lists/capabilities/pricing, SDK behavior, product documentation, or any fast-changing technical detail as time-sensitive. Do not answer these from memory first.\n` +
-      `- For time-sensitive questions, first look for an available web search/fetch MCP tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources before responding.\n` +
-      `- If no web search/fetch tool is available, use browser tools instead: open a search engine or official documentation page with tab_open, inspect/extract the page with tab_extract and DOM tools, and then answer based on what you found.\n` +
+      `- For time-sensitive questions, use web research capabilities in this priority order. First, look for an available MCP web search/fetch tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources.\n` +
+      `- If no suitable MCP web tool is available, or its results are incomplete, use the model's built-in web_search capability when it is available.\n` +
+      `- If neither MCP nor built-in web_search is available or sufficient, use tab/browser tools: open a search engine or official page with tab_open, inspect or extract it with tab_extract and DOM tools, and continue from the page contents.\n` +
+      `- Do not stop after one tool when its results are incomplete, ambiguous, or lack primary sources. Combine MCP search/fetch, built-in web_search, and tab/browser inspection as needed to cross-check facts and obtain complete information.\n` +
       `- When answering time-sensitive or documentation/API questions after searching, include concise source context such as the site/document name and relevant dates or version notes when available. If verification fails, clearly say what could not be verified instead of guessing.\n` +
       `- Prefer primary sources for technical and product facts, especially official API documentation, release notes, model documentation, SDK docs, or standards documents. Use secondary sources only when primary sources are unavailable or to cross-check.\n` +
       `- If your conclusion materially relies on information found through a web/search/fetch/browser lookup, append a final section titled "参考内容：" and list the referenced links as Markdown bullets, for example "- [OpenAI Api Doc](https://xxxx)". Put this citation section at the end of the answer.\n` +
@@ -2934,7 +2943,8 @@ export default function AgentPanel() {
     const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
       supportsToolImageInput: config.supportsToolImageInput === true,
-      omitThinkingFromRequests: config.omitThinkingFromRequests === true
+      omitThinkingFromRequests: config.omitThinkingFromRequests === true,
+      nativeWebSearch: config.nativeWebSearch === true
     });
     const fullMessages = [{ role: "system", content: systemPrompt }, ...apiConversationMessages];
 
@@ -2947,8 +2957,10 @@ export default function AgentPanel() {
     setStreamingContent("");
     setStreamingThinking(null);
     setStreamingToolArgs(null);
+    setStreamingWebSearches([]);
     sessionStreamingThinkingRef.current.delete(targetSessionId);
     sessionStreamingToolArgsRef.current.delete(targetSessionId);
+    sessionStreamingWebSearchesRef.current.set(targetSessionId, []);
 
     const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
     const abort = streamChat(config, fullMessages, {
@@ -2988,6 +3000,15 @@ export default function AgentPanel() {
         }
       },
 
+      onNativeWebSearch: (event) => {
+        if (!isCurrentRun(targetSessionId, runId) || !event?.action) return;
+        const previous = sessionStreamingWebSearchesRef.current.get(targetSessionId) || [];
+        if (previous.some(item => item.id === event.id)) return;
+        const next = [...previous, event];
+        sessionStreamingWebSearchesRef.current.set(targetSessionId, next);
+        if (activeSessionIdRef.current === targetSessionId) setStreamingWebSearches(next);
+      },
+
       onRequestBodySize: (size) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         const nextRequestBodySize = normalizeRequestBodySize(size);
@@ -3005,6 +3026,7 @@ export default function AgentPanel() {
         setStreamingContent("");
         setStreamingThinking(null);
         setStreamingToolArgs(null);
+        setStreamingWebSearches(null);
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
 
@@ -3016,6 +3038,7 @@ export default function AgentPanel() {
         sessionStreamingRef.current.delete(targetSessionId);
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
+        sessionStreamingWebSearchesRef.current.delete(targetSessionId);
         try {
           // Streaming phase is over; clear the old request abort handle before tool execution.
           setSessionRuntime(targetSessionId, { abort: null, loading: true });
@@ -3163,9 +3186,11 @@ export default function AgentPanel() {
         setStreamingContent(null);
         setStreamingThinking(null);
         setStreamingToolArgs(null);
+        setStreamingWebSearches(null);
         sessionStreamingRef.current.delete(targetSessionId);
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
+        sessionStreamingWebSearchesRef.current.delete(targetSessionId);
         toast.error(`LLM 错误: ${err.message}`);
         const stampedMessages = stampLastUserDuration(conversationMessages);
         const finalMessages = [...stampedMessages, buildLlmErrorDisplayMessage(err)];
@@ -4289,6 +4314,9 @@ export default function AgentPanel() {
                 imageSrcResolver={resolveSessionImageSrc}
                 imageRefNavigator={navigateSessionImageRef}
               />
+              {streamingContent !== null && streamingWebSearches && streamingWebSearches.length > 0 && (
+                <NativeWebSearchBubble actions={streamingWebSearches} />
+              )}
               {streamingThinking !== null && streamingThinking.length > 0 && (
                 <AssistantThinkingBubble text={streamingThinking} />
               )}
@@ -4644,3 +4672,21 @@ export default function AgentPanel() {
     </div>
   );
 }
+
+/* eslint-disable react/prop-types */
+function NativeWebSearchBubble({ actions = [] }) {
+  return (
+    <div className="chat-msg chat-msg-assistant">
+      <div className="chat-bubble chat-bubble-assistant native-web-search-bubble">
+        <strong>联网搜索</strong>
+        {actions.map((item, index) => {
+          const action = item.action || {};
+          return buildWebSearchActionLabels(action).map((label, labelIndex) => (
+            <div key={`${item.id || index}-${labelIndex}`}>{item.status === "completed" ? "✓ " : "… "}{label}</div>
+          ));
+        })}
+      </div>
+    </div>
+  );
+}
+/* eslint-enable react/prop-types */
