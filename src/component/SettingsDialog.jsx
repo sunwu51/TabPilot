@@ -113,6 +113,7 @@ function SettingsDialogBody() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [model, setModel] = useState(DEFAULT_LLM_MODEL_DRAFT.model);
+  const [nativeWebSearch, setNativeWebSearch] = useState(false);
   const [llmModels, setLlmModels] = useState(DEFAULT_SETTINGS.llmConfig.llmModels);
   const [activeLlmModelId, setActiveLlmModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeLlmModelId);
   const [llmModelFormOpen, setLlmModelFormOpen] = useState(false);
@@ -454,6 +455,7 @@ function SettingsDialogBody() {
           setBaseUrl(activeProfile.baseUrl || "");
           setApiKey(activeProfile.apiKey || "");
           setModel(activeProfile.model || "");
+          setNativeWebSearch(activeProfile.nativeWebSearch === true);
         }
       }
       return nextOpen;
@@ -490,7 +492,8 @@ function SettingsDialogBody() {
       apiType: normalizeApiType(apiType),
       baseUrl: trimmedBaseUrl,
       apiKey: trimmedApiKey,
-      model: trimmedModel
+      model: trimmedModel,
+      nativeWebSearch: normalizeApiType(apiType) === API_TYPES.OPENAI_RESPONSES && nativeWebSearch
     };
     try {
       const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
@@ -516,6 +519,7 @@ function SettingsDialogBody() {
     setBaseUrl("");
     setApiKey("");
     setModel("");
+    setNativeWebSearch(false);
     setLlmModelFormOpen(false);
     setFormKey(prev => prev + 1);
   }
@@ -831,6 +835,11 @@ function SettingsDialogBody() {
                 onChange={setModel}
                 placeholder={apiType === API_TYPES.ANTHROPIC ? "claude-sonnet-4-20250514" : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-4.1-mini" : "deepseek-v4-flash")}
               />
+              {apiType === API_TYPES.OPENAI_RESPONSES && (
+                <Checkbox isSelected={nativeWebSearch} onChange={setNativeWebSearch}>
+                  <span className="text-sm">启用 OpenAI 服务端联网搜索</span>
+                </Checkbox>
+              )}
               <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={handleAddLlmModel}>
                 添加
               </Button>

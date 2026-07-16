@@ -98,10 +98,23 @@ export function getOpenAIReasoningContentForApi(msg) {
 }
 
 export function copyOpenAIProviderMetadataForApi(source, target, options = {}) {
-  if (shouldOmitThinkingFromRequests(options)) return target;
   if (normalizeApiType(options.apiType) !== API_TYPES.OPENAI_RESPONSES) return target;
-  if (Array.isArray(source?._responsesReasoningItems) && source._responsesReasoningItems.length > 0) {
+  if (!shouldOmitThinkingFromRequests(options) && Array.isArray(source?._responsesReasoningItems) && source._responsesReasoningItems.length > 0) {
     target._responsesReasoningItems = source._responsesReasoningItems;
+  }
+  if (options.nativeWebSearch === true) {
+    if (Array.isArray(source?._responsesContent) && source._responsesContent.length > 0) {
+      target._responsesContent = source._responsesContent;
+    }
+    if (Array.isArray(source?._responsesReplayItems) && source._responsesReplayItems.length > 0) {
+      target._responsesReplayItems = source._responsesReplayItems;
+    }
+    if (Array.isArray(source?.web_search_items) && source.web_search_items.length > 0) {
+      target.web_search_items = source.web_search_items;
+    }
+    if (Array.isArray(source?.web_searches) && source.web_searches.length > 0) {
+      target.web_searches = source.web_searches;
+    }
   }
   return target;
 }

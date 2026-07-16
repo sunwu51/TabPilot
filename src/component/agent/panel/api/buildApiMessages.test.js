@@ -19,6 +19,52 @@ describe("buildApiMessages image options", () => {
     ]
   };
 
+  it("preserves Responses web search items when native search remains enabled", () => {
+    const history = [{
+      role: "assistant",
+      content: "Search summary",
+      web_search_items: [{
+        id: "ws_123",
+        type: "web_search_call",
+        status: "completed",
+        action: { type: "search", query: "latest news" }
+      }],
+      web_searches: [{ type: "search", query: "latest news" }]
+    }];
+
+    const apiMessages = buildApiMessages(API_TYPES.OPENAI_RESPONSES, history, {
+      nativeWebSearch: true,
+      omitThinkingFromRequests: true
+    });
+    expect(apiMessages[0]).toMatchObject({
+      web_search_items: history[0].web_search_items,
+      web_searches: history[0].web_searches
+    });
+    expect(buildResponsesRequestInput(apiMessages, { nativeWebSearch: true }).input[0]).toEqual(history[0].web_search_items[0]);
+  });
+
+  it("preserves Responses output text annotations in the next request", () => {
+    const annotation = {
+      type: "url_citation",
+      start_index: 7,
+      end_index: 12,
+      title: "Source",
+      url: "https://example.com/source"
+    };
+    const apiMessages = buildApiMessages(API_TYPES.OPENAI_RESPONSES, [{
+      role: "assistant",
+      content: "Result source",
+      _responsesContent: [{ type: "output_text", text: "Result source", annotations: [annotation] }]
+    }], { nativeWebSearch: true });
+
+    const request = buildResponsesRequestInput(apiMessages, { nativeWebSearch: true });
+    expect(request.input[0].content[0]).toEqual({
+      type: "output_text",
+      text: "Result source",
+      annotations: [annotation]
+    });
+  });
+
   it("keeps OpenAI Chat user images by default", () => {
     const result = buildApiMessages(API_TYPES.OPENAI_CHAT, [userImageMessage]);
 
