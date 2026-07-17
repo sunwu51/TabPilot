@@ -126,8 +126,10 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
         const raw = tc.arguments || "{}";
         try {
           return {
-            id: tc.call_id || tc.id || `toolcall_${Date.now()}`,
-            responseItemId: tc.id || "",
+            // Keep the Responses item ID as the local tool-call identity. call_id
+            // may be reused by compatible providers in later response turns.
+            id: tc.id || tc.call_id || `toolcall_${Date.now()}`,
+            responseCallId: tc.call_id || tc.id || "",
             name: tc.name,
             args: JSON.parse(raw),
             _raw: raw
@@ -187,7 +189,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       _openaiToolCalls: toolCalls.length > 0 ? toolCalls.map(tc => ({
         id: tc.id,
         type: "function",
-        response_item_id: tc.responseItemId || undefined,
+        response_call_id: tc.responseCallId || undefined,
         function: { name: tc.name, arguments: tc._raw }
       })) : undefined
     });
@@ -371,7 +373,7 @@ export function buildResponsesRequestInput(messages, options = {}) {
     if (msg.role === "tool") {
       input.push({
         type: "function_call_output",
-        call_id: msg.tool_call_id,
+        call_id: msg.response_call_id || msg.tool_call_id,
         output: buildResponsesFunctionCallOutput(msg, options)
       });
       continue;
@@ -633,8 +635,9 @@ function collectResponsesToolOutputImages(msg) {
 function buildResponsesFunctionCallInputItem(toolCall = {}) {
   const name = toolCall.function?.name || toolCall.name || "";
   const args = toolCall.function?.arguments || toolCall.arguments || "{}";
-  const callId = toolCall.call_id || toolCall.id || buildSyntheticResponsesToolCallId(name, args);
-  const responseItemId = toolCall.response_item_id ||
+  const callId = toolCall.response_call_id || toolCall.call_id || toolCall.id || buildSyntheticResponsesToolCallId(name, args);
+  const responseItemId = (toolCall.response_call_id && toolCall.id ? toolCall.id : "") ||
+    toolCall.response_item_id ||
     (toolCall.call_id && toolCall.id && toolCall.id !== toolCall.call_id ? toolCall.id : "") ||
     buildSyntheticResponsesFunctionCallItemId(callId, name, args);
   const item = {

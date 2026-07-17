@@ -462,8 +462,8 @@ describe("OpenAI responses reasoning helpers", () => {
         ],
         tool_calls: [
           {
-            id: "call_123",
-            response_item_id: "fc_123",
+            id: "fc_123",
+            response_call_id: "call_123",
             function: { name: "lookup", arguments: "{\"query\":\"x\"}" }
           }
         ]
@@ -472,6 +472,39 @@ describe("OpenAI responses reasoning helpers", () => {
       { id: "rs_123", type: "reasoning", summary: [], encrypted_content: "ciphertext" },
       { type: "message", role: "assistant", content: [{ type: "output_text", text: "I will call a tool." }] },
       { type: "function_call", id: "fc_123", call_id: "call_123", name: "lookup", arguments: "{\"query\":\"x\"}" }
+    ]);
+  });
+
+  it("keeps a unique Responses item ID while returning tool output by call ID", () => {
+    expect(buildResponsesRequestInput([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "fc_e622fba411ad523587825676d5473063",
+          response_call_id: "call_1",
+          function: { name: "lookup", arguments: "{\"query\":\"x\"}" }
+        }]
+      },
+      {
+        role: "tool",
+        tool_call_id: "fc_e622fba411ad523587825676d5473063",
+        response_call_id: "call_1",
+        content: "{\"ok\":true}"
+      }
+    ]).input).toEqual([
+      {
+        type: "function_call",
+        id: "fc_e622fba411ad523587825676d5473063",
+        call_id: "call_1",
+        name: "lookup",
+        arguments: "{\"query\":\"x\"}"
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: "{\"ok\":true}"
+      }
     ]);
   });
 
@@ -503,8 +536,8 @@ describe("OpenAI responses reasoning helpers", () => {
         ],
         tool_calls: [
           {
-            id: "call_123",
-            response_item_id: "fc_123",
+            id: "fc_123",
+            response_call_id: "call_123",
             function: { name: "lookup", arguments: "{\"query\":\"x\"}" }
           }
         ]
