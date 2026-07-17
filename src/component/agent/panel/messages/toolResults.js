@@ -55,6 +55,7 @@ export function buildDisplayToolResultMessage(toolResult, targetSessionId, regis
   const message = {
     role: "tool",
     tool_call_id: toolResult.id,
+    response_call_id: toolResult.responseCallId || undefined,
     tool_name: toolResult.name,
     content: serializedContent,
     displayImageUrl: primaryImage?.url || undefined,

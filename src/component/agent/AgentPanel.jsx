@@ -3066,6 +3066,7 @@ export default function AgentPanel() {
           const pendingToolMsgs = msg.toolCalls.map(tc => ({
             role: "tool",
             tool_call_id: tc.id,
+            response_call_id: tc.responseCallId,
             tool_name: tc.name,
             content: null,
             _pending: true
@@ -3133,7 +3134,7 @@ export default function AgentPanel() {
             }
             const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
-            return { id: tc.id, name: tc.name, args: resolvedArgs, result, durationMs };
+            return { id: tc.id, responseCallId: tc.responseCallId, name: tc.name, args: resolvedArgs, result, durationMs };
           };
 
           const applyToolResult = (toolResult) => {
