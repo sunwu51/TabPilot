@@ -148,7 +148,7 @@ describe("OpenAI responses reasoning helpers", () => {
     ]);
   });
 
-  it("replays native web search call items when web search remains enabled", () => {
+  it("replays native web search call items without adding an assistant input_text trace", () => {
     expect(buildResponsesRequestInput([
       {
         role: "assistant",
@@ -171,12 +171,25 @@ describe("OpenAI responses reasoning helpers", () => {
       {
         type: "message",
         role: "assistant",
-        content: [
-          { type: "output_text", text: "Search summary" },
-          { type: "input_text", text: "\n\n[Previous web search actions]\n1.1. search: latest news" }
-        ]
+        content: [{ type: "output_text", text: "Search summary" }]
       }
     ]);
+  });
+
+  it("drops input_text blocks from stored assistant Responses content", () => {
+    const request = buildResponsesRequestInput([{
+      role: "assistant",
+      content: [
+        { type: "output_text", text: "Visible answer" },
+        { type: "input_text", text: "Provider-only input" }
+      ]
+    }]);
+
+    expect(request.input).toEqual([{
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Visible answer" }]
+    }]);
   });
 
   it("keeps the original interleaved reasoning and web search order", () => {
