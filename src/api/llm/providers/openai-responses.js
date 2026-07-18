@@ -396,16 +396,17 @@ export function buildResponsesRequestInput(messages, options = {}) {
         const content = dedupeResponsesOutputTextParts(
           normalizeResponsesMessageContent(storedResponsesContent, "assistant", options)
         );
-        const trace = options.nativeWebSearch === true ? formatWebSearchTrace(msg.web_searches) : "";
         const searchItems = !replayItems && options.nativeWebSearch === true && Array.isArray(msg.web_search_items)
           ? msg.web_search_items
           : [];
         input.push(...searchItems);
-        input.push({
-          type: "message",
-          role: "assistant",
-          content: trace ? [...content, { type: "input_text", text: `\n\n[Previous web search actions]\n${trace}` }] : content
-        });
+        if (content.length > 0) {
+          input.push({
+            type: "message",
+            role: "assistant",
+            content
+          });
+        }
         continue;
       }
 
@@ -434,21 +435,6 @@ export function buildResponsesRequestInput(messages, options = {}) {
     instructions: instructionsParts.join("\n\n").trim() || undefined,
     input: input.map(sanitizeResponsesRequestInputItem).filter(Boolean)
   };
-}
-
-function formatWebSearchTrace(actions) {
-  if (!Array.isArray(actions) || actions.length === 0) return "";
-  return actions.flatMap((action, index) => {
-    if (action?.type === "search") {
-      const queries = [
-        ...(Array.isArray(action.query) ? action.query : [action.query]),
-        ...(Array.isArray(action.queries) ? action.queries : [action.queries])
-      ].map(value => String(value || "").trim()).filter(Boolean);
-      return queries.map((query, queryIndex) => `${index + 1}.${queryIndex + 1}. search: ${query}`);
-    }
-    if (action?.type === "open_page") return `${index + 1}. fetch: ${action.url || ""}`;
-    return `${index + 1}. ${action?.type || "web_search"}`;
-  }).join("\n");
 }
 
 function shouldOmitThinkingFromRequests(options = {}) {
@@ -1168,6 +1154,7 @@ export function normalizeResponsesMessageContent(content, role = "user", options
         if (dataUrl) return [{ type: "input_image", image_url: dataUrl }];
       }
       if ((block.type === "output_text" || block.type === "input_text") && typeof block.text === "string") {
+        if (role === "assistant" && block.type === "input_text") return [];
         return [{
           type: block.type,
           text: block.text,
@@ -1176,7 +1163,8 @@ export function normalizeResponsesMessageContent(content, role = "user", options
       }
       return [];
     });
-    return blocks.length > 0 ? blocks : [{ type: role === "assistant" ? "output_text" : "input_text", text: "" }];
+    if (blocks.length > 0) return blocks;
+    return role === "assistant" ? [] : [{ type: "input_text", text: "" }];
   }
   if (content == null) {
     return [{ type: role === "assistant" ? "output_text" : "input_text", text: "" }];
