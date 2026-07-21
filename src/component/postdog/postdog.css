@@ -554,6 +554,39 @@
   font-size: 12px;
 }
 
+.postdog-file-response {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.postdog-multipart .postdog-kv-row {
+  grid-template-columns: minmax(110px, 0.8fr) 76px minmax(160px, 1.4fr) auto 28px;
+}
+
+.postdog-file-picker {
+  min-width: 0;
+  cursor: pointer;
+}
+
+.postdog-file-picker span {
+  display: block;
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.postdog-file-picker input {
+  display: none;
+}
+
 .postdog-body-editor {
   display: flex;
   flex-direction: column;

@@ -261,7 +261,14 @@ describe("postdog runtime", () => {
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       new Uint8Array([0x25, 0x50, 0x44, 0x46]),
-      { status: 200, headers: { "Content-Type": "application/pdf", "Content-Length": "4" } }
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Length": "4",
+          "Content-Disposition": "attachment; filename*=UTF-8''report%20final.pdf"
+        }
+      }
     )));
 
     const result = await runPostdogRequest({ id: request.id });
@@ -272,14 +279,86 @@ describe("postdog runtime", () => {
       bodyText: "",
       bodyJson: null,
       bodySizeBytes: 4,
-      bodyTruncated: false
+      bodyTruncated: false,
+      download: {
+        fileName: "report final.pdf",
+        mimeType: "application/pdf",
+        dataBase64: "JVBERg=="
+      }
     });
-    expect(result.response.bodyNote).toContain("二进制响应");
+    expect(result.response.bodyNote).toContain("文件响应已就绪");
     expect(snapshot[POSTDOG_HISTORY_KEY][0].response).toMatchObject({
       bodyKind: "binary",
       bodyText: "",
       bodyJson: null
     });
+    expect(snapshot[POSTDOG_HISTORY_KEY][0].response).not.toHaveProperty("download");
+  });
+
+  it("sends urlencoded form fields with variables and repeated keys", async () => {
+    await savePostdogEnvironment({
+      id: "env-form",
+      name: "form",
+      variables: [{ key: "item", value: "two words", enabled: true }]
+    });
+    await chrome.storage.local.set({ [POSTDOG_ACTIVE_ENVIRONMENT_KEY]: "env-form" });
+    const request = await savePostdogRequest({
+      id: "req-form",
+      name: "form",
+      method: "POST",
+      url: "https://api.example.com/form",
+      body: {
+        type: "form",
+        fields: [
+          { key: "tag", value: "one", enabled: true },
+          { key: "tag", value: "{{item}}", enabled: true },
+          { key: "skip", value: "no", enabled: false }
+        ]
+      }
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    await runPostdogRequest({ id: request.id });
+
+    const init = fetch.mock.calls[0][1];
+    expect(init.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(init.body).toBe("tag=one&tag=two+words");
+  });
+
+  it("sends multipart text and file fields without forcing a content-type boundary", async () => {
+    const request = await savePostdogRequest({
+      id: "req-multipart",
+      name: "upload",
+      method: "POST",
+      url: "https://api.example.com/upload",
+      headers: [{ key: "Content-Type", value: "multipart/form-data", enabled: true }],
+      body: {
+        type: "multipart",
+        fields: [
+          { key: "caption", value: "hello", kind: "text", enabled: true },
+          {
+            key: "file",
+            kind: "file",
+            fileName: "hello.txt",
+            mimeType: "text/plain",
+            dataBase64: "aGk=",
+            enabled: true
+          }
+        ]
+      }
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    await runPostdogRequest({ id: request.id });
+
+    const init = fetch.mock.calls[0][1];
+    expect(init.headers).not.toHaveProperty("Content-Type");
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.body.get("caption")).toBe("hello");
+    const file = init.body.get("file");
+    expect(file.name).toBe("hello.txt");
+    expect(file.type).toBe("text/plain");
+    expect(await file.text()).toBe("hi");
   });
 
   it("stores a bounded preview for stream responses", async () => {
