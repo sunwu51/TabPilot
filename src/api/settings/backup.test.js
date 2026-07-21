@@ -182,6 +182,7 @@ describe("settings backup", () => {
             baseUrl: "https://opencode.ai/zen/v1/chat/completions",
             apiKey: "",
             model: "big-pickle",
+            nativeWebSearch: false,
             requiresApiKey: false
           },
           {
@@ -190,7 +191,8 @@ describe("settings backup", () => {
             apiType: "openai-responses",
             baseUrl: "https://new.example/v1/responses",
             apiKey: "new",
-            model: "new-model"
+            model: "new-model",
+            nativeWebSearch: false
           }
         ],
         modelContextLimitTokens: 200000,
