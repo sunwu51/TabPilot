@@ -359,6 +359,11 @@ describe("postdog runtime", () => {
     expect(file.name).toBe("hello.txt");
     expect(file.type).toBe("text/plain");
     expect(await file.text()).toBe("hi");
+    const snapshot = getChromeStorageSnapshot();
+    expect(snapshot[POSTDOG_HISTORY_KEY][0].request.body).toBe([
+      "caption: hello",
+      "file: [file hello.txt, text/plain, 2 bytes]"
+    ].join("\n"));
   });
 
   it("stores a bounded preview for stream responses", async () => {

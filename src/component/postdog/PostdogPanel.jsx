@@ -615,7 +615,7 @@ export default function PostdogPanel() {
                     <span>{response.request.url}</span>
                   </div>
                   {response.request.body ? (
-                    <pre>{response.request.body}</pre>
+                    <pre>{formatRequestBodyForDisplay(response.request.body)}</pre>
                   ) : (
                     <div className="postdog-empty-response">无 request body</div>
                   )}
@@ -860,6 +860,16 @@ function formatBinaryResponseMessage(response) {
   const contentType = response.headers?.["content-type"] || response.headers?.["Content-Type"] || "unknown";
   const size = formatResponseBytes(response.bodySizeBytes);
   return `${response.bodyNote || "二进制响应未展示。"} Content-Type: ${contentType}; Size: ${size}`;
+}
+
+function formatRequestBodyForDisplay(body) {
+  if (typeof body === "string") return body;
+  if (body == null) return "";
+  try {
+    return JSON.stringify(body, null, 2);
+  } catch {
+    return String(body);
+  }
 }
 
 function formatResponseBytes(bytes) {

@@ -117,7 +117,7 @@ export async function runPostdogRequest(input = {}) {
       method: prepared.method,
       url: prepared.url,
       headers: prepared.headers,
-      body: prepared.body || ""
+      body: formatRequestBodySnapshot(mutableRequest, prepared.body, envVars)
     }, secretValues),
     response: redactSecrets(responsePayload, secretValues),
     durationMs,
@@ -223,6 +223,21 @@ function prepareRequest(request, vars) {
     }
   }
   return { method, url, headers, body };
+}
+
+function formatRequestBodySnapshot(request, preparedBody, vars) {
+  if (request.body?.type !== "multipart") return preparedBody || "";
+  const lines = [];
+  for (const item of request.body.fields || []) {
+    if (item.enabled === false || !item.key) continue;
+    if (item.kind === "file") {
+      const sizeBytes = base64ToBytes(item.dataBase64 || "").byteLength;
+      lines.push(`${applyVariables(item.key, vars)}: [file ${applyVariables(item.fileName || "file", vars)}, ${item.mimeType || "application/octet-stream"}, ${sizeBytes} bytes]`);
+    } else {
+      lines.push(`${applyVariables(item.key, vars)}: ${applyVariables(item.value, vars)}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function removeHeader(headers, name) {
