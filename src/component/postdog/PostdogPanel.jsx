@@ -21,7 +21,7 @@ const EMPTY_REQUEST = {
   folderId: null,
   headers: [],
   query: [],
-  body: { type: "none", text: "" },
+  body: { type: "none", text: "", fields: [] },
   preScript: "",
   postScript: ""
 };
@@ -29,6 +29,7 @@ const SIDEBAR_WIDTH_KEY = "postdogSidebarWidth";
 const DEFAULT_SIDEBAR_WIDTH = 230;
 const MIN_SIDEBAR_WIDTH = 180;
 const MAX_SIDEBAR_WIDTH = 520;
+const MAX_UPLOAD_FILE_BYTES = 5 * 1024 * 1024;
 
 export default function PostdogPanel() {
   const [folders, setFolders] = useState([]);
@@ -417,6 +418,15 @@ export default function PostdogPanel() {
     }
   }
 
+  function downloadResponseFile() {
+    const file = response?.response?.download;
+    if (!file?.dataBase64) {
+      toast.error("没有可下载的文件内容");
+      return;
+    }
+    downloadBase64(file.fileName, file.dataBase64, file.mimeType);
+  }
+
   function beautifyRequestJson() {
     try {
       setDraft({ ...draft, body: { ...draft.body, text: formatJsonWithComments(requestBodyText, 2) } });
@@ -512,12 +522,24 @@ export default function PostdogPanel() {
                       <option value="none">none</option>
                       <option value="json">json</option>
                       <option value="text">text</option>
+                      <option value="form">form</option>
+                      <option value="multipart">multipart</option>
                     </select>
                     {requestBodyType === "json" && (
                       <Button className="postdog-beautify-button !min-h-7 !px-2 !text-xs" onPress={beautifyRequestJson}>格式化 JSON</Button>
                     )}
                   </div>
-                  {requestBodyType === "json" ? (
+                  {requestBodyType === "form" ? (
+                    <KeyValueEditor
+                      rows={draft.body?.fields || []}
+                      onChange={fields => setDraft({ ...draft, body: { ...draft.body, fields } })}
+                    />
+                  ) : requestBodyType === "multipart" ? (
+                    <MultipartEditor
+                      rows={draft.body?.fields || []}
+                      onChange={fields => setDraft({ ...draft, body: { ...draft.body, fields } })}
+                    />
+                  ) : requestBodyType === "json" ? (
                     <JsonCodeEditor
                       value={requestBodyText}
                       onChange={text => setDraft({ ...draft, body: { ...draft.body, text } })}
@@ -593,7 +615,7 @@ export default function PostdogPanel() {
                     <span>{response.request.url}</span>
                   </div>
                   {response.request.body ? (
-                    <pre>{response.request.body}</pre>
+                    <pre>{formatRequestBodyForDisplay(response.request.body)}</pre>
                   ) : (
                     <div className="postdog-empty-response">无 request body</div>
                   )}
@@ -614,7 +636,12 @@ export default function PostdogPanel() {
                 ) : responseTab === "headers" ? (
                   <HeaderTable headers={response.response.headers || {}} />
                 ) : response.response.bodyKind === "binary" ? (
-                  <div className="postdog-empty-response">{formatBinaryResponseMessage(response.response)}</div>
+                  <div className="postdog-file-response">
+                    <div>{formatBinaryResponseMessage(response.response)}</div>
+                    {response.response.download?.dataBase64 && (
+                      <Button className="!min-h-7 !px-2 !text-xs" onPress={downloadResponseFile}>下载文件</Button>
+                    )}
+                  </div>
                 ) : responseBodyJson?.ok ? (
                   <>
                     {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
@@ -778,10 +805,71 @@ function HeaderTable({ headers = {} }) {
   );
 }
 
+function MultipartEditor({ rows = [], onChange }) {
+  function update(index, patch) {
+    onChange(rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+  }
+  function remove(index) {
+    onChange(rows.filter((_, i) => i !== index));
+  }
+  async function selectFile(index, file) {
+    if (!file) return;
+    if (file.size > MAX_UPLOAD_FILE_BYTES) {
+      toast.error("单个上传文件不能超过 5 MB");
+      return;
+    }
+    try {
+      update(index, {
+        kind: "file",
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+        dataBase64: await fileToBase64(file),
+        value: ""
+      });
+    } catch (error) {
+      toast.error(error?.message || "读取文件失败");
+    }
+  }
+  return (
+    <div className="postdog-kv postdog-multipart">
+      {rows.map((row, index) => (
+        <div className="postdog-kv-row" key={index}>
+          <input title={row.key || ""} value={row.key || ""} onChange={e => update(index, { key: e.target.value })} placeholder="key" />
+          <select value={row.kind === "file" ? "file" : "text"} onChange={e => update(index, { kind: e.target.value, value: "", fileName: "", mimeType: "", dataBase64: "" })}>
+            <option value="text">Text</option>
+            <option value="file">File</option>
+          </select>
+          {row.kind === "file" ? (
+            <label className="postdog-file-picker">
+              <span title={row.fileName || ""}>{row.fileName || "选择文件"}</span>
+              <input type="file" onChange={e => selectFile(index, e.target.files?.[0])} />
+            </label>
+          ) : (
+            <input title={row.value || ""} value={row.value || ""} onChange={e => update(index, { value: e.target.value })} placeholder="value" />
+          )}
+          <label className="postdog-checkbox"><input type="checkbox" checked={row.enabled !== false} onChange={e => update(index, { enabled: e.target.checked })} />启用</label>
+          <button type="button" onClick={() => remove(index)}>×</button>
+        </div>
+      ))}
+      <button type="button" className="postdog-add-row" onClick={() => onChange([...rows, { key: "", value: "", kind: "text", enabled: true }])}>+ 添加</button>
+    </div>
+  );
+}
+
 function formatBinaryResponseMessage(response) {
   const contentType = response.headers?.["content-type"] || response.headers?.["Content-Type"] || "unknown";
   const size = formatResponseBytes(response.bodySizeBytes);
   return `${response.bodyNote || "二进制响应未展示。"} Content-Type: ${contentType}; Size: ${size}`;
+}
+
+function formatRequestBodyForDisplay(body) {
+  if (typeof body === "string") return body;
+  if (body == null) return "";
+  try {
+    return JSON.stringify(body, null, 2);
+  } catch {
+    return String(body);
+  }
 }
 
 function formatResponseBytes(bytes) {
@@ -916,6 +1004,35 @@ function downloadText(fileName, text, mimeType) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadBase64(fileName, dataBase64, mimeType) {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+  downloadBlob(fileName || "download", blob);
+}
+
+function downloadBlob(fileName, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function formatDate(date) {
