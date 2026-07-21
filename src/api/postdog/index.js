@@ -76,13 +76,27 @@ export function normalizeRequest(request) {
     headers: Array.isArray(request.headers) ? request.headers.map(normalizeKeyValue).filter(Boolean) : [],
     query: Array.isArray(request.query) ? request.query.map(normalizeKeyValue).filter(Boolean) : [],
     body: {
-      type: ["none", "json", "text"].includes(request.body?.type) ? request.body.type : "none",
-      text: String(request.body?.text ?? "")
+      type: ["none", "json", "text", "form", "multipart"].includes(request.body?.type) ? request.body.type : "none",
+      text: String(request.body?.text ?? ""),
+      fields: Array.isArray(request.body?.fields) ? request.body.fields.map(normalizeBodyField).filter(Boolean) : []
     },
     preScript: String(request.preScript || ""),
     postScript: String(request.postScript || ""),
     createdAt,
     updatedAt: Number(request.updatedAt) || createdAt
+  };
+}
+
+export function normalizeBodyField(item) {
+  const normalized = normalizeKeyValue(item);
+  if (!normalized) return null;
+  const kind = item.kind === "file" ? "file" : "text";
+  return {
+    ...normalized,
+    kind,
+    fileName: kind === "file" ? String(item.fileName || "file") : "",
+    mimeType: kind === "file" ? String(item.mimeType || "application/octet-stream") : "",
+    dataBase64: kind === "file" ? String(item.dataBase64 || "") : ""
   };
 }
 

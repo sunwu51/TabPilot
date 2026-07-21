@@ -15,6 +15,7 @@ const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const MAX_TEXT_RESPONSE_BYTES = 1024 * 1024;
 const MAX_STREAM_PREVIEW_BYTES = 64 * 1024;
 const STREAM_READ_TIMEOUT_MS = 5000;
+const MAX_DOWNLOAD_RESPONSE_BYTES = 25 * 1024 * 1024;
 
 export async function runPostdogRequest(input = {}) {
   const stored = input.id ? await getPostdogRequest(input.id) : null;
@@ -69,7 +70,8 @@ export async function runPostdogRequest(input = {}) {
       bodyJson: body.json,
       bodySizeBytes: body.sizeBytes,
       bodyTruncated: body.truncated,
-      bodyNote: body.note
+      bodyNote: body.note,
+      download: body.download
     };
   } catch (error) {
     responsePayload = {
@@ -123,6 +125,8 @@ export async function runPostdogRequest(input = {}) {
     logs: redactSecrets(scriptState.logs, secretValues)
   };
 
+  const historyResponse = { ...result.response };
+  delete historyResponse.download;
   const historyRun = await appendPostdogHistory({
     runId,
     createdAt,
@@ -134,7 +138,7 @@ export async function runPostdogRequest(input = {}) {
     ok: responsePayload.ok,
     durationMs,
     request: result.request,
-    response: result.response,
+    response: historyResponse,
     tests: result.tests,
     logs: result.logs
   });
@@ -186,6 +190,32 @@ function prepareRequest(request, vars) {
   }
   let body;
   if (BODY_METHODS.has(method) && request.body?.type !== "none") {
+    if (request.body?.type === "form") {
+      const params = new URLSearchParams();
+      for (const item of request.body.fields || []) {
+        if (item.enabled === false || !item.key) continue;
+        params.append(applyVariables(item.key, vars), applyVariables(item.value, vars));
+      }
+      body = params.toString();
+      if (!hasHeader(headers, "content-type")) headers["Content-Type"] = "application/x-www-form-urlencoded";
+      return { method, url, headers, body };
+    }
+    if (request.body?.type === "multipart") {
+      const form = new FormData();
+      for (const item of request.body.fields || []) {
+        if (item.enabled === false || !item.key) continue;
+        const key = applyVariables(item.key, vars);
+        if (item.kind === "file") {
+          const bytes = base64ToBytes(item.dataBase64 || "");
+          form.append(key, new Blob([bytes], { type: item.mimeType || "application/octet-stream" }), applyVariables(item.fileName || "file", vars));
+        } else {
+          form.append(key, applyVariables(item.value, vars));
+        }
+      }
+      body = form;
+      removeHeader(headers, "content-type");
+      return { method, url, headers, body };
+    }
     const rawBody = applyVariables(request.body?.text || "", vars);
     body = request.body?.type === "json" ? normalizeJsonRequestBody(rawBody) : rawBody;
     if (request.body?.type === "json" && !hasHeader(headers, "content-type")) {
@@ -193,6 +223,13 @@ function prepareRequest(request, vars) {
     }
   }
   return { method, url, headers, body };
+}
+
+function removeHeader(headers, name) {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) delete headers[key];
+  }
 }
 
 function applyVariables(value, vars) {
@@ -232,13 +269,20 @@ async function readPostdogResponseBody(response) {
   const contentDisposition = response.headers.get("content-disposition") || "";
   const contentLength = parseContentLength(response.headers.get("content-length"));
   if (isBinaryResponse(contentType, contentDisposition)) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const downloadable = bytes.byteLength <= MAX_DOWNLOAD_RESPONSE_BYTES;
     return {
       kind: "binary",
       text: "",
       json: null,
-      sizeBytes: contentLength,
+      sizeBytes: bytes.byteLength || contentLength,
       truncated: false,
-      note: "二进制响应未读取 body，仅保留状态、Header 和大小信息。"
+      note: downloadable ? "文件响应已就绪，可直接下载。" : "文件超过 25 MB，未保留下载内容。",
+      download: downloadable ? {
+        fileName: getDownloadFileName(contentDisposition, response.url, contentType),
+        mimeType: normalizeContentType(contentType) || "application/octet-stream",
+        dataBase64: bytesToBase64(bytes)
+      } : null
     };
   }
 
@@ -264,6 +308,38 @@ async function readPostdogResponseBody(response) {
       sizeBytes: result.sizeBytes
     })
   };
+}
+
+function getDownloadFileName(contentDisposition, responseUrl, contentType) {
+  const disposition = String(contentDisposition || "");
+  const utf8 = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8) {
+    try { return decodeURIComponent(utf8[1].replace(/^"|"$/g, "")); } catch { /* use fallback */ }
+  }
+  const plain = disposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
+  if (plain) return (plain[1] || plain[2]).trim();
+  try {
+    const name = new URL(responseUrl || "").pathname.split("/").filter(Boolean).pop();
+    if (name) return decodeURIComponent(name);
+  } catch { /* use fallback */ }
+  const extension = normalizeContentType(contentType).split("/")[1]?.replace(/[^a-z0-9.+-]/gi, "") || "bin";
+  return `download.${extension}`;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(String(value || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 function isBinaryResponse(contentType, contentDisposition) {
