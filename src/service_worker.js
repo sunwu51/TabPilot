@@ -19,7 +19,9 @@ import {
     setRecording,
     clearRecording,
     newMacroId,
-    normalizeStep
+    normalizeStep,
+    macroSteps,
+    targetToSelectors
 } from "./api/macro";
 import {
     releaseSessionLock,
@@ -500,7 +502,10 @@ async function startMacroRecording(payload) {
         origin,
         createdAt: Date.now(),
         updatedAt: Date.now(),
-        steps: []
+        kind: "browser-macro",
+        schemaVersion: 1,
+        requirements: { trustedInput: false },
+        workflow: { version: 1, steps: [] }
     };
     await setRecording({ tabId, draft });
     // Nudge the content script in that tab in case it loaded before storage was set.
@@ -516,19 +521,22 @@ async function appendMacroDraftStep(rawStep) {
     const step = normalizeStep(rawStep);
     if (!step) return;
     const draft = recording.draft || { steps: [] };
-    draft.steps = Array.isArray(draft.steps) ? draft.steps : [];
-    const last = draft.steps[draft.steps.length - 1];
-    const sameFirstSelector = (last?.selectors?.[0] || "") && last?.selectors?.[0] === step.selectors?.[0];
-    if (last?.type === "input" && step.type === "input" && sameFirstSelector) {
-        draft.steps[draft.steps.length - 1] = step;
-    } else if (last?.type === "scroll" && step.type === "scroll") {
-        draft.steps[draft.steps.length - 1] = step;
-    } else if (last?.type === "click" && step.type === "submit") {
-        draft.steps[draft.steps.length - 1] = step;
-    } else if (last?.type === "wait_url" && step.type === "wait_url" && (last.pattern || last.url) === (step.pattern || step.url)) {
-        draft.steps[draft.steps.length - 1] = step;
+    draft.workflow ||= { version: 1, steps: [] };
+    const steps = draft.workflow.steps = Array.isArray(draft.workflow.steps) ? draft.workflow.steps : [];
+    const last = steps[steps.length - 1];
+    const action = step.do; const lastAction = last?.do;
+    const firstSelector = targetToSelectors(action?.target)[0] || "";
+    const sameTarget = firstSelector && firstSelector === targetToSelectors(lastAction?.target)[0];
+    if (lastAction?.type === "type" && action?.type === "type" && sameTarget) {
+        steps[steps.length - 1] = step;
+    } else if (lastAction?.type === "scroll" && action?.type === "scroll") {
+        steps[steps.length - 1] = step;
+    } else if (lastAction?.type === "click" && action?.type === "click" && sameTarget) {
+        steps[steps.length - 1] = step;
+    } else if (lastAction?.type === "wait_for" && action?.type === "wait_for" && lastAction.pattern === action.pattern) {
+        steps[steps.length - 1] = step;
     } else {
-        draft.steps.push(step);
+        steps.push(step);
     }
     draft.updatedAt = Date.now();
     await setRecording({ tabId: recording.tabId, draft });
@@ -540,15 +548,16 @@ async function replaceLastMacroDraftStep(rawStep) {
     const step = normalizeStep(rawStep);
     if (!step) return;
     const draft = recording.draft || { steps: [] };
-    draft.steps = Array.isArray(draft.steps) ? draft.steps : [];
-    const last = draft.steps[draft.steps.length - 1];
-    const sameFirstSelector = (last?.selectors?.[0] || "") && last?.selectors?.[0] === step.selectors?.[0];
-    if (draft.steps.length === 0) {
-        draft.steps.push(step);
-    } else if (last?.type === step.type && sameFirstSelector) {
-        draft.steps[draft.steps.length - 1] = step;
+    draft.workflow ||= { version: 1, steps: [] };
+    const steps = draft.workflow.steps = Array.isArray(draft.workflow.steps) ? draft.workflow.steps : [];
+    const last = steps[steps.length - 1]; const action = step.do; const lastAction = last?.do;
+    const sameTarget = (targetToSelectors(lastAction?.target)[0] || "") && targetToSelectors(lastAction?.target)[0] === targetToSelectors(action?.target)[0];
+    if (steps.length === 0) {
+        steps.push(step);
+    } else if (lastAction?.type === action?.type && sameTarget) {
+        steps[steps.length - 1] = step;
     } else {
-        draft.steps.push(step);
+        steps.push(step);
     }
     draft.updatedAt = Date.now();
     await setRecording({ tabId: recording.tabId, draft });
@@ -570,7 +579,7 @@ async function stopMacroRecording({ commit, replacePasswords } = {}) {
     if (!commit) {
         return { success: true, data: { committed: false, discarded: true } };
     }
-    if (!draft || !Array.isArray(draft.steps) || draft.steps.length === 0) {
+    if (!draft || macroSteps(draft).length === 0) {
         return { success: true, data: { committed: false, reason: "draft is empty" } };
     }
     const saved = await saveMacro(processMacroBeforeSave(draft, { replacePasswords: replacePasswords === true }));
@@ -578,45 +587,40 @@ async function stopMacroRecording({ commit, replacePasswords } = {}) {
 }
 
 function processMacroBeforeSave(macro, { replacePasswords = false } = {}) {
-    if (!macro || !Array.isArray(macro.steps)) return macro;
+    if (!macro) return macro;
     return {
         ...macro,
-        steps: macro.steps.map((step, index) => {
-            if (step?.type !== "input" || step.inputType !== "password") return step;
-            const key = step.valueRef || `input_${index + 1}`;
-            return {
-                ...step,
-                sensitive: true,
-                required: true,
-                valueRef: key,
-                label: step.label || "password",
-                value: replacePasswords ? PASSWORD_PLACEHOLDER : step.value
-            };
-        })
+        workflow: { ...macro.workflow, steps: macroSteps(macro).map((step, index) => {
+            const action = step?.do;
+            if (action?.type !== "type" || action.inputType !== "password") return step;
+            const key = action.valueRef || `input_${index + 1}`;
+            return { ...step, do: { ...action, sensitive: true, required: true, valueRef: key, label: action.label || "password", text: replacePasswords ? PASSWORD_PLACEHOLDER : action.text } };
+        }) }
     };
 }
 
 function getMacroInputDescriptors(macro) {
     const inputs = [];
     let ordinal = 0;
-    for (let index = 0; index < (macro?.steps || []).length; index++) {
-        const step = macro.steps[index];
-        if (step?.type !== "input" && step?.type !== "change") continue;
+    const steps = macroSteps(macro);
+    for (let index = 0; index < steps.length; index++) {
+        const step = steps[index]?.do;
+        if (step?.type !== "type") continue;
         ordinal += 1;
         const key = step.valueRef || `input_${ordinal}`;
         inputs.push({
             key,
             index: ordinal,
             stepIndex: index,
-            stepType: step.type,
+            stepType: "type",
             inputKind: step.inputKind || step.tagName || "",
             inputType: step.inputType || "",
-            label: step.label || step.text || step.selectors?.[0] || key,
+            label: step.label || targetToSelectors(step.target)[0] || key,
             sensitive: step.sensitive === true,
             required: step.required === true,
-            defaultValue: step.sensitive ? undefined : step.value,
-            hasDefault: step.value !== undefined,
-            selector: step.selectors?.[0] || ""
+            defaultValue: step.sensitive ? undefined : step.text,
+            hasDefault: step.text !== undefined,
+            selector: targetToSelectors(step.target)[0] || ""
         });
     }
     return inputs;
@@ -629,18 +633,18 @@ function describeMacroForTool(macro, { includeSteps = true } = {}) {
         name: macro.name,
         startUrl: macro.startUrl,
         origin: macro.origin,
-        stepCount: macro.steps?.length || 0,
+        stepCount: macroSteps(macro).length,
         inputs: getMacroInputDescriptors(macro),
         ...(includeSteps ? {
-            steps: (macro.steps || []).map((step, index) => ({
+            steps: macroSteps(macro).map((node, index) => { const step = node.do || node.waitFor || {}; return ({
                 index,
                 type: step.type,
-                label: step.label || step.text || step.key || step.pattern || step.url || step.selectors?.[0] || "",
-                inputKey: (step.type === "input" || step.type === "change")
-                    ? (step.valueRef || `input_${getMacroInputDescriptors({ steps: macro.steps.slice(0, index + 1) }).length}`)
+                label: step.label || step.key || step.pattern || step.url || targetToSelectors(step.target)[0] || "",
+                inputKey: step.type === "type"
+                    ? (step.valueRef || `input_${getMacroInputDescriptors({ ...macro, workflow: { ...macro.workflow, steps: macroSteps(macro).slice(0, index + 1) } }).length}`)
                     : undefined,
                 sensitive: step.sensitive === true
-            }))
+            }); })
         } : {})
     };
 }
@@ -649,13 +653,13 @@ function applyMacroInputValues(macro, inputValues = {}) {
     let ordinal = 0;
     return {
         ...macro,
-        steps: (macro.steps || []).map(step => {
-            if (step?.type !== "input" && step?.type !== "change") return step;
+        workflow: { ...macro.workflow, steps: macroSteps(macro).map(node => { const step = node?.do;
+            if (step?.type !== "type") return node;
             ordinal += 1;
             const key = step.valueRef || `input_${ordinal}`;
-            if (!Object.prototype.hasOwnProperty.call(inputValues || {}, key)) return step;
-            return { ...step, value: String(inputValues[key] ?? "") };
-        })
+            if (!Object.prototype.hasOwnProperty.call(inputValues || {}, key)) return node;
+            return { ...node, do: { ...step, text: String(inputValues[key] ?? "") } };
+        }) }
     };
 }
 
@@ -735,6 +739,7 @@ async function replayMacro(id, options = {}) {
 async function replayMacroSteps(macro, options = {}) {
     const replayOptions = normalizeReplayOptions(options);
     if (!macro) return { success: false, error: "macro not found" };
+    if (macro.requirements?.trustedInput === true) return { success: false, error: "该宏需要 BrowserTrace/CDP trusted input，TabManager 无法安全回放" };
     macro = applyMacroInputValues(macro, options.inputValues || {});
     if (!macro.startUrl && !Number.isInteger(Number(options.tabId))) return { success: false, error: "macro has no startUrl" };
     const tab = Number.isInteger(Number(options.tabId))
@@ -750,14 +755,14 @@ async function replayMacroSteps(macro, options = {}) {
     if (!ready) return { success: false, error: "tab failed to load in time" };
     // Small extra grace for SPA hydration.
     await new Promise(r => setTimeout(r, 500));
-    const steps = Array.isArray(macro.steps) ? macro.steps : [];
+    const steps = macroSteps(macro).map(node => node.do || { type: "wait_for", ...(node.waitFor || {}) });
     const startIndex = Math.max(0, Number(replayOptions.startIndex) || 0);
     const endIndex = replayOptions.singleStep ? Math.min(steps.length, startIndex + 1) : steps.length;
     const report = { total: steps.length, startIndex, speed: replayOptions.speed, success: 0, failed: 0, results: [], ok: true };
 
     for (let i = startIndex; i < endIndex; i++) {
         const step = steps[i];
-        if (step.type === "wait_url") {
+        if (step.type === "wait_for" && step.condition === "url") {
             const pattern = step.pattern || step.url || "";
             const ok = await waitForTabUrl(tab.id, pattern, Math.max(100, Number(step.timeoutMs) || 10000));
             if (ok) await waitForTabComplete(tab.id, Math.max(1000, Number(step.timeoutMs) || 15000));

@@ -23,6 +23,9 @@ const state = {
   pendingNavigation: null,
   pendingNavigationConfirmed: false,
   inputDebounceTimers: new WeakMap(),
+  pendingInputTargets: new Set(),
+  composingTargets: new WeakSet(),
+  lastEditableTarget: null,
   scrollTimer: null,
   lastClickStep: null,
   hasPasswordInput: false,
@@ -86,6 +89,38 @@ function reportInputStep(target) {
   }
   target.__tabManagerLastInputStep = step;
   reportStep(step);
+}
+
+function clearPendingInput(target) {
+  if (!target) return;
+  const timer = state.inputDebounceTimers.get(target);
+  if (timer) clearTimeout(timer);
+  state.inputDebounceTimers.delete(target);
+  state.pendingInputTargets.delete(target);
+}
+
+function scheduleInputStep(target, delay = 300) {
+  clearPendingInput(target);
+  const timer = setTimeout(() => {
+    state.inputDebounceTimers.delete(target);
+    state.pendingInputTargets.delete(target);
+    reportInputStep(target);
+  }, delay);
+  state.inputDebounceTimers.set(target, timer);
+  state.pendingInputTargets.add(target);
+}
+
+function flushPendingInput(target) {
+  if (!target || state.composingTargets.has(target) || !state.inputDebounceTimers.has(target)) return false;
+  clearPendingInput(target);
+  reportInputStep(target);
+  return true;
+}
+
+function discardPendingInputs() {
+  for (const target of state.pendingInputTargets) {
+    clearPendingInput(target);
+  }
 }
 
 function buildBaseStep(type, target) {
@@ -184,6 +219,11 @@ handlers.click = function (event) {
   if (isOurOverlayTarget(event)) return;
   if (event.button !== 0 && event.button !== undefined) return;
 
+  // Clicking a button immediately after typing must preserve the latest value.
+  // This is especially important for IMEs, whose final input event can be
+  // dispatched immediately before the click.
+  flushPendingInput(state.lastEditableTarget);
+
   const target = findActionableTarget(event.target);
   const tag = target?.tagName?.toLowerCase();
 
@@ -242,6 +282,7 @@ function shouldInterceptHref(anchor) {
 handlers.submit = function (event) {
   if (!state.active) return;
   if (isOurOverlayTarget(event)) return;
+  flushPendingInput(state.lastEditableTarget);
   event.preventDefault();
   event.stopPropagation();
   const form = event.target;
@@ -280,13 +321,34 @@ handlers.input = function (event) {
   const target = getEditableTarget(event.target);
   if (!isTextEditableTarget(target)) return;
 
-  const existing = state.inputDebounceTimers.get(target);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    state.inputDebounceTimers.delete(target);
-    reportInputStep(target);
-  }, 300);
-  state.inputDebounceTimers.set(target, timer);
+  state.lastEditableTarget = target;
+  // CJK IMEs emit input events for their in-progress phonetic text. Recording
+  // that text would save "ni" instead of the committed character "你".
+  if (event.isComposing || state.composingTargets.has(target)) {
+    clearPendingInput(target);
+    return;
+  }
+  scheduleInputStep(target);
+};
+
+handlers.compositionstart = function (event) {
+  if (!state.active || !event.target || isOurOverlayTarget(event)) return;
+  const target = getEditableTarget(event.target);
+  if (!isTextEditableTarget(target)) return;
+  state.lastEditableTarget = target;
+  state.composingTargets.add(target);
+  clearPendingInput(target);
+};
+
+handlers.compositionend = function (event) {
+  if (!state.active || !event.target || isOurOverlayTarget(event)) return;
+  const target = getEditableTarget(event.target);
+  if (!isTextEditableTarget(target)) return;
+  state.lastEditableTarget = target;
+  state.composingTargets.delete(target);
+  // Some controls do not emit a final input event after compositionend. Queue
+  // an immediate read; a subsequent final input event will replace this timer.
+  scheduleInputStep(target, 0);
 };
 
 handlers.change = function (event) {
@@ -314,15 +376,13 @@ const SEMANTIC_KEYS = new Set(["Enter", "Tab", "Escape", "ArrowUp", "ArrowDown",
 handlers.keydown = function (event) {
   if (!state.active) return;
   if (isOurOverlayTarget(event)) return;
-  if (!SEMANTIC_KEYS.has(event.key)) return;
   const target = getEditableTarget(event.target) || event.target;
+  // Enter and arrow keys may be used to select an IME candidate; they are not
+  // macro actions until text composition has completed.
+  if (event.isComposing || state.composingTargets.has(target)) return;
+  if (!SEMANTIC_KEYS.has(event.key)) return;
   // Flush any pending input first.
-  if (target && state.inputDebounceTimers.has(target)) {
-    const t = state.inputDebounceTimers.get(target);
-    clearTimeout(t);
-    state.inputDebounceTimers.delete(target);
-    reportInputStep(target);
-  }
+  flushPendingInput(target);
   const step = buildBaseStep("key", target);
   step.key = event.key;
   reportStep(step);
@@ -395,15 +455,19 @@ function finishRecordingAndNavigate(url, form) {
 
 function start(meta) {
   if (state.active) return;
+  discardPendingInputs();
   state.active = true;
   state.draftName = meta?.name || "录制中";
   state.stepCount = Number(meta?.stepCount) || 0;
   state.pendingNavigationConfirmed = false;
   state.hasPasswordInput = !!meta?.hasPasswordInput;
+  state.lastEditableTarget = null;
 
   document.addEventListener("click", handlers.click, true);
   document.addEventListener("submit", handlers.submit, true);
   document.addEventListener("input", handlers.input, true);
+  document.addEventListener("compositionstart", handlers.compositionstart, true);
+  document.addEventListener("compositionend", handlers.compositionend, true);
   document.addEventListener("change", handlers.change, true);
   document.addEventListener("keydown", handlers.keydown, true);
   window.addEventListener("scroll", handlers.scroll, { capture: true, passive: true });
@@ -441,6 +505,8 @@ function stop() {
   document.removeEventListener("click", handlers.click, true);
   document.removeEventListener("submit", handlers.submit, true);
   document.removeEventListener("input", handlers.input, true);
+  document.removeEventListener("compositionstart", handlers.compositionstart, true);
+  document.removeEventListener("compositionend", handlers.compositionend, true);
   document.removeEventListener("change", handlers.change, true);
   document.removeEventListener("keydown", handlers.keydown, true);
   window.removeEventListener("scroll", handlers.scroll, { capture: true, passive: true });
@@ -449,6 +515,8 @@ function stop() {
     clearTimeout(state.scrollTimer);
     state.scrollTimer = null;
   }
+  discardPendingInputs();
+  state.lastEditableTarget = null;
   hideRecordingBar();
   hideNavigationPrompt();
 }
@@ -483,13 +551,13 @@ export async function activateRecorderIfNeeded() {
     if (recording && Number.isInteger(recording.tabId) && tabId === recording.tabId) {
       start({
         name: recording.draft?.name,
-        stepCount: recording.draft?.steps?.length || 0,
-        hasPasswordInput: recording.draft?.steps?.some(s => s.type === "input" && s.inputType === "password")
+        stepCount: recording.draft?.workflow?.steps?.length || 0,
+        hasPasswordInput: recording.draft?.workflow?.steps?.some(s => s.do?.type === "type" && s.do?.inputType === "password")
       });
       // Sync count with whatever is stored
       updateRecordingBar({
         name: recording.draft?.name,
-        stepCount: recording.draft?.steps?.length || 0
+        stepCount: recording.draft?.workflow?.steps?.length || 0
       });
     } else if (state.active) {
       // No longer recording for me.

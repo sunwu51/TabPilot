@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import MacroEditor from "./MacroEditor";
 import { useLocalizedDom } from "../../i18n";
+import { MACRO_KIND, MACRO_SCHEMA_VERSION } from "../../api/macro";
 
 const RECORDING_KEY = "macroRecording";
 
@@ -77,7 +78,7 @@ export default function Macro() {
         let replacePasswords = false;
         if (commit) {
             const rec = recording || (await sendMacroMessage({ action: "recording_status" }))?.data;
-            const hasPassword = rec?.draft?.steps?.some(s => s.type === "input" && s.inputType === "password");
+            const hasPassword = rec?.draft?.workflow?.steps?.some(s => s.do?.type === "type" && s.do?.inputType === "password");
             if (hasPassword) {
                 const keepRealPassword = window.confirm(
                     "发现录制过程中有密码输入。\n\n选择“确定”：记录真实密码（将会明文存到本地宏数据中）。\n选择“取消”：用 1A2b3!4399 代替密码。"
@@ -88,7 +89,7 @@ export default function Macro() {
         const res = await sendMacroMessage({ action: "stop", payload: { commit, replacePasswords } });
         if (res?.success) {
             const data = res.data;
-            if (data?.committed) toast.success(`已保存宏「${data.macro?.name}」(${data.macro?.steps?.length || 0} 步)`);
+            if (data?.committed) toast.success(`已保存宏「${data.macro?.name}」(${data.macro?.workflow?.steps?.length || 0} 步)`);
             else if (data?.discarded) toast("已放弃录制");
             else if (data?.reason === "draft is empty") toast("没有录到任何步骤");
             else toast("已停止录制");
@@ -133,8 +134,8 @@ export default function Macro() {
 
     function exportMacros() {
         const payload = {
-            type: "tabmanager.macros",
-            version: 1,
+            kind: "browser-macro-bundle",
+            schemaVersion: MACRO_SCHEMA_VERSION,
             exportedAt: new Date().toISOString(),
             macros
         };
@@ -217,7 +218,7 @@ export default function Macro() {
                     <div className="flex-1 truncate">
                         <span className="font-bold">● 正在录制</span>
                         <span className="ml-1">{recording.draft?.name}</span>
-                        <span className="text-gray-500 ml-1">· {recording.draft?.steps?.length || 0} 步</span>
+                        <span className="text-gray-500 ml-1">· {recording.draft?.workflow?.steps?.length || 0} 步</span>
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
                         <Button
@@ -291,7 +292,7 @@ export default function Macro() {
                     >
                         <div className="flex-1 truncate">
                             <span className="font-bold">{macro.name}</span>
-                            <span className="text-gray-400 ml-1">{macro.steps.length} 步</span>
+                            <span className="text-gray-400 ml-1">{macro.workflow?.steps?.length || 0} 步</span>
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
                             <MacroEditor macro={macro} onSaved={loadAll} replayOptions={buildReplayOptions(replaySpeed)} />
@@ -360,7 +361,7 @@ function buildReplayOptions(speed) {
 function normalizeImportedMacros(data) {
     const rawMacros = Array.isArray(data)
         ? data
-        : (Array.isArray(data?.macros) ? data.macros : []);
+        : (Array.isArray(data?.macros) ? data.macros : (data?.kind === MACRO_KIND ? [data] : []));
     return rawMacros
         .map(item => normalizeImportedMacro(item))
         .filter(Boolean);
@@ -371,17 +372,19 @@ function normalizeImportedMacro(item) {
     const id = String(item.id || "").trim() || `macro_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const name = String(item.name || "").trim() || id;
     const startUrl = String(item.startUrl || "").trim();
-    const steps = Array.isArray(item.steps) ? item.steps : [];
+    const steps = Array.isArray(item.workflow?.steps) ? item.workflow.steps : [];
     if (!startUrl || steps.length === 0) return null;
     return {
         ...item,
+        kind: MACRO_KIND,
+        schemaVersion: MACRO_SCHEMA_VERSION,
         id,
         name,
         startUrl,
         origin: String(item.origin || "").trim() || safeOrigin(startUrl),
         createdAt: Number(item.createdAt) || Date.now(),
         updatedAt: Date.now(),
-        steps
+        workflow: { version: 1, steps }
     };
 }
 
