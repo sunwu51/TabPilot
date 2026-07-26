@@ -166,6 +166,7 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
+import { refreshUploadedImageUrls, SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import { useI18n, useLocalizedDom } from "../../i18n";
 import {
@@ -214,6 +215,19 @@ export function buildToolExecutionBatches(toolCalls = []) {
     }
   }
   return batches;
+}
+
+export function patchUploadedImageMeta(value, upload) {
+  if (Array.isArray(value)) return value.map(item => patchUploadedImageMeta(item, upload));
+  if (!value || typeof value !== "object") return value;
+  const next = Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, patchUploadedImageMeta(child, upload)])
+  );
+  if (String(value.ref || value.source?.ref || "") === upload.ref) {
+    next.uploadedUrl = upload.uploadedUrl;
+    next.uploadedPath = upload.uploadedPath || "";
+  }
+  return next;
 }
 
 export async function runToolExecutionBatches(toolCalls, executeToolCall, applyToolResult, { isCurrent = () => true } = {}) {
@@ -534,6 +548,19 @@ export default function AgentPanel() {
   const isMacPlatform = platformInfo?.os === "mac";
   const searchShortcutLabel = isMacPlatform ? "⌘⇧K" : "Alt+K";
   const clearShortcutLabel = isMacPlatform ? "⌘⇧Backspace" : "Alt+Backspace";
+
+  useEffect(() => {
+    const handleImageUploaded = event => {
+      const detail = event?.detail || {};
+      if (!detail.sessionId || !detail.ref || !detail.uploadedPath) return;
+      const currentMessages = sessionMessagesRef.current.get(detail.sessionId) || [];
+      const nextMessages = patchUploadedImageMeta(currentMessages, detail);
+      sessionMessagesRef.current.set(detail.sessionId, nextMessages);
+      if (activeSessionIdRef.current === detail.sessionId) setMessages(nextMessages);
+    };
+    window.addEventListener(SESSION_IMAGE_UPLOADED_EVENT, handleImageUploaded);
+    return () => window.removeEventListener(SESSION_IMAGE_UPLOADED_EVENT, handleImageUploaded);
+  }, []);
 
   useEffect(() => {
     defaultNewSessionSystemPromptRef.current = defaultNewSessionSystemPrompt;
@@ -2940,7 +2967,8 @@ export default function AgentPanel() {
       targetSessionId,
       attachKnownImageRefsToMessages(targetSessionId, compactedConversationMessages)
     );
-    const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
+    const signedRequestMessages = await refreshUploadedImageUrls(requestConversationMessages);
+    const apiConversationMessages = buildApiMessages(config.apiType, signedRequestMessages, {
       supportsImageInput: config.supportsImageInput === true,
       supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,

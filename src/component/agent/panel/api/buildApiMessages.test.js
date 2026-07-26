@@ -19,6 +19,38 @@ describe("buildApiMessages image options", () => {
     ]
   };
 
+  it("adds uploaded image URLs as text without replacing vision content", () => {
+    const message = {
+      ...userImageMessage,
+      imageRefs: [{
+        ref: "img_1",
+        dataUrl: "data:image/png;base64,dXNlcg==",
+        uploadedUrl: "https://project.supabase.co/storage/v1/object/public/images/session/s_1/img_1.png"
+      }]
+    };
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT_COMPLETIONS, [message], { supportsImageInput: true });
+    expect(result[0].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "image_url" }),
+      {
+        type: "text",
+        text: "This image has been uploaded to URL: https://project.supabase.co/storage/v1/object/public/images/session/s_1/img_1.png"
+      }
+    ]));
+  });
+
+  it("keeps the uploaded URL in the final Responses input_text", () => {
+    const uploadedUrl = "https://project.supabase.co/storage/v1/object/public/tabmanager/images/s_1/img_1_x.jpg";
+    const apiMessages = buildApiMessages(API_TYPES.OPENAI_RESPONSES, [{
+      ...userImageMessage,
+      imageRefs: [{ ref: "img_1", dataUrl: "data:image/png;base64,dXNlcg==", uploadedUrl }]
+    }], { supportsImageInput: true });
+    const request = buildResponsesRequestInput(apiMessages, { supportsImageInput: true });
+    expect(request.input[0].content).toEqual(expect.arrayContaining([
+      { type: "input_text", text: `This image has been uploaded to URL: ${uploadedUrl}` },
+      expect.objectContaining({ type: "input_image" })
+    ]));
+  });
+
   it("preserves Responses web search items when native search remains enabled", () => {
     const history = [{
       role: "assistant",

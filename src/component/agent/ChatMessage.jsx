@@ -8,6 +8,9 @@ import { Button, Dialog } from "@sunwu51/camel-ui";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeImageRefSource, normalizeMessageImageRefs } from "./imageRefs";
 import { buildWebSearchActionLabels } from "./webSearchActions";
+import { uploadSessionImage } from "../../api/supabase/images";
+import { createSupabaseSignedUrl } from "../../api/supabase/storage";
+import toast from "react-hot-toast";
 
 let activeSpeechController = null;
 
@@ -343,12 +346,15 @@ function UserMultimodalContent({
             ? `session-image:${block.source.ref}`
             : `data:${block.source.media_type};base64,${block.source.data}`;
           const ref = findImageRefForSource(imageRefs, dataUrl);
+          const imageMeta = findImageRefMeta(imageRefs, ref);
           return (
             <div key={index} style={{ marginTop: index > 0 ? "8px" : "0" }}>
               <EditableChatImage
                 src={dataUrl}
                 alt="用户上传的图片"
                 refId={ref}
+                uploadedUrl={imageMeta?.uploadedUrl}
+                uploadedPath={imageMeta?.uploadedPath}
                 sessionId={sessionId}
                 editable={imageEditingEnabled}
                 onEdit={onImageEditRequest}
@@ -408,6 +414,8 @@ function buildSupplementalUserImages(content, imageRefs, imageEditMeta) {
     return {
       ref: item.ref,
       src: item.dataUrl,
+      uploadedUrl: item.uploadedUrl,
+      uploadedPath: item.uploadedPath,
       label
     };
   });
@@ -442,6 +450,8 @@ function SupplementalUserImage({ image, sessionId = "", imageEditingEnabled = fa
         src={image.src}
         alt={image.label}
         refId={image.ref}
+        uploadedUrl={image.uploadedUrl}
+        uploadedPath={image.uploadedPath}
         sessionId={sessionId}
         editable={imageEditingEnabled}
         onEdit={onImageEditRequest}
@@ -1107,6 +1117,8 @@ export function EditableChatImage({
   src,
   alt,
   refId,
+  uploadedUrl = "",
+  uploadedPath = "",
   sessionId = "",
   editable = false,
   onEdit,
@@ -1121,6 +1133,7 @@ export function EditableChatImage({
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewFitZoom, setPreviewFitZoom] = useState(1);
   const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
+  const [uploadState, setUploadState] = useState(() => ({ status: uploadedPath || uploadedUrl ? "uploaded" : "idle", url: uploadedUrl, path: uploadedPath }));
   const previewImageRef = useRef(null);
   const previewStageRef = useRef(null);
   const previewDragRef = useRef(null);
@@ -1146,6 +1159,40 @@ export function EditableChatImage({
     event.stopPropagation();
     if (!editable || typeof onEdit !== "function") return;
     onEdit({ src, alt, ref: refId || "" });
+  }
+
+  async function handleUploadClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!sessionId || !refId || uploadState.status === "uploading") return;
+    if (uploadState.status === "uploaded" && uploadState.path) {
+      try {
+        const signedUrl = await createSupabaseSignedUrl(uploadState.path);
+        await navigator.clipboard.writeText(signedUrl);
+        toast.success("图片 URL 已复制");
+      } catch (error) {
+        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
+      }
+      return;
+    }
+    if (uploadState.status === "uploaded" && uploadState.url) {
+      try {
+        await navigator.clipboard.writeText(uploadState.url);
+        toast.success("图片 URL 已复制");
+      } catch (error) {
+        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
+      }
+      return;
+    }
+    setUploadState(current => ({ ...current, status: "uploading" }));
+    try {
+      const uploaded = await uploadSessionImage(sessionId, refId, src);
+      setUploadState({ status: "uploaded", url: uploaded.url, path: uploaded.path });
+      toast.success("图片已上传到 Supabase");
+    } catch (error) {
+      setUploadState(current => ({ ...current, status: "error" }));
+      toast.error(`图片上传失败: ${error?.message || String(error)}`);
+    }
   }
 
   function handleRefClick(event) {
@@ -1353,8 +1400,20 @@ export function EditableChatImage({
             onDoubleClick={handleRefClick}
           />
         )}
-        {!isPendingSessionImage && (canPreviewImage || editable) && (
+        {!isPendingSessionImage && (canPreviewImage || editable || (sessionId && refId)) && (
           <span className="chat-image-actions">
+            {sessionId && refId && (
+              <button
+                type="button"
+                className={`chat-image-upload-btn ${uploadState.status === "uploaded" ? "is-uploaded" : ""}`}
+                onClick={handleUploadClick}
+                disabled={uploadState.status === "uploading"}
+                title={uploadState.status === "uploaded" ? "复制图片 URL" : (uploadState.status === "uploading" ? "正在上传" : "上传到 Supabase")}
+                aria-label={uploadState.status === "uploaded" ? "复制图片 URL" : (uploadState.status === "uploading" ? "正在上传图片" : "上传图片到 Supabase")}
+              >
+                {uploadState.status === "uploading" ? "..." : uploadState.status === "uploaded" ? "✓" : "↑"}
+              </button>
+            )}
             {canPreviewImage && (
               <button
                 type="button"
@@ -1498,6 +1557,10 @@ function findImageRefForSource(imageRefs, source) {
   if (!Array.isArray(imageRefs) || !source) return "";
   const match = imageRefs.find(item => item?.dataUrl === source || item?.source === source || item?.url === source);
   return match?.ref || "";
+}
+
+function findImageRefMeta(imageRefs, ref) {
+  return normalizeMessageImageRefs(imageRefs).find(item => item.ref === ref) || null;
 }
 
 function transformMarkdownUrl(value, key, node) {

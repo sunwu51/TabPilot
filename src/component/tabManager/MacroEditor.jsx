@@ -3,6 +3,7 @@
 import { Button, Dialog, Input } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
+import { normalizeStep, targetToSelectors } from "../../api/macro";
 
 export default function MacroEditor({ macro, onSaved, trigger, replayOptions = { speed: "normal" } }) {
     return (
@@ -14,7 +15,7 @@ export default function MacroEditor({ macro, onSaved, trigger, replayOptions = {
 
 function MacroEditorBody({ macro, onSaved, replayOptions }) {
     const [name, setName] = useState(macro.name);
-    const [steps, setSteps] = useState(() => deepCopySteps(macro.steps));
+    const [steps, setSteps] = useState(() => deepCopySteps(toEditorSteps(macro)));
     const [expanded, setExpanded] = useState(() => new Set());
     const [saving, setSaving] = useState(false);
     const [debuggingIndex, setDebuggingIndex] = useState(null);
@@ -22,7 +23,7 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
 
     useEffect(() => {
         setName(macro.name);
-        setSteps(deepCopySteps(macro.steps));
+        setSteps(deepCopySteps(toEditorSteps(macro)));
     }, [macro]);
 
     function closeDialog() {
@@ -126,7 +127,7 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
                 ...s,
                 selectors: (s.selectors || []).map(x => x.trim()).filter(Boolean)
             }));
-            const next = { ...macro, name: name.trim(), steps: cleanedSteps };
+            const next = { ...macro, name: name.trim(), workflow: { version: 1, steps: cleanedSteps.map(normalizeStep).filter(Boolean) } };
             const res = await sendMacroMessage({ action: "save", payload: next });
             if (res?.success) {
                 toast.success("已保存");
@@ -143,7 +144,7 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
     async function replayFrom(index, singleStep = false) {
         setDebuggingIndex(index);
         try {
-            const tempMacro = { ...macro, name: `${name.trim() || macro.name} (debug)`, steps };
+            const tempMacro = { ...macro, name: `${name.trim() || macro.name} (debug)`, workflow: { version: 1, steps: steps.map(normalizeStep).filter(Boolean) } };
             const res = await sendMacroMessage({
                 action: "replay_steps",
                 payload: { macro: tempMacro, options: { ...replayOptions, startIndex: index, singleStep } }
@@ -519,6 +520,18 @@ function truncate(s, n) {
 
 function deepCopySteps(steps) {
     return (steps || []).map(s => ({ ...s, selectors: [...(s.selectors || [])] }));
+}
+
+function toEditorSteps(macro) {
+    return (macro?.workflow?.steps || []).map(node => {
+        const action = node.do || { type: "wait_for", ...(node.waitFor || {}) };
+        const selectors = targetToSelectors(action.target);
+        if (action.type === "type") return { ...action, type: "input", value: action.text ?? "", selectors };
+        if (action.type === "key_press") return { ...action, type: "key", selectors };
+        if (action.type === "wait_for" && action.condition === "url") return { ...action, type: "wait_url", selectors };
+        if (action.type === "wait_for") return { ...action, type: "wait_element", selectors };
+        return { ...action, selectors };
+    });
 }
 
 function createStep(type) {

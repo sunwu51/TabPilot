@@ -213,6 +213,15 @@ function highlightActionTarget(el, durationMs = DEFAULT_ACTION_HIGHLIGHT_MS) {
 }
 
 async function runStep(step, options = {}) {
+  const selectors = (step.target?.strategies || []).map(item => item?.value).filter(Boolean);
+  step = {
+    ...step,
+    selectors,
+    ...(step.type === "type" ? { type: "input", value: step.text ?? "" } : {}),
+    ...(step.type === "key_press" ? { type: "key" } : {}),
+    ...(step.type === "wait_for" && step.condition === "url" ? { type: "wait_url" } : {}),
+    ...(step.type === "wait_for" && step.condition !== "url" ? { type: "wait_element" } : {})
+  };
   if (step.type === "wait") {
     await sleep(Math.max(0, Number(step.durationMs) || 0));
     return { ok: true };

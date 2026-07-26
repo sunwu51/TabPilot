@@ -31,6 +31,21 @@ const MESSAGES = {
     chinese: "中文",
     english: "English",
     languageHint: "默认根据浏览器语言选择；保存后使用手动选择。"
+    ,supabaseStorageSync: "Supabase 存储与手动同步"
+    ,supabaseProjectUrl: "项目 URL"
+    ,supabaseBucket: "存储 Bucket"
+    ,supabaseRootDirectory: "根目录"
+    ,supabaseKey: "Supabase Key"
+    ,hideSupabaseKey: "隐藏 Supabase Key"
+    ,showSupabaseKey: "显示 Supabase Key"
+    ,supabaseHint: "将创建 sessions、images、config 子目录。请使用 private Bucket：图片发送给 LLM 时会生成有效期 7 天的 signed URL；聊天和设置都按更新时间保留较新版本。"
+    ,syncChatsAndSettings: "同步聊天和设置"
+    ,supabaseSyncComplete: "Supabase 同步完成：聊天上传 {uploaded}，下载 {downloaded}；设置 {settings}"
+    ,settingsDownloaded: "已下载"
+    ,settingsUploaded: "已上传"
+    ,supabaseSyncFailed: "Supabase 同步失败: {message}"
+    ,feedback: "意见反馈"
+    ,feedbackHint: "提交问题、建议或功能请求。"
   },
   en: {
     tabManagement: "TabPilot",
@@ -58,6 +73,21 @@ const MESSAGES = {
     chinese: "Chinese",
     english: "English",
     languageHint: "Defaults to your browser language until you choose a language."
+    ,supabaseStorageSync: "Supabase Storage and Manual Sync"
+    ,supabaseProjectUrl: "Project URL"
+    ,supabaseBucket: "Storage Bucket"
+    ,supabaseRootDirectory: "Root directory"
+    ,supabaseKey: "Supabase Key"
+    ,hideSupabaseKey: "Hide Supabase Key"
+    ,showSupabaseKey: "Show Supabase Key"
+    ,supabaseHint: "Creates sessions, images, and config subdirectories. Use a private bucket: images receive a signed URL valid for 7 days when sent to the LLM; chats and settings keep the newer version by update time."
+    ,syncChatsAndSettings: "Sync Chats and Settings"
+    ,supabaseSyncComplete: "Supabase sync complete: chats uploaded {uploaded}, downloaded {downloaded}; settings {settings}"
+    ,settingsDownloaded: "downloaded"
+    ,settingsUploaded: "uploaded"
+    ,supabaseSyncFailed: "Supabase sync failed: {message}"
+    ,feedback: "Feedback"
+    ,feedbackHint: "Report a problem, suggestion, or feature request."
   }
 };
 
@@ -110,8 +140,6 @@ const UI_TEXT = {
   "配置备份": "Configuration Backup",
   "导出配置": "Export Configuration",
   "导入配置": "Import Configuration",
-  "GitHub 同步": "GitHub Sync",
-  "启用 GitHub 同步": "Enable GitHub Sync",
   "Repo 名称": "Repository",
   "分支": "Branch",
   "同步目录": "Sync directory",
