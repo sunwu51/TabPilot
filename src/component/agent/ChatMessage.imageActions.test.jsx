@@ -1,6 +1,6 @@
 /* global chrome */
 /* eslint-disable react/prop-types */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@sunwu51/camel-ui", () => ({
@@ -38,6 +38,32 @@ Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
 });
 
 describe("ChatMessage image actions", () => {
+  it("copies an existing uploaded URL instead of uploading again", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+    const uploadedUrl = "https://demo.supabase.co/storage/v1/object/public/images/s_1/img_1.png";
+    render(
+      <ChatMessage
+        msg={{
+          role: "user",
+          content: [{
+            type: "image",
+            ref: "img_1",
+            source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_1" }
+          }],
+          imageRefs: [{ ref: "img_1", dataUrl: "data:image/png;base64,dXNlcg==", uploadedUrl }]
+        }}
+        sessionId="s_1"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "复制图片 URL" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(uploadedUrl));
+  });
+
   it("opens an in-page preview dialog from the ref button and supports zoom controls", () => {
     render(
       <ChatMessage

@@ -49,17 +49,7 @@ import {
 } from "./api/postdog";
 import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
 import { runPostdogRequest } from "./api/postdog/runtime";
-import {
-    GITHUB_SYNC_ALARM_NAME,
-    GITHUB_SYNC_CONFIG_KEY,
-    GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES,
-    hasUsableGithubSyncConfig
-} from "./api/sync/config";
-import {
-    getGithubSyncStatus,
-    markGithubSyncDirtyFromStorageChanges,
-    runGithubSync
-} from "./api/sync/engine";
+import { markSupabaseSettingsDirtyFromStorageChanges } from "./api/supabase/backup";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -72,30 +62,13 @@ const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
 const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const PASSWORD_PLACEHOLDER = "1A2b3!4399";
 
-async function ensureGithubSyncAlarm() {
-    if (!chrome.alarms) return;
-    const { config } = await getGithubSyncStatus();
-    if (!hasUsableGithubSyncConfig(config)) {
-        await chrome.alarms.clear(GITHUB_SYNC_ALARM_NAME);
-        return;
-    }
-    const intervalMinutes = config.intervalMinutes || GITHUB_SYNC_DEFAULT_INTERVAL_MINUTES;
-    const existing = await chrome.alarms.get(GITHUB_SYNC_ALARM_NAME);
-    if (existing && existing.periodInMinutes === intervalMinutes) return;
-    if (existing) {
-        await chrome.alarms.clear(GITHUB_SYNC_ALARM_NAME);
-    }
-    chrome.alarms.create(GITHUB_SYNC_ALARM_NAME, { periodInMinutes: intervalMinutes });
-}
-
-async function runGithubSyncSafely() {
-    try {
-        const { config } = await getGithubSyncStatus();
-        if (!hasUsableGithubSyncConfig(config)) return;
-        await runGithubSync();
-    } catch (error) {
-        console.warn("GitHub sync failed:", error);
-    }
+function removeLegacyGithubSyncData() {
+    void chrome.alarms?.clear("github-sync");
+    void chrome.storage.local.remove([
+        "githubSyncConfig",
+        "githubSyncState",
+        "githubSyncTombstones"
+    ]);
 }
 
 function buildScheduleFireAlarmName(id) {
@@ -1386,10 +1359,7 @@ chrome.windows?.onRemoved?.addListener((windowId) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-    void markGithubSyncDirtyFromStorageChanges(changes, areaName);
-    if (areaName === "local" && changes[GITHUB_SYNC_CONFIG_KEY]) {
-        void ensureGithubSyncAlarm();
-    }
+    void markSupabaseSettingsDirtyFromStorageChanges(changes, areaName);
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -1397,20 +1367,20 @@ chrome.runtime.onInstalled.addListener(() => {
     void ensureSettingsMigrated();
     void restoreScheduledJobs();
     void startWsBridge();
-    void ensureGithubSyncAlarm();
+    removeLegacyGithubSyncData();
 });
 
 chrome.runtime.onStartup.addListener(() => {
     void ensureSettingsMigrated();
     void restoreScheduledJobs();
     void startWsBridge();
-    void ensureGithubSyncAlarm();
+    removeLegacyGithubSyncData();
 });
 
 void ensureSettingsMigrated();
 void restoreScheduledJobs();
 void startWsBridge();
-void ensureGithubSyncAlarm();
+removeLegacyGithubSyncData();
 
 if (chrome.alarms) {
     chrome.alarms.get("ws-bridge-health", (alarm) => {
@@ -1418,11 +1388,6 @@ if (chrome.alarms) {
     });
 
     chrome.alarms.onAlarm.addListener(async (alarm) => {
-        if (alarm.name === GITHUB_SYNC_ALARM_NAME) {
-            await runGithubSyncSafely();
-            return;
-        }
-
         if (alarm.name.startsWith(SCHEDULE_FIRE_ALARM_PREFIX)) {
             await runScheduledJob(alarm.name.slice(SCHEDULE_FIRE_ALARM_PREFIX.length));
             return;

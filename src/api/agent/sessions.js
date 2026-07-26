@@ -212,6 +212,31 @@ export async function loadSessionImageStore(id) {
   return result[key] && typeof result[key] === "object" ? result[key] : {};
 }
 
+export async function recordSessionImageUpload(id, ref, upload = {}) {
+  const normalizedRef = normalizeImageStoreKey(ref);
+  const uploadedUrl = String(upload?.url || "").trim();
+  const uploadedPath = String(upload?.path || "").trim();
+  if (!id || !normalizedRef || !uploadedPath) return false;
+  const key = `session_${id}`;
+  const result = await chrome.storage.local.get({ [key]: { messages: [], queuedMessages: [] } });
+  const patchRefs = value => {
+    if (Array.isArray(value)) return value.map(patchRefs);
+    if (!value || typeof value !== "object") return value;
+    const next = Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, patchRefs(child)]));
+    if (normalizeImageStoreKey(value.ref || value.source?.ref) === normalizedRef) {
+      next.uploadedPath = uploadedPath;
+      if (/^https?:\/\//i.test(uploadedUrl)) next.uploadedUrl = uploadedUrl;
+    }
+    return next;
+  };
+  await chrome.storage.local.set({ [key]: patchRefs(result[key]) });
+  const { sessions_index = [] } = await chrome.storage.local.get({ sessions_index: [] });
+  const entry = sessions_index.find(item => item.id === id);
+  if (entry) entry.updatedAt = Date.now();
+  await chrome.storage.local.set({ sessions_index });
+  return true;
+}
+
 /**
  * Load messages and hydrate out-of-band image refs. Use only when the caller
  * explicitly needs base64 image payloads synchronously.

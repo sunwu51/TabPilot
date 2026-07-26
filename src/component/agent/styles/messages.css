@@ -188,7 +188,8 @@
 }
 
 .chat-image-ref-btn,
-.chat-image-edit-btn {
+.chat-image-edit-btn,
+.chat-image-upload-btn {
   min-width: 42px;
   height: 24px;
   padding: 0 8px;
@@ -220,6 +221,27 @@
 
 .chat-image-ref-btn:hover,
 .chat-image-edit-btn:hover {
+  background: white;
+}
+
+.chat-image-upload-btn {
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.chat-image-upload-btn.is-uploaded {
+  color: #047857;
+  border-color: rgba(4, 120, 87, 0.35);
+}
+
+.chat-image-upload-btn:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.chat-image-upload-btn:hover {
   background: white;
 }
 
