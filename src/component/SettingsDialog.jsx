@@ -1188,7 +1188,30 @@ function SettingsDialogBody() {
                 aria-label={showSupabaseKey ? t("hideSupabaseKey") : t("showSupabaseKey")}
                 title={showSupabaseKey ? t("hideSupabaseKey") : t("showSupabaseKey")}
               >
-                {showSupabaseKey ? "○" : "●"}
+                {showSupabaseKey ? (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                  </svg>
+                )}
               </button>
             </div>
           </div>

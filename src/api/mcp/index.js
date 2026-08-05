@@ -1,3 +1,5 @@
+/* global chrome */
+import { buildOAuthHeaders } from "./oauth";
 let _rpcId = 0;
 const DEFAULT_MCP_TOOL_TIMEOUT_MS = 60000;
 const MCP_SESSION_ID_HEADER = "Mcp-Session-Id";
@@ -117,6 +119,17 @@ function _sendExtensionMessage(extensionId, message, timeoutMs = 0) {
   });
 }
 
+function _requestOAuthFromServiceWorker(serverUrl, wwwAuthenticate, action = "authorize") {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: "mcp_oauth", action, serverUrl, wwwAuthenticate }, response => {
+      const runtimeError = chrome.runtime?.lastError;
+      if (runtimeError) reject(new Error(runtimeError.message));
+      else if (!response?.success) reject(new Error(response?.error || "OAuth authorization failed"));
+      else resolve(response.token);
+    });
+  });
+}
+
 async function _rpcCallExtension(extensionId, method, params, timeoutMs) {
   const id = ++_rpcId;
   const response = await _sendExtensionMessage(extensionId, {
@@ -172,6 +185,7 @@ async function _rpcCallOnce(url, headers, method, params, timeoutMs, sessionId =
     const errText = await res.text();
     const error = new Error(`MCP error ${res.status}: ${errText}`);
     error.status = res.status;
+    error.wwwAuthenticate = res.headers.get("WWW-Authenticate") || res.headers.get("www-authenticate") || "";
     throw error;
   }
 
@@ -353,8 +367,8 @@ export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs =
  * @returns {Promise<{name: string, tools: Array, error?: string}>}
  */
 export async function connectMcpServer(url, headers = {}) {
+  const endpoint = _normalizeEndpoint(url, headers);
   try {
-    const endpoint = _normalizeEndpoint(url, headers);
     const info = await initializeMcp(endpoint, endpoint.headers || {});
     const tools = await listMcpTools(endpoint, endpoint.headers || {});
     return {
@@ -363,6 +377,21 @@ export async function connectMcpServer(url, headers = {}) {
       error: null
     };
   } catch (e) {
+    if (endpoint.type === "http" && e?.status === 401) {
+      try {
+        let token;
+        if (endpoint.headers?.Authorization) {
+          try { token = await _requestOAuthFromServiceWorker(endpoint.url, e.wwwAuthenticate, "refresh"); } catch (_) { /* fall through to full authorization */ }
+        }
+        if (!token) token = await _requestOAuthFromServiceWorker(endpoint.url, e.wwwAuthenticate, "authorize");
+        const authorizedHeaders = buildOAuthHeaders(endpoint.headers, token);
+        const info = await initializeMcp(endpoint.url, authorizedHeaders);
+        const tools = await listMcpTools(endpoint.url, authorizedHeaders);
+        return { name: info.serverInfo?.name || "MCP Server", tools, error: null, headers: authorizedHeaders };
+      } catch (oauthError) {
+        return { name: "MCP Server", tools: [], error: `OAuth 授权失败: ${oauthError.message}` };
+      }
+    }
     return {
       name: "MCP Server",
       tools: [],

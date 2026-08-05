@@ -46,6 +46,7 @@ const MESSAGES = {
     ,supabaseSyncFailed: "Supabase 同步失败: {message}"
     ,feedback: "意见反馈"
     ,feedbackHint: "提交问题、建议或功能请求。"
+    ,mcpOauthHint: "OAuth MCP 受浏览器 Origin 限制，兼容性较差；建议使用 mcp-center 绕开此限制。"
   },
   en: {
     tabManagement: "TabPilot",
@@ -88,6 +89,7 @@ const MESSAGES = {
     ,supabaseSyncFailed: "Supabase sync failed: {message}"
     ,feedback: "Feedback"
     ,feedbackHint: "Report a problem, suggestion, or feature request."
+    ,mcpOauthHint: "OAuth MCP support is limited by browser Origin restrictions. Using mcp-center is recommended to bypass this limitation."
   }
 };
 
