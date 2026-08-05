@@ -87,6 +87,8 @@ async function discover(serverUrl, resourceMetadataUrl = "") {
   if (!issuer) throw new Error("OAuth protected resource metadata has no authorization server");
   const auth = new URL(issuer);
   const metadataUrls = [
+    `${auth.origin}${auth.pathname.replace(/\/$/, "")}/.well-known/oauth-authorization-server`,
+    `${auth.origin}${auth.pathname.replace(/\/$/, "")}/.well-known/openid-configuration`,
     `${auth.origin}/.well-known/oauth-authorization-server${auth.pathname}`,
     `${auth.origin}/.well-known/openid-configuration${auth.pathname}`
   ];
