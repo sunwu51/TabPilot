@@ -111,12 +111,28 @@ async function registerClient(metadata, redirectUri) {
       client_name: "TabPilot",
       redirect_uris: [redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
-      token_endpoint_auth_method: "none"
+      response_types: ["code"]
     })
   });
   if (!response.ok) throw new Error(`OAuth client registration failed (${response.status})`);
   return response.json();
+}
+
+function buildTokenRequest(client, params) {
+  const authMethod = client.token_endpoint_auth_method || "none";
+  const body = new URLSearchParams(params);
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  if (authMethod === "client_secret_basic") {
+    if (!client.client_secret) throw new Error("OAuth client_secret is required for client_secret_basic");
+    headers.Authorization = `Basic ${btoa(`${client.clientId}:${client.client_secret}`)}`;
+    body.delete("client_id");
+  } else if (authMethod === "client_secret_post") {
+    if (!client.client_secret) throw new Error("OAuth client_secret is required for client_secret_post");
+    body.set("client_secret", client.client_secret);
+  } else if (authMethod !== "none") {
+    throw new Error(`Unsupported OAuth token endpoint auth method: ${authMethod}`);
+  }
+  return { headers, body };
 }
 
 function launchWebAuthFlow(url) {
@@ -138,9 +154,18 @@ export async function authorizeMcpServer(serverUrl, resourceMetadataUrl = "") {
     throw new Error("OAuth server does not support dynamic client registration");
   }
   const clientId = client?.client_id || authorizationServer.client_id;
-  await chrome.storage.local.set({ [getOAuthClientKey(serverUrl)]: {
+  const registeredClient = {
+    ...(client || {}),
     clientId,
+    token_endpoint_auth_method: client?.token_endpoint_auth_method
+      || authorizationServer.token_endpoint_auth_method
+      || (client?.client_secret
+        ? (authorizationServer.token_endpoint_auth_methods_supported || []).find(method => method !== "none") || "client_secret_post"
+        : "none"),
     tokenEndpoint: authorizationServer.token_endpoint
+  };
+  await chrome.storage.local.set({ [getOAuthClientKey(serverUrl)]: {
+    ...registeredClient
   } });
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = base64Url(await sha256(verifier));
@@ -153,6 +178,11 @@ export async function authorizeMcpServer(serverUrl, resourceMetadataUrl = "") {
     client_id: clientId,
     redirect_uri: redirectUri,
     state,
+    ...(resource.scopes_supported?.length
+      ? { scope: resource.scopes_supported.join(" ") }
+      : authorizationServer.scopes_supported?.length
+        ? { scope: authorizationServer.scopes_supported.join(" ") }
+        : {}),
     code_challenge: challenge,
     code_challenge_method: "S256",
     ...(resource.resource ? { resource: resource.resource } : {})
@@ -160,18 +190,22 @@ export async function authorizeMcpServer(serverUrl, resourceMetadataUrl = "") {
   const callbackUrl = new URL(await launchWebAuthFlow(authorizationUrl.toString()));
   if (callbackUrl.searchParams.get("state") !== state) throw new Error("OAuth state validation failed");
   if (callbackUrl.searchParams.get("error")) throw new Error(callbackUrl.searchParams.get("error_description") || callbackUrl.searchParams.get("error"));
-  const response = await fetch(authorizationServer.token_endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
+  const tokenRequest = buildTokenRequest(registeredClient, {
       grant_type: "authorization_code",
       code: callbackUrl.searchParams.get("code") || "",
       redirect_uri: redirectUri,
       client_id: clientId,
-      code_verifier: verifier
-    })
+      code_verifier: verifier,
+      ...(resource.resource ? { resource: resource.resource } : {})
   });
-  if (!response.ok) throw new Error(`OAuth token exchange failed (${response.status})`);
+  const response = await fetch(authorizationServer.token_endpoint, {
+    method: "POST",
+    ...tokenRequest
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OAuth token exchange failed (${response.status}): ${errorText}`);
+  }
   const token = await saveToken(serverUrl, await response.json());
   await chrome.storage.local.remove(pendingKey);
   return token;
@@ -189,14 +223,14 @@ export async function refreshMcpServerToken(serverUrl) {
   if (!token?.refresh_token || !client?.clientId || !client?.tokenEndpoint) {
     throw new Error("No refresh token is available");
   }
-  const response = await fetch(client.tokenEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
+  const tokenRequest = buildTokenRequest(client, {
       grant_type: "refresh_token",
       refresh_token: token.refresh_token,
       client_id: client.clientId
-    })
+  });
+  const response = await fetch(client.tokenEndpoint, {
+    method: "POST",
+    ...tokenRequest
   });
   if (!response.ok) throw new Error(`OAuth token refresh failed (${response.status})`);
   const refreshed = await response.json();

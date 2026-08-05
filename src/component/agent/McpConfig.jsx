@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { connectMcpServer } from "../../api/mcp";
 import { BUILTIN_TOOL_COUNT, BUILTIN_TOOL_GROUPS, BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
 import toast from "react-hot-toast";
-import { useLocalizedDom } from "../../i18n";
+import { useI18n, useLocalizedDom } from "../../i18n";
 
 const MCP_WARNING_LIMIT = 120 - BUILTIN_TOOL_COUNT;
 const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
@@ -20,6 +20,7 @@ const RESERVED_LAZY_SERVER_NAMES = new Set(Object.keys(BUILTIN_TOOL_GROUPS));
  */
 /* eslint-disable react/prop-types */
 export default function McpConfig({ onToolsChanged }) {
+  const { t } = useI18n();
   const localizedBodyRef = useLocalizedDom();
   const [servers, setServers] = useState([]);
   const [newType, setNewType] = useState("http");
@@ -156,6 +157,7 @@ export default function McpConfig({ onToolsChanged }) {
         return {
           ...s,
           type: s.type === "extension" ? "extension" : "http",
+          headers: result.headers || s.headers || {},
           name: s.name || normalizeServerName(result.name) || normalizeServerName(s.url) || `server_${Date.now()}`,
           serverInfoName: result.name || s.serverInfoName || "",
           tools: result.tools,
@@ -320,6 +322,7 @@ export default function McpConfig({ onToolsChanged }) {
             ...s,
             serverInfoName: result.name || s.serverInfoName || "",
             tools: result.tools,
+            headers: result.headers || s.headers || {},
             toolSettings: buildToolSettings(s.toolSettings || {}, result.tools),
             error: result.error,
             enabled: !result.error
@@ -434,6 +437,7 @@ export default function McpConfig({ onToolsChanged }) {
                 <div className="rounded border border-gray-100 p-2">
                   <Checkbox
                     isSelected={s.lazyLoadTools === true}
+                    isDisabled
                     onChange={(checked) => handleLazyLoadChange(s, checked)}
                   >
                     <span className="text-xs">惰性加载工具</span>
@@ -443,7 +447,7 @@ export default function McpConfig({ onToolsChanged }) {
                     labelClassName="!text-xs !text-gray-500"
                     inputClassName="!min-h-8"
                     defaultValue={s.lazyLoadDescription || ""}
-                    isDisabled={s.lazyLoadTools !== true}
+                    isDisabled
                     onChange={(value) => handleLazyLoadDescriptionChange(s, value)}
                     placeholder="例如：GitHub repositories, issues, and pull requests"
                   />
@@ -579,6 +583,9 @@ export default function McpConfig({ onToolsChanged }) {
               placeholder="例如：GitHub repositories, issues, and pull requests"
             />
           )}
+        </div>
+        <div className="mt-2 mb-1 text-xs leading-5 text-amber-700">
+          {t("mcpOauthHint")}
         </div>
         <Button
           className="mt-2 w-full"
