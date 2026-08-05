@@ -25,7 +25,8 @@
     "sidePanel",
     "history",
     "storage",
-    "scripting"
+    "scripting",
+    "identity"
   ],
   "optional_permissions": [
     "downloads"

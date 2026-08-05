@@ -50,6 +50,12 @@ import {
 import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
 import { runPostdogRequest } from "./api/postdog/runtime";
 import { markSupabaseSettingsDirtyFromStorageChanges } from "./api/supabase/backup";
+import {
+    authorizeMcpServerFromServiceWorker,
+    getOAuthServerUrlForAlarm,
+    MCP_OAUTH_ALARM_PREFIX,
+    refreshMcpServerToken
+} from "./api/mcp/oauth";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -882,6 +888,15 @@ async function handlePostdogManagerMessage(action, payload = {}) {
  * communicates with the auto-injected content script (no host_permissions needed).
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === "mcp_oauth" && (msg.action === "authorize" || msg.action === "refresh")) {
+        const operation = msg.action === "refresh"
+            ? refreshMcpServerToken(msg.serverUrl)
+            : authorizeMcpServerFromServiceWorker(msg.serverUrl, msg.wwwAuthenticate || "");
+        operation
+            .then(token => sendResponse({ success: true, token }))
+            .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
+        return true;
+    }
     if (msg?.type === "agent_session_lock") {
         (async () => {
             try {
@@ -1388,6 +1403,16 @@ if (chrome.alarms) {
     });
 
     chrome.alarms.onAlarm.addListener(async (alarm) => {
+        if (alarm.name.startsWith(MCP_OAUTH_ALARM_PREFIX)) {
+            const serverUrl = await getOAuthServerUrlForAlarm(alarm.name);
+            if (!serverUrl) return;
+            try {
+                await refreshMcpServerToken(serverUrl);
+            } catch (error) {
+                console.warn(`[mcp-oauth] token refresh failed for ${serverUrl}:`, error?.message || error);
+            }
+            return;
+        }
         if (alarm.name.startsWith(SCHEDULE_FIRE_ALARM_PREFIX)) {
             await runScheduledJob(alarm.name.slice(SCHEDULE_FIRE_ALARM_PREFIX.length));
             return;
