@@ -129,7 +129,8 @@ function launchWebAuthFlow(url) {
 
 export async function authorizeMcpServer(serverUrl, resourceMetadataUrl = "") {
   const redirectUri = getRedirectUri();
-  const { resource, authorizationServer } = await discover(serverUrl, resourceMetadataUrl);
+  const metadataUrl = parseWwwAuthenticate(resourceMetadataUrl) || resourceMetadataUrl;
+  const { resource, authorizationServer } = await discover(serverUrl, metadataUrl);
   const client = await registerClient(authorizationServer, redirectUri);
   if (!client?.client_id && !authorizationServer.client_id) {
     throw new Error("OAuth server does not support dynamic client registration");
