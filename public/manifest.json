@@ -65,8 +65,7 @@
         "playgroundCodec.js",
         "image-viewer.html",
         "imageViewer.js",
-        "imageViewer.css",
-        "modulepreload-polyfill.js"
+        "imageViewer.css"
       ],
       "matches": [
         "<all_urls>"

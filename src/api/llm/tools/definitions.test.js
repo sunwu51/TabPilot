@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { API_TYPES } from "../core/config";
-import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getMcpToolCallAliases, getTools, isMcpToolCallName, listToolGroup, normalizeActiveToolNames } from "./definitions";
+import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getCodeRuntimeToolDefinitions, getMcpToolCallAliases, getTools, isMcpToolCallName, listToolGroup, normalizeActiveToolNames } from "./definitions";
 
 function namesFor(apiType, options) {
   return getTools(apiType, [], options).map(tool => {
@@ -74,6 +74,37 @@ describe("llm tool definitions", () => {
         strict: false
       }
     ]);
+  });
+
+  it("exposes MCP servers through exec instead of direct provider tools in code mode", () => {
+    const tools = getTools(API_TYPES.OPENAI_RESPONSES, [{
+      name: "lookup",
+      description: "Lookup product documentation",
+      _serverName: "docs",
+      _lazyLoad: true,
+      _lazyDescription: "Product documentation search"
+    }], {
+      useToolSelection: true,
+      useCodeMode: true
+    });
+    const names = tools.map(tool => tool.name);
+
+    expect(names).toEqual(["exec", "wait", "plan_create_for_session", "plan_update_for_session", "request_user_input"]);
+    const execDescription = tools.find(tool => tool.name === "exec")?.description;
+    expect(execDescription).toContain("while (true)");
+    expect(execDescription).toContain("for (;;)");
+    expect(execDescription).toContain("Tab = { id: number");
+    expect(execDescription).toContain("iterate `result.tabs`, not `result`");
+    expect(execDescription).toContain("it has `tabId`, not `id`, and no nested `tab`");
+    expect(execDescription).toContain("page text is in `content`");
+    expect(execDescription).toContain("if (state.error) return state");
+    expect(execDescription).toContain("tools.mcp.server_name.tool_name(args)");
+    expect(execDescription).toContain("docs: Product documentation search");
+    expect(execDescription).toContain("lookup (Lookup product documentation)");
+    const runtimeNames = getCodeRuntimeToolDefinitions().map(tool => tool.name);
+    expect(runtimeNames).not.toContain("plan_create_for_session");
+    expect(runtimeNames).not.toContain("plan_update_for_session");
+    expect(runtimeNames).not.toContain("request_user_input");
   });
 
   it("formats tools for OpenAI chat completions", () => {

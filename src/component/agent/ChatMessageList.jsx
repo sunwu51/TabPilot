@@ -1,7 +1,11 @@
 import { memo, useMemo, useState } from "react";
+import hljs from "highlight.js/lib/core";
+import javascript from "highlight.js/lib/languages/javascript";
 import ChatMessage, { EditableChatImage } from "./ChatMessage";
 
-const HIDDEN_TOOL_CARD_NAMES = new Set(["plan_create_for_session", "plan_update_for_session"]);
+hljs.registerLanguage("javascript", javascript);
+
+const HIDDEN_TOOL_CARD_NAMES = new Set(["plan_create_for_session", "plan_update_for_session", "request_user_input"]);
 
 /* eslint-disable react/prop-types */
 const ChatMessageList = memo(function ChatMessageList({
@@ -217,10 +221,13 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
   const hasResult = !!item.resultMessage && !item.resultMessage._pending;
   const isError = result.isError;
   const name = item.name || result.toolName || "tool";
-  const inputDetail = formatToolInputDetail(item.input);
+  const isExec = name === "exec";
+  const codeToolCalls = item.resultMessage?._codeToolCalls || [];
+  const inputDetail = isExec ? "" : formatToolInputDetail(item.input);
   const inputDisplay = formatToolDisplayValue(item.input);
-  const label = `${name}${inputDetail ? `(${inputDetail})` : ""}`;
-  const suffix = hasResult && result.label ? ` · ${result.label}` : "";
+  const label = isExec
+    ? formatExecToolLabel(codeToolCalls)
+    : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
   const durationMs = item.resultMessage?.durationMs;
   const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
   const icon = hasResult ? (isError ? "❌" : "✅") : "⏳";
@@ -236,7 +243,7 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
         onKeyDown={(event) => handleToggleKeyDown(event, toggleExpanded)}
       >
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}{suffix}</span>
+        <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}</span>
       </div>
       {pendingHint && <div className="tool-result-pending-hint loading-dots">{pendingHint}</div>}
       {expanded && result.displayImageUrl && (
@@ -255,7 +262,9 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
       {expanded && (
         <>
           <div className="tool-merged-section-label">调用参数</div>
-          <pre className={buildToolContentClassName(inputDisplay.isJson)}>{inputDisplay.text}</pre>
+          {isExec
+            ? <HighlightedExecCode code={item.input?.code} />
+            : <pre className={buildToolContentClassName(inputDisplay.isJson)}>{inputDisplay.text}</pre>}
           {hasResult && (
             <>
               <div className="tool-merged-section-label">执行结果</div>
@@ -311,7 +320,7 @@ function groupMessages(messages, dividerIndex = -1) {
         items,
         toolCallCount,
         endIndex: trailingThinking?.remainingMessage ? trailingThinking.messageIndex - 1 : index - 1,
-        key: `tools-${start}-${index - 1}-${group.length}-${toolCallCount}-${trailingThinking?.items.length || 0}`
+        key: `tools-${start}`
       });
       if (trailingThinking?.remainingMessage) {
         result.push({
@@ -327,7 +336,7 @@ function groupMessages(messages, dividerIndex = -1) {
         type: "tool-sequence",
         items,
         endIndex: index - 1,
-        key: `tool-sequence-${start}-${group.length}-${toolCallCount}`
+        key: `tool-sequence-${start}`
       });
     }
   }
@@ -595,11 +604,21 @@ function parseToolInput(input) {
 
 function formatToolInputDetail(input) {
   if (!input || typeof input !== "object") return String(input || "");
-  if (input.tabId) return `Tab ${input.tabId}`;
-  if (input.tabIds) return `${input.tabIds.length} tabs`;
-  if (input.url) return input.url;
-  if (input.query) return input.query;
-  return JSON.stringify(input);
+  if (input.tabId) return `Tab ${formatToolInputValue(input.tabId)}`;
+  if (input.tabIds) return `${Array.isArray(input.tabIds) ? input.tabIds.length : formatToolInputValue(input.tabIds)} tabs`;
+  if (input.url) return formatToolInputValue(input.url);
+  if (input.query) return formatToolInputValue(input.query);
+  return formatToolInputValue(input);
+}
+
+function formatToolInputValue(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch (_error) {
+    return String(value);
+  }
 }
 
 function summarizeToolResultMessage(message) {
@@ -616,11 +635,11 @@ function summarizeToolResultMessage(message) {
   if (parsed && typeof parsed === "object") {
     if (parsed.error) {
       isError = true;
-      label = parsed.error;
+      label = formatToolResultLabel(parsed.error);
     } else if (parsed.title) {
-      label = parsed.title;
+      label = formatToolResultLabel(parsed.title);
     } else if (parsed.success) {
-      label = parsed.url || parsed.name || "success";
+      label = formatToolResultLabel(parsed.url || parsed.name || "success");
     } else if (parsed.result) {
       label = typeof parsed.result === "string" ? parsed.result.substring(0, 60) : "result";
     }
@@ -724,6 +743,37 @@ function isToolLikeMessage(message) {
     return message.content.some((block) => block?.type === "tool_use");
   }
   return false;
+}
+
+function formatToolResultLabel(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof value.message === "string") return value.message;
+  return formatToolInputValue(value);
+}
+
+function HighlightedExecCode({ code }) {
+  const source = typeof code === "string" ? code : "";
+  const highlighted = useMemo(() => hljs.highlight(source, { language: "javascript" }).value, [source]);
+  return (
+    <pre className="tool-result-content tool-exec-code-content">
+      <code className="hljs language-javascript" dangerouslySetInnerHTML={{ __html: highlighted }} />
+    </pre>
+  );
+}
+
+function formatExecToolLabel(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return "exec";
+  return toolCalls.map(call => formatNestedToolCall(call)).join(" ");
+}
+
+function formatNestedToolCall(call) {
+  const name = String(call?.name || "tool");
+  const args = call?.args;
+  const rawDetail = args && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length === 0
+    ? ""
+    : formatToolInputDetail(args);
+  const detail = rawDetail.length > 120 ? `${rawDetail.slice(0, 117)}...` : rawDetail;
+  return `${name}(${detail})`;
 }
 
 function isToolResultForPreviousAssistant(messages, index) {

@@ -231,6 +231,42 @@ export function isBase64DataUrl(dataUrl) {
   return typeof dataUrl === "string" && /^data:[^;]+;base64,/.test(dataUrl);
 }
 
+export function replaceBase64ImageDataUrlsWithRefs(value, registerImageDataUrl) {
+  const images = [];
+  const imagesByRef = new Map();
+  const seen = new WeakMap();
+
+  const replace = (current, depth = 0) => {
+    if (typeof current === "string") {
+      if (!/^data:image\/[^;]+;base64,/i.test(current)) return current;
+      const ref = registerImageDataUrl(current);
+      if (!ref) return current;
+      if (!imagesByRef.has(ref)) {
+        const mediaType = current.slice("data:".length, current.indexOf(";base64,"));
+        const image = { ref, dataUrl: current, mediaType };
+        imagesByRef.set(ref, image);
+        images.push(image);
+      }
+      return `|deRef:${ref}|`;
+    }
+    if (current == null || typeof current !== "object" || depth >= 12) return current;
+    if (seen.has(current)) return seen.get(current);
+
+    const next = Array.isArray(current) ? [] : {};
+    seen.set(current, next);
+    if (Array.isArray(current)) {
+      for (const item of current) next.push(replace(item, depth + 1));
+    } else {
+      for (const [key, child] of Object.entries(current)) {
+        next[key] = replace(child, depth + 1);
+      }
+    }
+    return next;
+  };
+
+  return { value: replace(value), images };
+}
+
 function parseToolMessageContent(content) {
   if (typeof content !== "string") return content;
   try {

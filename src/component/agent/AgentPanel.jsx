@@ -18,6 +18,7 @@ import {
   syncActiveModelFields,
   streamChat,
   executeTool,
+  executeCodeRuntime,
   findMcpToolByCallName,
   hasDownloadsPermission,
   isMcpToolCallName,
@@ -80,10 +81,18 @@ import {
   isBase64DataUrl,
   mergeKnownImageRefsIntoMessages,
   normalizeImageRefSource,
-  normalizeMessageImageRefs
+  normalizeMessageImageRefs,
+  replaceBase64ImageDataUrlsWithRefs
 } from "./imageRefs";
 import "./chat.css";
 import { buildWebSearchActionLabels } from "./webSearchActions";
+import {
+  cancelAllApprovals,
+  cancelSessionApprovals,
+  claimCurrentApproval,
+  enqueueApproval,
+  settleCurrentApproval
+} from "./panel/approvalQueue";
 
 // === Extracted helper modules (see ./panel/) ===
 import {
@@ -179,6 +188,10 @@ import {
 import { InputCommandMenu } from "./panel/components/InputCommandMenu";
 import { StreamingToolArgsBubble } from "./panel/components/StreamingToolArgsBubble";
 import { SessionPlanPanel, PlanApprovalCard } from "./panel/components/SessionPlanPanel";
+import {
+  UserInputRequestCard,
+  normalizeUserInputRequest
+} from "./panel/components/UserInputRequestCard";
 import { ImageEditDialog } from "./panel/components/ImageEditDialog";
 import { SessionSystemPromptDialogBody } from "./panel/components/SessionSystemPromptDialog";
 import { ScheduleJobsDialogBody } from "./panel/components/ScheduleJobsDialog";
@@ -526,9 +539,9 @@ export default function AgentPanel() {
   const sessionActiveToolNamesRef = useRef(new Map());
   const sessionKeywordsRefreshingRef = useRef(false);
   const [pendingApproval, setPendingApproval] = useState(null);
-  const approvalResolverRef = useRef(new Map());
+  const approvalQueuesRef = useRef(new Map());
   const planApprovalResolverRef = useRef(new Map());
-  const permissionApprovalResolverRef = useRef(new Map());
+  const userInputResolverRef = useRef(new Map());
   const latestPlanStatusRef = useRef(null);
   const shouldFocusInputWhenReadyRef = useRef(false);
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -548,6 +561,10 @@ export default function AgentPanel() {
   const isMacPlatform = platformInfo?.os === "mac";
   const searchShortcutLabel = isMacPlatform ? "⌘⇧K" : "Alt+K";
   const clearShortcutLabel = isMacPlatform ? "⌘⇧Backspace" : "Alt+Backspace";
+
+  useEffect(() => () => {
+    cancelAllApprovals(approvalQueuesRef.current);
+  }, []);
 
   useEffect(() => {
     const handleImageUploaded = event => {
@@ -1980,20 +1997,16 @@ export default function AgentPanel() {
     if (runtime.abort) {
       runtime.abort();
     }
-    const resolver = approvalResolverRef.current.get(targetSessionId);
-    if (resolver) {
-      approvalResolverRef.current.delete(targetSessionId);
-      resolver(false);
-    }
+    cancelSessionApprovals(approvalQueuesRef.current, targetSessionId);
     const planResolver = planApprovalResolverRef.current.get(targetSessionId);
     if (planResolver) {
       planApprovalResolverRef.current.delete(targetSessionId);
       planResolver({ approved: false, feedback: "" });
     }
-    const permResolver = permissionApprovalResolverRef.current.get(targetSessionId);
-    if (permResolver) {
-      permissionApprovalResolverRef.current.delete(targetSessionId);
-      permResolver({ granted: false });
+    const userInputResolver = userInputResolverRef.current.get(targetSessionId);
+    if (userInputResolver) {
+      userInputResolverRef.current.delete(targetSessionId);
+      userInputResolver({ answered: false, cancelled: true, answers: {} });
     }
     setSessionRuntime(targetSessionId, {
       loading: false,
@@ -2125,6 +2138,40 @@ export default function AgentPanel() {
     };
   }
 
+  function requestUserInput(targetSessionId, runId, request) {
+    return new Promise(resolve => {
+      userInputResolverRef.current.set(targetSessionId, resolve);
+      setSessionRuntime(targetSessionId, {
+        loading: false,
+        abort: null,
+        pendingApproval: {
+          kind: "user_input",
+          runId,
+          request
+        }
+      });
+    });
+  }
+
+  async function handleRequestUserInput(targetSessionId, runId, args = {}) {
+    const normalized = normalizeUserInputRequest(args);
+    if (normalized.error) return { error: normalized.error };
+    return await requestUserInput(targetSessionId, runId, normalized);
+  }
+
+  function resolveUserInput(response) {
+    const currentSessionId = activeSessionIdRef.current;
+    if (!currentSessionId) return;
+    shouldFocusInputWhenReadyRef.current = true;
+    const resolver = userInputResolverRef.current.get(currentSessionId);
+    userInputResolverRef.current.delete(currentSessionId);
+    setSessionRuntime(currentSessionId, {
+      pendingApproval: null,
+      loading: true
+    });
+    resolver?.(response);
+  }
+
   function resolvePlanApproval(approved, feedback = "") {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
@@ -2139,33 +2186,53 @@ export default function AgentPanel() {
   }
 
   function requestDangerousToolApproval(targetSessionId, runId, toolCall, approvalMeta) {
-    return new Promise((resolve) => {
-      approvalResolverRef.current.set(targetSessionId, resolve);
+    return enqueueApproval(approvalQueuesRef.current, targetSessionId, {
+      kind: "dangerous",
+      runId,
+      toolCall,
+      approvalMeta,
+      cancelResult: false
+    }, approval => {
       setSessionRuntime(targetSessionId, {
         loading: false,
         abort: null,
-        pendingApproval: {
-          runId,
-          toolCall,
-          approvalMeta
-        }
+        pendingApproval: approval
       });
     });
   }
 
   function requestPermissionApproval(targetSessionId, runId, toolCall, permissionMeta) {
-    return new Promise((resolve) => {
-      permissionApprovalResolverRef.current.set(targetSessionId, resolve);
+    return enqueueApproval(approvalQueuesRef.current, targetSessionId, {
+      kind: "permission",
+      runId,
+      toolCall,
+      permissionMeta,
+      cancelResult: { granted: false }
+    }, approval => {
       setSessionRuntime(targetSessionId, {
         loading: false,
         abort: null,
-        pendingApproval: {
-          kind: "permission",
-          runId,
-          toolCall,
-          permissionMeta
-        }
+        pendingApproval: approval
       });
+    });
+  }
+
+  function advanceApprovalQueue(targetSessionId, result) {
+    return settleCurrentApproval(approvalQueuesRef.current, targetSessionId, result, {
+      isValid: approval => isCurrentRun(targetSessionId, approval.runId),
+      onActivate: approval => {
+        setSessionRuntime(targetSessionId, {
+          loading: false,
+          abort: null,
+          pendingApproval: approval
+        });
+      },
+      onIdle: () => {
+        setSessionRuntime(targetSessionId, {
+          loading: true,
+          pendingApproval: null
+        });
+      }
     });
   }
 
@@ -2176,10 +2243,10 @@ export default function AgentPanel() {
   async function resolvePermissionApproval(approved) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
+    const approval = claimCurrentApproval(approvalQueuesRef.current, currentSessionId);
+    if (!approval || approval.kind !== "permission") return;
     shouldFocusInputWhenReadyRef.current = true;
-    const runtime = getSessionRuntime(currentSessionId);
-    const meta = runtime.pendingApproval?.permissionMeta;
-    const resolver = permissionApprovalResolverRef.current.get(currentSessionId);
+    const meta = approval.permissionMeta;
 
     let granted = false;
     if (approved && meta?.permissions?.length && chrome?.permissions?.request) {
@@ -2191,12 +2258,7 @@ export default function AgentPanel() {
       }
     }
 
-    permissionApprovalResolverRef.current.delete(currentSessionId);
-    setSessionRuntime(currentSessionId, {
-      pendingApproval: null,
-      loading: granted && !!runtime.loading ? runtime.loading : (granted ? true : false)
-    });
-    if (resolver) resolver({ granted });
+    advanceApprovalQueue(currentSessionId, { granted });
   }
 
   function getPermissionMetaForToolCall(toolCall) {
@@ -2294,15 +2356,10 @@ export default function AgentPanel() {
   function resolveDangerousToolApproval(approved) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
+    const approval = claimCurrentApproval(approvalQueuesRef.current, currentSessionId);
+    if (!approval || approval.kind !== "dangerous") return;
     shouldFocusInputWhenReadyRef.current = true;
-    const runtime = getSessionRuntime(currentSessionId);
-    const resolver = approvalResolverRef.current.get(currentSessionId);
-    approvalResolverRef.current.delete(currentSessionId);
-    setSessionRuntime(currentSessionId, {
-      pendingApproval: null,
-      loading: approved && !!runtime.loading ? runtime.loading : false
-    });
-    if (resolver) resolver(approved);
+    advanceApprovalQueue(currentSessionId, approved);
   }
 
   /** Create a new empty session */
@@ -2447,23 +2504,24 @@ export default function AgentPanel() {
     return (
       `You are a browser assistant running inside a browser environment.\n\n` +
       `The current date is ${new Date().toLocaleDateString()}.\n\n` +
-      `Only the currently supplied tool definitions are callable. Use tool_list_group to discover an unavailable capability group, then tool_enable to enable the specific returned tools for this conversation. Built-in groups are: ${Object.entries(BUILTIN_TOOL_GROUPS).map(([name, summary]) => `${name} (${summary})`).join(", ")}. Lazy MCP server names may also be used as groups.\n\n` +
+      `Built-in browser capabilities and connected MCP tools are available through the exec JavaScript runtime. Use tools.listDomains/listTools/describeTool to discover both sources. Call built-ins through tools.tool_name(args), call MCP tools through tools.mcp.server_name.tool_name(args), and return the final value explicitly.\n\n` +
       platformBlock +
       `Important rules:\n` +
       `- Do not assume you already know the current browser state. Tabs and windows can change at any time.\n` +
-      `- If the user asks about open tabs, browser context, which page they are on, or any page-related question where the target tab is unclear, first call tab_list and/or tab_get_active to refresh context.\n` +
-      `- For tab groups, windows, page interaction, downloads, history, automation, scheduling, images, Postdog, or lazy MCP capabilities, first discover and enable the relevant group if its tools are not currently supplied.\n` +
+      `- If the user asks about open tabs, browser context, which page they are on, or any page-related question where the target tab is unclear, first use exec to call tools.tab_list({}) and/or tools.tab_get_active({}) to refresh context.\n` +
+      `- For built-in tab groups, windows, page interaction, downloads, history, automation, scheduling, images, or Postdog capabilities, use exec and discover unfamiliar built-ins through tools.listDomains/listTools/describeTool.\n` +
+      `- In exec code, never write unbounded loops such as while (true) or for (;;), and avoid recursion unless its termination is clearly bounded, because synchronous infinite execution cannot be interrupted.\n` +
       `- For page interaction, inspect the DOM before clicking, filling, styling, or locating an element. Use highlighting when it would help the user visually locate the element.\n` +
       `- tab_list returns the currently open tabs with id, url, title, and capturedAt timing fields.\n` +
       `- group_list and group_get return tab group snapshots with their tabs and capturedAt timing fields.\n` +
       `- tab_get_active returns the active tab in the current extension/side-panel window with capturedAt timing fields.\n` +
       `- window_list and window_get_current return window snapshots with capturedAt timing fields.\n` +
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
-      `- If you need actual page content and tab_extract is not currently supplied, discover it in the tabs group before calling it.\n` +
-      `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tab_focus to switch to and reactivate the tab, then retry the original tool.\n` +
+      `- If you need actual page content, use exec to call tools.tab_extract(...).\n` +
+      `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tools.tab_focus(...) in exec to switch to and reactivate the tab, then retry the original tool.\n` +
       `Long-term memory rules:
 ` +
-      `- Some connected tools may provide long-term memory capabilities, such as searching/recalling memories, returning a user profile summary, saving memories, or forgetting outdated memories. Tool names may be prefixed or namespaced; identify them by their names and descriptions.
+      `- Some connected MCP servers may provide long-term memory capabilities, such as searching/recalling memories, returning a user profile summary, saving memories, or forgetting outdated memories. Use the MCP server summaries and discovery functions in exec to identify them.
 ` +
       `- Follow each memory tool's own description and exclusivity rules. If a tool says it is the only memory or recall tool to use, obey that tool description.
 ` +
@@ -2505,6 +2563,12 @@ export default function AgentPanel() {
 ` +
       `Planning rules:
 ` +
+      `- Before planning or implementation, call request_user_input when missing requirements would materially change the result, such as the programming language, framework, storage, deployment target, or an important product behavior.
+` +
+      `- Ask 1-3 concise questions together, provide mutually exclusive suggested answers, and put the recommended option first when one choice is clearly preferable.
+` +
+      `- Do not call request_user_input for facts discoverable with available tools or for trivial preferences that do not materially affect the result. After the result, continue with its answers. If the user cancels, do not invent or assume the missing answers.
+` +
       `- For simple one-step questions or quick browser operations, answer or act directly without creating a plan.
 ` +
       `- If the user's request is complex, ambiguous, research-heavy, report-oriented, or likely needs multiple meaningful steps, first call plan_create_for_session before starting implementation.
@@ -2522,7 +2586,7 @@ export default function AgentPanel() {
       `- Keep plan steps concise, concrete, and outcome-oriented.
 ` +
       `- Treat questions about "latest", "current", "today", recent releases, prices, availability, laws, policies, API fields/schemas, model lists/capabilities/pricing, SDK behavior, product documentation, or any fast-changing technical detail as time-sensitive. Do not answer these from memory first.\n` +
-      `- For time-sensitive questions, use web research capabilities in this priority order. First, look for an available MCP web search/fetch tool in the tool list (for example tools whose names include web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources.\n` +
+      `- For time-sensitive questions, use web research capabilities in this priority order. First, use MCP discovery in exec to look for an available web search/fetch tool (for example names including web_search, search, web_fetch, fetch, browser_search, or similar) and use it to verify the answer from primary or authoritative sources.\n` +
       `- If no suitable MCP web tool is available, or its results are incomplete, use the model's built-in web_search capability when it is available.\n` +
       `- If neither MCP nor built-in web_search is available or sufficient, use tab/browser tools: open a search engine or official page with tab_open, inspect or extract it with tab_extract and DOM tools, and continue from the page contents.\n` +
       `- Do not stop after one tool when its results are incomplete, ambiguous, or lack primary sources. Combine MCP search/fetch, built-in web_search, and tab/browser inspection as needed to cross-check facts and obtain complete information.\n` +
@@ -3085,9 +3149,6 @@ export default function AgentPanel() {
             return;
           }
 
-          const toolNames = [...new Set(msg.toolCalls.map(tc => tc.name))].join(", ");
-          toast(`🔧 tool: ${toolNames}`, { duration: 2000 });
-
           // Show assistant message + pending placeholders immediately
           const assistantMsg = buildAssistantToolCallMessage(config.apiType, config.model, streamedContent, msg);
           const pendingToolMsgs = msg.toolCalls.map(tc => ({
@@ -3101,6 +3162,42 @@ export default function AgentPanel() {
           setSessionMessages(targetSessionId, [...conversationMessages, assistantMsg, ...pendingToolMsgs]);
 
           const toolResults = [];
+          const executeToolWithApproval = async (toolCall, resolvedArgs) => {
+            let result;
+            let permissionDenied = false;
+            const resolvedToolCall = { ...toolCall, args: resolvedArgs };
+            const permissionMeta = getPermissionMetaForToolCall(resolvedToolCall);
+            if (permissionMeta && !(await hasDownloadsPermission())) {
+              toast(`${permissionMeta.title}`, { duration: 2500 });
+              const { granted } = await requestPermissionApproval(targetSessionId, runId, resolvedToolCall, permissionMeta);
+              if (!isCurrentRun(targetSessionId, runId)) return;
+              if (!granted) {
+                result = {
+                  error: "User denied the required permission: " + (permissionMeta.permissions || []).join(","),
+                  cancelled: true
+                };
+                permissionDenied = true;
+              }
+            }
+            if (permissionDenied) return result;
+
+            const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
+            if (!dangerousMeta) {
+              return await executeTool(toolCall.name, resolvedArgs, combinedMcpTools);
+            }
+
+            const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
+            if (dangerousToolSkipApproval) {
+              return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
+            }
+
+            toast(`${dangerousMeta.title}：${toolCall.name}`, { duration: 2500 });
+            const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
+            if (!isCurrentRun(targetSessionId, runId)) return;
+            if (!approved) return { error: "Execution canceled by user", cancelled: true };
+            return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
+          };
+
           const executeOneToolCall = async (tc) => {
             if (!isCurrentRun(targetSessionId, runId)) return;
             let result;
@@ -3116,52 +3213,61 @@ export default function AgentPanel() {
               setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
             } else if (tc.name === "plan_update_for_session") {
               result = await handlePlanUpdateForSession(targetSessionId, resolvedArgs || {});
+            } else if (tc.name === "request_user_input") {
+              result = await handleRequestUserInput(targetSessionId, runId, resolvedArgs || {});
+              if (!isCurrentRun(targetSessionId, runId)) return;
+              setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
+            } else if (tc.name === "exec") {
+              const codeToolCalls = [];
+              const updateExecToolCard = event => {
+                const index = Number(event?.index);
+                if (!Number.isInteger(index) || index < 0) return;
+                codeToolCalls[index] = {
+                  name: event.name,
+                  args: event.args || {},
+                  status: event.status || "running"
+                };
+                const currentMsgs = getSessionMessages(targetSessionId);
+                const updatedMsgs = currentMsgs.map(message => (
+                  message._pending && message.tool_call_id === tc.id
+                    ? { ...message, _codeToolCalls: codeToolCalls.filter(Boolean).map(call => ({ ...call })) }
+                    : message
+                ));
+                setSessionMessages(targetSessionId, updatedMsgs);
+              };
+              result = await executeCodeRuntime(resolvedArgs, {
+                supportsImageInput: config.supportsImageInput === true,
+                imageToolsEnabled: config.imageToolsEnabled === true,
+                postdogToolsEnabled: config.postdogToolsEnabled === true,
+                mcpTools: combinedMcpTools,
+                transformToolResult: ({ result: nestedResult }) => (
+                  replaceBase64ImageDataUrlsWithRefs(
+                    nestedResult,
+                    dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
+                  )
+                ),
+                onToolCall: updateExecToolCard,
+                invokeTool: async (name, args) => {
+                  if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
+                  const nestedArgs = resolveToolImageRefs(targetSessionId, args || {});
+                  return await executeToolWithApproval({ name, args: nestedArgs }, nestedArgs);
+                }
+              });
+              tc._codeToolCalls = codeToolCalls.filter(Boolean);
             } else {
-              let permissionDenied = false;
-              const resolvedToolCall = { ...tc, args: resolvedArgs };
-              const permissionMeta = getPermissionMetaForToolCall(resolvedToolCall);
-              if (permissionMeta && !(await hasDownloadsPermission())) {
-                toast(`${permissionMeta.title}`, { duration: 2500 });
-                const { granted } = await requestPermissionApproval(targetSessionId, runId, resolvedToolCall, permissionMeta);
-                if (!isCurrentRun(targetSessionId, runId)) return;
-                if (granted) {
-                  setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                } else {
-                  result = {
-                    error: "User denied the required permission: " + (permissionMeta.permissions || []).join(","),
-                    cancelled: true
-                  };
-                  permissionDenied = true;
-                }
-              }
-              if (permissionDenied) {
-                // result already populated; skip dangerous + execution path
-              } else {
-                const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
-                if (dangerousMeta) {
-                  const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
-                  if (dangerousToolSkipApproval) {
-                    setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                    result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
-                  } else {
-                    toast(`${dangerousMeta.title}：${tc.name}`, { duration: 2500 });
-                    const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
-                    if (!isCurrentRun(targetSessionId, runId)) return;
-                    if (!approved) {
-                      result = { error: "Execution canceled by user", cancelled: true };
-                    } else {
-                      setSessionRuntime(targetSessionId, { loading: true, pendingApproval: null });
-                      result = await executeTool(tc.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
-                    }
-                  }
-                } else {
-                  result = await executeTool(tc.name, resolvedArgs, combinedMcpTools);
-                }
-              }
+              result = await executeToolWithApproval(tc, resolvedArgs);
             }
             const durationMs = Date.now() - t0;
             if (!isCurrentRun(targetSessionId, runId)) return;
-            return { id: tc.id, responseCallId: tc.responseCallId, name: tc.name, args: resolvedArgs, result, durationMs };
+            return {
+              id: tc.id,
+              responseCallId: tc.responseCallId,
+              name: tc.name,
+              args: resolvedArgs,
+              result,
+              durationMs,
+              codeToolCalls: tc.name === "exec" ? tc._codeToolCalls : undefined
+            };
           };
 
           const applyToolResult = (toolResult) => {
@@ -3235,6 +3341,7 @@ export default function AgentPanel() {
       postdogToolsEnabled: config.postdogToolsEnabled === true,
       imageToolsEnabled: config.imageToolsEnabled === true,
       useToolSelection: true,
+      useCodeMode: true,
       activeToolNames
     });
 
@@ -4384,6 +4491,16 @@ export default function AgentPanel() {
           <PlanApprovalCard
             plan={pendingApproval.plan}
             onResolve={resolvePlanApproval}
+          />
+        ) : pendingApproval?.kind === "user_input" ? (
+          <UserInputRequestCard
+            request={pendingApproval.request}
+            onSubmit={answers => resolveUserInput({ answered: true, answers })}
+            onCancel={() => resolveUserInput({
+              answered: false,
+              cancelled: true,
+              answers: {}
+            })}
           />
         ) : pendingApproval?.kind === "permission" ? (
           <Card className="!p-2 !mb-1">

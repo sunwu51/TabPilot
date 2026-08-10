@@ -1,0 +1,73 @@
+const capturedAt = { timestamp: 1786352400000, iso: "2026-08-10T06:20:00.000Z", local: "2026/8/10 14:20:00", timezone: "Asia/Shanghai" };
+const tab = { id: 101, url: "https://example.com/", title: "Example", windowId: 1, groupId: null, splitViewId: null, lastAccessed: 1786352390000, lastAccessedIso: "2026-08-10T06:19:50.000Z" };
+const element = { index: 0, tagName: "button", id: "submit", text: "Submit", attributes: { type: "submit" } };
+const group = { id: 7, windowId: 1, currentWindow: true, title: "Research", color: "blue", collapsed: false, tabCount: 1, tabs: [tab] };
+const windowSnapshot = { id: 1, focused: true, current: true, type: "normal", state: "normal", tabCount: 1, tabs: [tab] };
+const download = { id: 12, url: "https://example.com/report.pdf", finalUrl: "https://example.com/report.pdf", filename: "C:\\Downloads\\report.pdf", state: "complete", mime: "application/pdf", totalBytes: 2048, bytesReceived: 2048, paused: false, exists: true };
+
+export const BUILTIN_TOOL_OUTPUT_EXAMPLES = {
+  tab_list: { capturedAt, count: 1, tabs: [tab] },
+  tab_extract: { url: tab.url, title: tab.title, content: "Example page content", tabId: tab.id, windowId: 1, groupId: null, splitViewId: null, lastAccessed: tab.lastAccessed, lastAccessedIso: tab.lastAccessedIso },
+  tab_scroll: { tabId: tab.id, windowId: 1, success: true, action: "delta", requestedTop: 640, moved: true, before: { scrollY: 0, maxScrollY: 1800, viewportHeight: 800 }, after: { scrollY: 640, maxScrollY: 1800, viewportHeight: 800 } },
+  tab_open: { success: true, active: true, tabId: tab.id, url: tab.url, title: tab.title, windowId: 1, groupId: null, splitViewId: null },
+  tab_focus: { success: true, tabId: tab.id, title: tab.title, url: tab.url, windowId: 1, previousWindowId: 2, movedToCurrentWindow: true },
+  tab_close: { success: true, closed: [{ id: tab.id, title: tab.title, url: tab.url }] },
+  tab_group: { success: true, groupId: 7, name: "Research", tabCount: 1, group },
+  tab_get_active: { capturedAt, tabId: tab.id, url: tab.url, title: tab.title, windowId: tab.windowId, groupId: null, splitViewId: null, lastAccessed: tab.lastAccessed, lastAccessedIso: tab.lastAccessedIso },
+  tab_screenshot: { success: true, tabId: tab.id, dataUrl: "|deRef:img_1|", mediaType: "image/jpeg", width: 1280, height: 720 },
+  dom_query: { tabId: tab.id, windowId: 1, success: true, selector: "button", text: null, count: 1, truncated: false, matches: [element] },
+  dom_click: { tabId: tab.id, windowId: 1, success: true, action: "click", totalMatches: 1, target: element },
+  dom_set_value: { tabId: tab.id, windowId: 1, success: true, action: "set_value", totalMatches: 1, value: "hello", target: { ...element, tagName: "input" } },
+  dom_style: { tabId: tab.id, windowId: 1, success: true, action: "style", durationMs: 2000, styles: { outline: "2px solid red" }, target: element },
+  dom_get_html: { tabId: tab.id, windowId: 1, success: true, mode: "outer", truncated: false, html: "<button id=\"submit\">Submit</button>", target: element },
+  dom_highlight: { tabId: tab.id, windowId: 1, success: true, action: "highlight", durationMs: 1000, target: element, scroll: { scrollY: 640, maxScrollY: 1800 } },
+  eval_js: { world: "MAIN", tabId: tab.id, windowId: 1, strategy: "function", url: tab.url, title: tab.title, success: true, result: { title: "Example" } },
+  group_list: { capturedAt, count: 1, groups: [group] },
+  group_get: { capturedAt, group },
+  group_update: { success: true, capturedAt, group },
+  group_add_tabs: { success: true, capturedAt, groupId: 7, addedCount: 1, group },
+  group_remove_tabs: { success: true, capturedAt, requestedCount: 1, updatedCount: 1, tabs: [tab], missing: [] },
+  group_ungroup: { success: true, capturedAt, groupId: 7, ungroupedCount: 1, group, tabs: [tab] },
+  history_search: [{ url: tab.url, title: tab.title, lastVisit: "2026-08-10T06:19:50.000Z", visitCount: 3 }],
+  history_recent: { startTime: "2026-08-03T06:20:00.000Z", endTime: "2026-08-10T06:20:00.000Z", maxResults: 100, results: [{ url: tab.url, title: tab.title, lastVisit: "2026-08-10T06:19:50.000Z", visitCount: 3 }] },
+  window_list: { capturedAt, count: 1, currentWindowId: 1, windows: [windowSnapshot] },
+  window_get_current: { capturedAt, window: windowSnapshot },
+  window_focus: { success: true, capturedAt, previousWindowId: 2, window: windowSnapshot },
+  window_move_tab: { success: true, capturedAt, windowId: 1, movedCount: 1, movedTabs: [tab], window: windowSnapshot },
+  window_create: { success: true, capturedAt, window: windowSnapshot },
+  window_close: { success: true, capturedAt, closedWindowId: 1, window: windowSnapshot },
+  get_current_time: { timestamp: capturedAt.timestamp, iso: capturedAt.iso, local: capturedAt.local, timezone: capturedAt.timezone, timezoneOffset: -480 },
+  schedule_tool: { success: true, scheduleId: "schedule_123", label: "Open report", toolName: "tab_open", fireTimestamp: 1786352700000, status: "pending" },
+  list_scheduled: { scheduled: [{ scheduleId: "schedule_123", label: "Open report", toolName: "tab_open", status: "pending", fireTimestamp: 1786352700000 }] },
+  cancel_scheduled: { success: true, cancelled: { scheduleId: "schedule_123", label: "Open report", toolName: "tab_open", status: "cancelled" } },
+  clear_completed_scheduled: { success: true, removedCount: 1, removedIds: ["schedule_123"] },
+  stash_in_browser: { success: true, title: "preference", expireAt: -1, permanent: true },
+  unstash_in_browser: { success: true, title: "preference", info: "Use compact responses", expireAt: -1, createdAt: 1786352000000, updatedAt: 1786352400000 },
+  list_stashes_in_browser: { success: true, count: 1, titles: ["preference"] },
+  remove_stash_in_browser: { success: true, title: "preference", removed: true },
+  list_macros: { macros: [{ id: "macro_1", name: "Login", startUrl: "https://example.com/login", stepCount: 3, inputVariables: ["input_1"] }] },
+  describe_macro: { macro: { id: "macro_1", name: "Login", startUrl: "https://example.com/login", steps: [], inputVariables: ["input_1"] } },
+  run_macro: { tabId: tab.id, report: { success: true, completedSteps: 3, totalSteps: 3 } },
+  download: { success: true, downloadId: 12, fileName: "report.pdf", source: "url" },
+  download_list: { count: 1, downloads: [download] },
+  download_search: { count: 1, query: { query: ["report"], limit: 50 }, downloads: [download] },
+  postdog_list_folders: { folders: [{ id: "folder_1", name: "Examples" }] },
+  postdog_save_folder: { folder: { id: "folder_1", name: "Examples" } },
+  postdog_list_requests: { requests: [{ id: "request_1", name: "Get users", method: "GET", url: "https://api.example.com/users" }] },
+  postdog_get_request: { request: { id: "request_1", name: "Get users", method: "GET", url: "https://api.example.com/users" } },
+  postdog_save_request: { request: { id: "request_1", name: "Get users", method: "GET", url: "https://api.example.com/users" } },
+  postdog_run_request: { result: { response: { status: 200, headers: {}, body: { users: [] } }, durationMs: 120 } },
+  postdog_list_history: { history: [{ runId: "run_1", requestId: "request_1", status: 200, durationMs: 120 }] },
+  postdog_get_history_run: { run: { runId: "run_1", requestId: "request_1", response: { status: 200, body: { users: [] } } } },
+  postdog_list_environments: { environments: [{ id: "env_1", name: "Development", active: true }] },
+  postdog_save_environment: { environment: { id: "env_1", name: "Development", variables: { baseUrl: "https://api.example.com" } } },
+  postdog_set_active_environment: { activeEnvironment: { id: "env_1", name: "Development", active: true } },
+  html_playground: { success: true, url: "playground.html#data=...", expanded: false },
+  image_gen: { success: true, endpoint: "generations", model: "gpt-image", prompt: "Example prompt", imageCount: 1, images: [{ dataUrl: "|deRef:img_1|", outputFormat: "png" }], dataUrl: "|deRef:img_1|", outputFormat: "png" },
+  image_edit: { success: true, endpoint: "edits", model: "gpt-image", prompt: "Edit the image", imageCount: 1, inputImageCount: 1, images: [{ dataUrl: "|deRef:img_2|", outputFormat: "png" }], dataUrl: "|deRef:img_2|", outputFormat: "png" }
+};
+
+export function getBuiltinToolOutputSchema(toolName) {
+  if (!Object.prototype.hasOwnProperty.call(BUILTIN_TOOL_OUTPUT_EXAMPLES, toolName)) return null;
+  return { example: BUILTIN_TOOL_OUTPUT_EXAMPLES[toolName] };
+}

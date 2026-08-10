@@ -3,10 +3,33 @@ import { describe, expect, it } from "vitest";
 import {
   collectReservedImageRefsFromMessages,
   extractPreferredImageRefFromToolMessage,
-  mergeKnownImageRefsIntoMessages
+  mergeKnownImageRefsIntoMessages,
+  replaceBase64ImageDataUrlsWithRefs
 } from "./imageRefs";
 
 describe("AgentPanel image ref helpers", () => {
+  it("replaces nested base64 images with stable refs before code receives them", () => {
+    const register = dataUrl => dataUrl.includes("b25l") ? "img_1" : "img_2";
+    const firstImage = "data:image/png;base64,b25l";
+    const secondImage = "data:image/jpeg;base64,dHdv";
+
+    const transformed = replaceBase64ImageDataUrlsWithRefs({
+      dataUrl: firstImage,
+      images: [{ dataUrl: firstImage }, { nested: { source: secondImage } }],
+      ordinaryData: "data:application/json;base64,e30="
+    }, register);
+
+    expect(transformed.value).toEqual({
+      dataUrl: "|deRef:img_1|",
+      images: [{ dataUrl: "|deRef:img_1|" }, { nested: { source: "|deRef:img_2|" } }],
+      ordinaryData: "data:application/json;base64,e30="
+    });
+    expect(transformed.images).toEqual([
+      { ref: "img_1", dataUrl: firstImage, mediaType: "image/png" },
+      { ref: "img_2", dataUrl: secondImage, mediaType: "image/jpeg" }
+    ]);
+  });
+
   it("collects refs from edit prompts and tool result instructions", () => {
     const refs = collectReservedImageRefsFromMessages([
       {

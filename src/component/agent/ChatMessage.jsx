@@ -764,20 +764,20 @@ function ToolResultBlock({ msg, sessionId = "", imageRefNavigator }) {
       const parsed = JSON.parse(content);
       if (parsed.error) {
         isError = true;
-        label = parsed.error;
+        label = formatToolResultLabel(parsed.error);
       } else if (parsed.title) {
-        label = parsed.title;
+        label = formatToolResultLabel(parsed.title);
       } else if (parsed.success) {
-        label = parsed.url || parsed.name || "success";
+        label = formatToolResultLabel(parsed.url || parsed.name || "success");
       } else if (parsed.result) {
         label = typeof parsed.result === "string" ? parsed.result.substring(0, 60) : "result";
       }
     } catch (e) { /* use default */ }
   } else if (typeof content === "object" && content !== null) {
     // content could be an object if not stringified
-    if (content.error) { isError = true; label = content.error; }
-    else if (content.title) label = content.title;
-    else if (content.success) label = content.url || content.name || "success";
+    if (content.error) { isError = true; label = formatToolResultLabel(content.error); }
+    else if (content.title) label = formatToolResultLabel(content.title);
+    else if (content.success) label = formatToolResultLabel(content.url || content.name || "success");
   }
 
   const displayContent = typeof content === "string" ? content : JSON.stringify(content, null, 2);
@@ -1563,6 +1563,16 @@ function findImageRefForSource(imageRefs, source) {
   if (!Array.isArray(imageRefs) || !source) return "";
   const match = imageRefs.find(item => item?.dataUrl === source || item?.source === source || item?.url === source);
   return match?.ref || "";
+}
+
+function formatToolResultLabel(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof value.message === "string") return value.message;
+  try {
+    return JSON.stringify(value);
+  } catch (_error) {
+    return String(value);
+  }
 }
 
 function findImageRefMeta(imageRefs, ref) {

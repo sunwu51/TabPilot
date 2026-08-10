@@ -665,4 +665,12 @@ describe("built-in tool execution", () => {
       error: "seconds must be an integer between 1 and 300 (inclusive)"
     });
   });
+
+  it("supports wait as the code-mode sleep tool", async () => {
+    vi.useFakeTimers();
+    const promise = executeTool("wait", { seconds: 1 });
+    vi.advanceTimersByTime(1000);
+
+    await expect(promise).resolves.toMatchObject({ success: true, requestedSeconds: 1 });
+  });
 });
