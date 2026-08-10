@@ -36,7 +36,7 @@ import {
   loadSupabaseConfig,
   saveSupabaseConfig
 } from "../api/supabase/config";
-import { syncAllSessionsWithSupabase } from "../api/supabase/backup";
+import { overwriteSupabaseSettingsFromLocal, restoreSettingsFromSupabase, syncSessionsWithSupabase } from "../api/supabase/backup";
 
 import { clearReuseDomainPolicies, getReuseDomainPolicies } from "../api/browser/tabReuse";
 import {
@@ -364,14 +364,41 @@ function SettingsDialogBody() {
     setSupabaseRunning(true);
     try {
       await saveSupabaseConfig(currentSupabaseConfig());
-      const result = await syncAllSessionsWithSupabase();
-      toast.success(t("supabaseSyncComplete", {
+      const result = await syncSessionsWithSupabase();
+      toast.success(t("supabaseSessionSyncComplete", {
         uploaded: result.uploadedCount,
-        downloaded: result.downloadedCount,
-        settings: result.settings === "downloaded" ? t("settingsDownloaded") : t("settingsUploaded")
+        downloaded: result.downloadedCount
       }));
     } catch (error) {
-      toast.error(t("supabaseSyncFailed", { message: error?.message || String(error) }));
+      toast.error(t("supabaseSessionSyncFailed", { message: error?.message || String(error) }));
+    } finally {
+      setSupabaseRunning(false);
+    }
+  }
+
+  async function handleRestoreSettingsFromSupabase() {
+    if (!window.confirm(t("confirmRestoreSettingsFromSupabase"))) return;
+    setSupabaseRunning(true);
+    try {
+      await saveSupabaseConfig(currentSupabaseConfig());
+      await restoreSettingsFromSupabase();
+      toast.success(t("supabaseSettingsRestoreComplete"));
+    } catch (error) {
+      toast.error(t("supabaseSettingsRestoreFailed", { message: error?.message || String(error) }));
+    } finally {
+      setSupabaseRunning(false);
+    }
+  }
+
+  async function handleOverwriteSupabaseSettings() {
+    if (!window.confirm(t("confirmOverwriteSupabaseSettings"))) return;
+    setSupabaseRunning(true);
+    try {
+      await saveSupabaseConfig(currentSupabaseConfig());
+      await overwriteSupabaseSettingsFromLocal();
+      toast.success(t("supabaseSettingsOverwriteComplete"));
+    } catch (error) {
+      toast.error(t("supabaseSettingsOverwriteFailed", { message: error?.message || String(error) }));
     } finally {
       setSupabaseRunning(false);
     }
@@ -1220,7 +1247,13 @@ function SettingsDialogBody() {
           </div>
           <div className="settings-tab-action-row">
             <Button className="!min-h-7 !px-3 !py-0 !text-xs" onPress={handleSyncSessionsWithSupabase} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
-              {supabaseRunning ? (locale === "en" ? "Syncing..." : "同步中...") : t("syncChatsAndSettings")}
+              {supabaseRunning ? t("supabaseWorking") : t("syncSessions")}
+            </Button>
+            <Button className="!min-h-7 !px-3 !py-0 !text-xs !bg-yellow-100 !text-yellow-800 !border !border-yellow-300 hover:!bg-yellow-200" onPress={handleRestoreSettingsFromSupabase} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
+              {t("restoreSettingsFromSupabase")}
+            </Button>
+            <Button className="!min-h-7 !px-3 !py-0 !text-xs !bg-yellow-100 !text-yellow-800 !border !border-yellow-300 hover:!bg-yellow-200" onPress={handleOverwriteSupabaseSettings} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
+              {t("overwriteSupabaseSettings")}
             </Button>
           </div>
         </div>

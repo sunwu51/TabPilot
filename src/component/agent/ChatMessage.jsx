@@ -1165,6 +1165,15 @@ export function EditableChatImage({
     event.preventDefault();
     event.stopPropagation();
     if (!sessionId || !refId || uploadState.status === "uploading") return;
+    if (uploadState.status === "uploaded" && uploadState.url) {
+      try {
+        await navigator.clipboard.writeText(uploadState.url);
+        toast.success("图片 URL 已复制");
+      } catch (error) {
+        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
+      }
+      return;
+    }
     if (uploadState.status === "uploaded" && uploadState.path) {
       try {
         const signedUrl = await createSupabaseSignedUrl(uploadState.path);
@@ -1175,20 +1184,17 @@ export function EditableChatImage({
       }
       return;
     }
-    if (uploadState.status === "uploaded" && uploadState.url) {
-      try {
-        await navigator.clipboard.writeText(uploadState.url);
-        toast.success("图片 URL 已复制");
-      } catch (error) {
-        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
-      }
-      return;
-    }
     setUploadState(current => ({ ...current, status: "uploading" }));
     try {
       const uploaded = await uploadSessionImage(sessionId, refId, src);
       setUploadState({ status: "uploaded", url: uploaded.url, path: uploaded.path });
-      toast.success("图片已上传到 Supabase");
+      try {
+        await navigator.clipboard.writeText(uploaded.url);
+        toast.success("图片已上传，URL 已复制");
+      } catch (clipboardError) {
+        toast.success("图片已上传到 Supabase");
+        toast.error(`URL 自动复制失败: ${clipboardError?.message || String(clipboardError)}`);
+      }
     } catch (error) {
       setUploadState(current => ({ ...current, status: "error" }));
       toast.error(`图片上传失败: ${error?.message || String(error)}`);

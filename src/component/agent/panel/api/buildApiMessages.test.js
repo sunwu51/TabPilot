@@ -51,6 +51,30 @@ describe("buildApiMessages image options", () => {
     ]));
   });
 
+  it("adds assistant image URLs to the latest user request", () => {
+    const uploadedUrl = "https://project.supabase.co/storage/v1/object/sign/tabmanager/images/s_1/img_2.png?token=signed";
+    const result = buildApiMessages(API_TYPES.OPENAI_CHAT_COMPLETIONS, [
+      {
+        role: "assistant",
+        content: "Generated an image",
+        imageRefs: [{ ref: "img_2", dataUrl: "data:image/png;base64,aGVsbG8=", uploadedUrl }]
+      },
+      { role: "user", content: "What is the URL of the image?" }
+    ]);
+
+    expect(result[0]).toMatchObject({ role: "assistant", content: "Generated an image" });
+    expect(result[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "What is the URL of the image?" },
+        {
+          type: "text",
+          text: `Uploaded image URLs from earlier assistant or tool messages:\n- img_2: ${uploadedUrl}`
+        }
+      ]
+    });
+  });
+
   it("preserves Responses web search items when native search remains enabled", () => {
     const history = [{
       role: "assistant",

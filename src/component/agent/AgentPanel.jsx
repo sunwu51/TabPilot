@@ -166,7 +166,7 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
-import { refreshUploadedImageUrls, SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
+import { SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import { useI18n, useLocalizedDom } from "../../i18n";
 import {
@@ -2967,8 +2967,7 @@ export default function AgentPanel() {
       targetSessionId,
       attachKnownImageRefsToMessages(targetSessionId, compactedConversationMessages)
     );
-    const signedRequestMessages = await refreshUploadedImageUrls(requestConversationMessages);
-    const apiConversationMessages = buildApiMessages(config.apiType, signedRequestMessages, {
+    const apiConversationMessages = buildApiMessages(config.apiType, requestConversationMessages, {
       supportsImageInput: config.supportsImageInput === true,
       supportsToolImageInput: config.supportsToolImageInput === true,
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,

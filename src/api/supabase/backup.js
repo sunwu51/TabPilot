@@ -7,10 +7,10 @@ const MANIFEST_FILE = "manifest.json";
 const SETTINGS_FILE = "settings.json";
 export const SUPABASE_SETTINGS_SYNC_STATE_KEY = "supabaseSettingsSyncState";
 
-export async function syncAllSessionsWithSupabase() {
+export async function syncSessionsWithSupabase() {
   const config = await loadSupabaseConfig();
   const { sessions_index = [] } = await chrome.storage.local.get({ sessions_index: [] });
-  const remoteManifest = await loadRemoteManifest(config).catch(() => emptyManifest());
+  const remoteManifest = await loadRemoteManifest(config, { allowMissing: true });
   const localEntries = new Map(sessions_index.map(entry => [String(entry?.id || ""), entry]).filter(([id]) => id));
   const remoteEntries = remoteManifest.sessions || {};
   const allIds = new Set([...localEntries.keys(), ...Object.keys(remoteEntries)]);
@@ -30,7 +30,7 @@ export async function syncAllSessionsWithSupabase() {
 
     if (!localEntry || remoteUpdatedAt > localUpdatedAt) {
       const payload = await downloadSessionPayload(path, config);
-      if (!payload?.entry || !payload?.session) continue;
+      if (!payload?.entry || !payload?.session) throw new Error(`远端会话 ${id} 格式无效`);
       const restoredEntry = { ...payload.entry, id };
       mergedEntries.set(id, restoredEntry);
       localPatch[`session_${id}`] = payload.session;
@@ -44,10 +44,7 @@ export async function syncAllSessionsWithSupabase() {
       const keys = [`session_${id}`, `session_${id}_images`];
       const values = await chrome.storage.local.get(keys);
       const payload = { entry: localEntry, session: values[keys[0]] || {}, images: values[keys[1]] || {} };
-      await uploadSupabaseObject(path, JSON.stringify(payload), {
-        config,
-        contentType: "application/json;charset=utf-8"
-      });
+      await uploadSupabaseObject(path, JSON.stringify(payload), { config, contentType: "application/json;charset=utf-8" });
       manifest.sessions[id] = { path, updatedAt: localUpdatedAt };
       uploadedCount += 1;
       continue;
@@ -60,12 +57,24 @@ export async function syncAllSessionsWithSupabase() {
   const nextIndex = Array.from(mergedEntries.values())
     .sort((a, b) => (normalizeUpdatedAt(b.startedAt) || normalizeUpdatedAt(b.updatedAt)) - (normalizeUpdatedAt(a.startedAt) || normalizeUpdatedAt(a.updatedAt)));
   await chrome.storage.local.set({ ...localPatch, sessions_index: nextIndex });
-  const settingsResult = await syncSettingsWithSupabase(config);
   await uploadSupabaseObject(getSupabasePath(config, "sessions", MANIFEST_FILE), JSON.stringify(manifest, null, 2), {
     config,
     contentType: "application/json;charset=utf-8"
   });
-  return { total: allIds.size, uploadedCount, downloadedCount, unchangedCount, settings: settingsResult };
+  return { total: allIds.size, uploadedCount, downloadedCount, unchangedCount };
+}
+
+export async function restoreSettingsFromSupabase() {
+  const config = await loadSupabaseConfig();
+  const remoteSettings = await downloadSettingsPayload(config);
+  validateRemoteSettings(remoteSettings);
+  await replaceLocalSettings(remoteSettings);
+  return { updatedKeyCount: Object.keys(remoteSettings.backup?.settings || {}).length };
+}
+
+export async function overwriteSupabaseSettingsFromLocal() {
+  const config = await loadSupabaseConfig();
+  await uploadLocalSettings(config);
 }
 
 export async function markSupabaseSettingsDirtyFromStorageChanges(changes, areaName) {
@@ -77,51 +86,52 @@ export async function markSupabaseSettingsDirtyFromStorageChanges(changes, areaN
   });
 }
 
-async function syncSettingsWithSupabase(config) {
-  const state = await loadSettingsSyncState();
-  const localUpdatedAt = normalizeUpdatedAt(state.updatedAt);
-  const path = getSupabasePath(config, "config", SETTINGS_FILE);
-  let remote = null;
-  try {
-    remote = await (await downloadSupabaseObject(path, { config })).json();
-  } catch (error) {
-    if (error?.status !== 404) console.warn("Unable to read Supabase settings backup:", error);
-  }
-  const remoteUpdatedAt = normalizeUpdatedAt(remote?.updatedAt);
+async function replaceLocalSettings(remote) {
+  validateRemoteSettings(remote);
+  const remoteUpdatedAt = normalizeUpdatedAt(remote.updatedAt) || Date.now();
+  await chrome.storage.local.set({
+    [SUPABASE_SETTINGS_SYNC_STATE_KEY]: { updatedAt: remoteUpdatedAt, suppressDirtyUntil: Date.now() + 10000 }
+  });
+  await chrome.storage.local.remove(SETTINGS_BACKUP_KEYS);
+  await importSettingsBackupFromText(JSON.stringify(remote.backup));
+  await chrome.storage.local.set({
+    [SUPABASE_SETTINGS_SYNC_STATE_KEY]: { updatedAt: remoteUpdatedAt, suppressDirtyUntil: Date.now() + 10000 }
+  });
+}
 
-  if (remote && remoteUpdatedAt > localUpdatedAt) {
-    await chrome.storage.local.set({
-      [SUPABASE_SETTINGS_SYNC_STATE_KEY]: { ...state, suppressDirtyUntil: Date.now() + 10000 }
-    });
-    await importSettingsBackupFromText(JSON.stringify(remote.backup || {}));
-    await chrome.storage.local.set({
-      [SUPABASE_SETTINGS_SYNC_STATE_KEY]: { updatedAt: remoteUpdatedAt, suppressDirtyUntil: Date.now() + 10000 }
-    });
-    return "downloaded";
+function validateRemoteSettings(remote) {
+  if (remote?.format !== "tab-manager-supabase-settings" || !remote.backup) {
+    throw new Error("远端设置备份格式无效");
   }
+}
 
-  const updatedAt = localUpdatedAt || Date.now();
+async function uploadLocalSettings(config) {
+  const updatedAt = Date.now();
   const payload = { format: "tab-manager-supabase-settings", version: 1, updatedAt, backup: await exportSettingsBackup() };
-  await uploadSupabaseObject(path, JSON.stringify(payload, null, 2), {
+  await uploadSupabaseObject(getSupabasePath(config, "config", SETTINGS_FILE), JSON.stringify(payload, null, 2), {
     config,
     contentType: "application/json;charset=utf-8"
   });
   await chrome.storage.local.set({ [SUPABASE_SETTINGS_SYNC_STATE_KEY]: { updatedAt, suppressDirtyUntil: 0 } });
-  return remote ? "uploaded" : "created";
 }
 
 async function downloadSessionPayload(path, config) {
-  const response = await downloadSupabaseObject(path, { config });
-  return response.json();
+  return (await downloadSupabaseObject(path, { config })).json();
 }
 
-async function loadRemoteManifest(config) {
-  const response = await downloadSupabaseObject(getSupabasePath(config, "sessions", MANIFEST_FILE), { config });
-  const manifest = await response.json();
-  if (manifest?.format !== "tab-manager-sessions" || !manifest.sessions) {
-    throw new Error("远端会话备份格式无效");
+async function downloadSettingsPayload(config) {
+  return (await downloadSupabaseObject(getSupabasePath(config, "config", SETTINGS_FILE), { config })).json();
+}
+
+async function loadRemoteManifest(config, { allowMissing = false } = {}) {
+  try {
+    const manifest = await (await downloadSupabaseObject(getSupabasePath(config, "sessions", MANIFEST_FILE), { config })).json();
+    if (manifest?.format !== "tab-manager-sessions" || !manifest.sessions) throw new Error("远端会话备份格式无效");
+    return manifest;
+  } catch (error) {
+    if (allowMissing && error?.status === 404) return emptyManifest();
+    throw error;
   }
-  return manifest;
 }
 
 async function loadSettingsSyncState() {
