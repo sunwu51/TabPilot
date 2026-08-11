@@ -50,7 +50,7 @@ export async function downloadSupabaseObject(path, options = {}) {
   const response = await fetch(buildObjectUrl(config, normalizeStoragePath(path)), {
     headers: { apikey: config.key, Authorization: `Bearer ${config.key}` }
   });
-  if (!response.ok) throw new Error(await readSupabaseError(response));
+  if (!response.ok) throw createSupabaseError(response, await readSupabaseError(response));
   return response;
 }
 
@@ -70,6 +70,12 @@ async function readSupabaseError(response) {
   } catch {
     return text || `Supabase 请求失败 (${response.status})`;
   }
+}
+
+function createSupabaseError(response, message) {
+  const error = new Error(message);
+  error.status = response.status;
+  return error;
 }
 
 export function dataUrlToBlob(dataUrl) {

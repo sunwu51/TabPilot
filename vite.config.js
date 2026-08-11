@@ -11,6 +11,7 @@ export default defineConfig({
     setupFiles: ["./test/setup.js"],
   },
   build: {
+    modulePreload: false,
     rollupOptions: {
       input: {
         service_worker: "src/service_worker.js",

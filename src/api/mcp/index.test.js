@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+/* global chrome */
 const jsonHeaders = { "content-type": "application/json" };
 
 function mockJsonResponse(body, { status = 200, headers = {} } = {}) {
@@ -48,6 +48,52 @@ describe("MCP Streamable HTTP session handling", () => {
     expect(fetch.mock.calls[0][1].headers["Mcp-Session-Id"]).toBeUndefined();
     expect(fetch.mock.calls[1][1].headers["Mcp-Session-Id"]).toBe("session-a");
     expect(fetch.mock.calls[2][1].headers["Mcp-Session-Id"]).toBe("session-a");
+  });
+
+  it("parses JSON text tool results into structured values", async () => {
+    const { connectMcpServer, callMcpTool } = await import("./index");
+
+    fetch
+      .mockResolvedValueOnce(mockJsonResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { serverInfo: { name: "Notifier" }, capabilities: {} }
+      }))
+      .mockResolvedValueOnce(mockJsonResponse({
+        jsonrpc: "2.0",
+        id: 2,
+        result: { tools: [{ name: "send", inputSchema: { type: "object" } }] }
+      }))
+      .mockResolvedValueOnce(mockJsonResponse({
+        jsonrpc: "2.0",
+        id: 3,
+        result: {
+          content: [{
+            type: "text",
+            text: JSON.stringify({ success: true, notificationId: 42, details: { sound: true } })
+          }]
+        }
+      }))
+      .mockResolvedValueOnce(mockJsonResponse({
+        jsonrpc: "2.0",
+        id: 4,
+        result: {
+          content: [{
+            type: "text",
+            text: JSON.stringify(JSON.stringify({ ok: true, status: "triggered" }))
+          }]
+        }
+      }));
+
+    await connectMcpServer("https://mcp.example/rpc", {});
+    await expect(callMcpTool("https://mcp.example/rpc", {}, "send", { title: "test" }))
+      .resolves.toEqual({
+        result: { success: true, notificationId: 42, details: { sound: true } }
+      });
+    await expect(callMcpTool("https://mcp.example/rpc", {}, "send", { title: "nested" }))
+      .resolves.toEqual({
+        result: { ok: true, status: "triggered" }
+      });
   });
 
   it("re-initializes without sending the previously stored session id", async () => {

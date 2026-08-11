@@ -12,7 +12,8 @@ export function buildApiMessages(apiType, messages, options = {}) {
 }
 
 export function appendUploadedImageUrlText(messages = []) {
-  return (Array.isArray(messages) ? messages : []).map(message => {
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  const requestMessages = sourceMessages.map(message => {
     if (message?.role !== "user") return message;
     const urls = [...new Set((Array.isArray(message.imageRefs) ? message.imageRefs : [])
       .map(item => String(item?.uploadedUrl || "").trim())
@@ -27,6 +28,49 @@ export function appendUploadedImageUrlText(messages = []) {
       { type: "text", text }
     ] };
   });
+
+  const contextualUrls = collectUploadedImageUrls(
+    sourceMessages.filter(message => message?.role !== "user")
+  );
+  if (contextualUrls.length === 0) return requestMessages;
+
+  const lastUserIndex = requestMessages.findLastIndex(message => message?.role === "user");
+  if (lastUserIndex < 0) return requestMessages;
+  const contextText = [
+    "Uploaded image URLs from earlier assistant or tool messages:",
+    ...contextualUrls.map(item => `- ${item.ref || "image"}: ${item.url}`)
+  ].join("\n");
+  requestMessages[lastUserIndex] = appendTextToUserMessage(requestMessages[lastUserIndex], contextText);
+  return requestMessages;
+}
+
+function collectUploadedImageUrls(value, entries = new Map()) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectUploadedImageUrls(item, entries);
+    return Array.from(entries.values());
+  }
+  if (!value || typeof value !== "object") return Array.from(entries.values());
+
+  const url = String(value.uploadedUrl || "").trim();
+  if (/^https?:\/\//i.test(url)) {
+    const ref = String(value.ref || value.source?.ref || "").trim();
+    entries.set(`${ref}\n${url}`, { ref, url });
+  }
+  for (const child of Object.values(value)) collectUploadedImageUrls(child, entries);
+  return Array.from(entries.values());
+}
+
+function appendTextToUserMessage(message, text) {
+  if (Array.isArray(message.content)) {
+    return { ...message, content: [...message.content, { type: "text", text }] };
+  }
+  return {
+    ...message,
+    content: [
+      ...(String(message.content || "").trim() ? [{ type: "text", text: String(message.content) }] : []),
+      { type: "text", text }
+    ]
+  };
 }
 
 export function buildPlatformSystemPrompt(platformInfo) {

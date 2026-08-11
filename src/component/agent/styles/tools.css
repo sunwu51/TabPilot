@@ -59,6 +59,18 @@
   tab-size: 2;
 }
 
+.tool-exec-code-content {
+  max-height: 320px;
+  white-space: pre;
+  word-break: normal;
+  padding: 0;
+}
+
+.tool-exec-code-content code.hljs {
+  padding: 8px;
+  background: #282c34;
+}
+
 .tool-merged-section-label {
   padding: 6px 8px 2px;
   border-top: 1px solid #e5e7eb;

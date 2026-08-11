@@ -43,6 +43,7 @@ export {
   normalizeActiveToolNames
 } from "./tools/definitions";
 export { executeTool, captureFullPageScreenshotToTab, openHelloWorldPlayground, getBuiltinToolTimeoutSeconds } from "./tools/executor";
+export { executeCodeRuntime } from "./tools/codeRuntime";
 export { triggerBrowserDownload, hasDownloadsPermission, DOWNLOADS_PERMISSION_REQUIRED } from "./tools/builtins/downloadHelper";
 export {
   DEFAULT_IMAGE_MODEL,

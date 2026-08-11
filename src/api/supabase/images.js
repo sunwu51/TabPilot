@@ -31,16 +31,3 @@ export async function uploadSessionImage(sessionId, ref, source = "") {
   }
   return imageUpload;
 }
-
-export async function refreshUploadedImageUrls(messages = []) {
-  const config = await loadSupabaseConfig();
-  return await Promise.all((Array.isArray(messages) ? messages : []).map(async message => {
-    if (message?.role !== "user" || !Array.isArray(message.imageRefs)) return message;
-    const imageRefs = await Promise.all(message.imageRefs.map(async image => {
-      const uploadedPath = String(image?.uploadedPath || "").trim();
-      if (!uploadedPath) return image;
-      return { ...image, uploadedUrl: await createSupabaseSignedUrl(uploadedPath, { config }) };
-    }));
-    return { ...message, imageRefs };
-  }));
-}

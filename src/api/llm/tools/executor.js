@@ -108,9 +108,9 @@ export async function executeTool(name, args, mcpRegistry = []) {
       ? () => handler(args, mcpRegistry)
       : () => ({ error: `Unknown tool: ${name}` });
 
-    // `sleep` intentionally has no timeout — its whole purpose is to wait.
+    // Waiting intentionally has no timeout — its whole purpose is to pause.
     // Input validation in _execSleep already caps the duration at 300s.
-    if (name === "sleep") {
+    if (name === "sleep" || name === "wait") {
       return await runBuiltinTool();
     }
 
@@ -205,5 +205,6 @@ const BUILTIN_TOOL_HANDLERS = {
   image_edit: (args) => executeImageEdit(args),
 
   get_current_time: () => _execGetCurrentTime(),
-  sleep: (args) => _execSleep(args)
+  sleep: (args) => _execSleep(args),
+  wait: (args) => _execSleep(args)
 };

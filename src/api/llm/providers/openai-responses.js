@@ -90,13 +90,9 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
         const data = trimmed.slice(5).trim();
         if (!data || data === "[DONE]") continue;
 
+        let event;
         try {
-          const event = JSON.parse(data);
-          if (event?.response?.id) {
-            responseId = event.response.id;
-          }
-          usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
-          applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone, onNativeWebSearch });
+          event = JSON.parse(data);
         } catch (error) {
           throw createLlmStreamError({
             code: "STREAM_PARSE_ERROR",
@@ -104,6 +100,13 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
             detail: error?.message || String(error)
           });
         }
+        const eventError = createResponsesEventError(event);
+        if (eventError) throw eventError;
+        if (event?.response?.id) {
+          responseId = event.response.id;
+        }
+        usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
+        applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone, onNativeWebSearch });
       }
     }
 
@@ -204,6 +207,19 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
   } finally {
     timeoutState.cleanup();
   }
+}
+
+function createResponsesEventError(event) {
+  const eventType = String(event?.type || "");
+  if (eventType !== "error" && eventType !== "response.failed") return null;
+  const providerError = eventType === "response.failed" ? event?.response?.error : event?.error;
+  const code = String(providerError?.code || providerError?.type || eventType).trim();
+  const message = String(providerError?.message || "").trim() || `OpenAI Responses 返回错误: ${code}`;
+  return createLlmStreamError({
+    code: code || "OPENAI_RESPONSES_ERROR",
+    message,
+    detail: providerError || event
+  });
 }
 
 export function extractResponsesCitations(content = []) {

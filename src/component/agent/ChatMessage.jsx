@@ -764,20 +764,20 @@ function ToolResultBlock({ msg, sessionId = "", imageRefNavigator }) {
       const parsed = JSON.parse(content);
       if (parsed.error) {
         isError = true;
-        label = parsed.error;
+        label = formatToolResultLabel(parsed.error);
       } else if (parsed.title) {
-        label = parsed.title;
+        label = formatToolResultLabel(parsed.title);
       } else if (parsed.success) {
-        label = parsed.url || parsed.name || "success";
+        label = formatToolResultLabel(parsed.url || parsed.name || "success");
       } else if (parsed.result) {
         label = typeof parsed.result === "string" ? parsed.result.substring(0, 60) : "result";
       }
     } catch (e) { /* use default */ }
   } else if (typeof content === "object" && content !== null) {
     // content could be an object if not stringified
-    if (content.error) { isError = true; label = content.error; }
-    else if (content.title) label = content.title;
-    else if (content.success) label = content.url || content.name || "success";
+    if (content.error) { isError = true; label = formatToolResultLabel(content.error); }
+    else if (content.title) label = formatToolResultLabel(content.title);
+    else if (content.success) label = formatToolResultLabel(content.url || content.name || "success");
   }
 
   const displayContent = typeof content === "string" ? content : JSON.stringify(content, null, 2);
@@ -1165,6 +1165,15 @@ export function EditableChatImage({
     event.preventDefault();
     event.stopPropagation();
     if (!sessionId || !refId || uploadState.status === "uploading") return;
+    if (uploadState.status === "uploaded" && uploadState.url) {
+      try {
+        await navigator.clipboard.writeText(uploadState.url);
+        toast.success("图片 URL 已复制");
+      } catch (error) {
+        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
+      }
+      return;
+    }
     if (uploadState.status === "uploaded" && uploadState.path) {
       try {
         const signedUrl = await createSupabaseSignedUrl(uploadState.path);
@@ -1175,20 +1184,17 @@ export function EditableChatImage({
       }
       return;
     }
-    if (uploadState.status === "uploaded" && uploadState.url) {
-      try {
-        await navigator.clipboard.writeText(uploadState.url);
-        toast.success("图片 URL 已复制");
-      } catch (error) {
-        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
-      }
-      return;
-    }
     setUploadState(current => ({ ...current, status: "uploading" }));
     try {
       const uploaded = await uploadSessionImage(sessionId, refId, src);
       setUploadState({ status: "uploaded", url: uploaded.url, path: uploaded.path });
-      toast.success("图片已上传到 Supabase");
+      try {
+        await navigator.clipboard.writeText(uploaded.url);
+        toast.success("图片已上传，URL 已复制");
+      } catch (clipboardError) {
+        toast.success("图片已上传到 Supabase");
+        toast.error(`URL 自动复制失败: ${clipboardError?.message || String(clipboardError)}`);
+      }
     } catch (error) {
       setUploadState(current => ({ ...current, status: "error" }));
       toast.error(`图片上传失败: ${error?.message || String(error)}`);
@@ -1557,6 +1563,16 @@ function findImageRefForSource(imageRefs, source) {
   if (!Array.isArray(imageRefs) || !source) return "";
   const match = imageRefs.find(item => item?.dataUrl === source || item?.source === source || item?.url === source);
   return match?.ref || "";
+}
+
+function formatToolResultLabel(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof value.message === "string") return value.message;
+  try {
+    return JSON.stringify(value);
+  } catch (_error) {
+    return String(value);
+  }
 }
 
 function findImageRefMeta(imageRefs, ref) {

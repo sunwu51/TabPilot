@@ -1,5 +1,6 @@
 import { DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS } from "../core/constants";
 import { API_TYPES, normalizeApiType } from "../core/config";
+import { buildMcpRuntimePrompt } from "./mcpRuntime";
 
 const DOM_LOCATOR_PROPERTIES = {
   tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
@@ -9,11 +10,20 @@ const DOM_LOCATOR_PROPERTIES = {
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
 };
 const IMAGE_TOOL_NAMES = new Set(["image_gen", "image_edit"]);
+const CODE_RUNTIME_EXCLUDED_TOOL_NAMES = new Set([
+  "tool_list_group",
+  "tool_enable",
+  "plan_create_for_session",
+  "plan_update_for_session",
+  "request_user_input",
+  "sleep"
+]);
 const TOOL_SELECTION_CORE_NAMES = new Set([
   "tool_list_group",
   "tool_enable",
   "plan_create_for_session",
   "plan_update_for_session",
+  "request_user_input",
   "tab_list",
   "tab_get_active",
   "tab_extract",
@@ -51,6 +61,141 @@ export const BUILTIN_TOOL_GROUPS = {
   images: "Image generation and editing",
   postdog: "HTTP request management"
 };
+
+const CODE_MODE_TAB_OUTPUT_GUIDE =
+  "Tab output contracts (these shapes are stable; do not guess or treat wrapper objects as arrays): " +
+  "`Tab = { id: number, url: string, title: string, windowId: number, groupId: number|null, splitViewId: number|null, lastAccessed: number|null, lastAccessedIso: string|null }`. " +
+  "`CapturedAt = { timestamp: number, iso: string, local: string, timezone: string }`. " +
+  "`await tools.tab_list({})` returns `{ capturedAt: CapturedAt, count: number, tabs: Tab[] }`; iterate `result.tabs`, not `result`. " +
+  "`await tools.tab_get_active({})` returns a flat object `{ capturedAt: CapturedAt, tabId: number, url: string, title: string, windowId: number, groupId: number|null, splitViewId: number|null, lastAccessed: number|null, lastAccessedIso: string|null }`; it has `tabId`, not `id`, and no nested `tab`. " +
+  "`await tools.tab_extract({ tabId })` returns `{ url: string, title: string, content: string, tabId: number, windowId: number, groupId: number|null, splitViewId: number|null, lastAccessed: number|null, lastAccessedIso: string|null }`; page text is in `content`. " +
+  "Any tool may instead return `{ error: string, hint?: string }`, so check `result.error` before reading success fields. " +
+  "Example: `const state = await tools.tab_list({}); if (state.error) return state; return state.tabs.reduce((sum, tab) => sum + tab.id, 0);`. ";
+
+const PLAN_TOOLS = [
+  {
+    name: "plan_create_for_session",
+    description: "Create or replace the latest high-level execution plan for the current agent session. Use this before starting a complex multi-step task. The plan must be user-readable and should describe meaningful task steps, not low-level tool calls. The application will ask the user to approve or revise the plan before you continue.",
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short user-facing title of the plan." },
+        steps: {
+          type: "array",
+          description: "High-level task steps in execution order. Keep steps concise, concrete, and outcome-oriented.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Short title of this step." },
+              description: { type: "string", description: "Optional detail explaining what this step will accomplish." }
+            },
+            required: ["title"]
+          }
+        }
+      },
+      required: ["title", "steps"]
+    }
+  },
+  {
+    name: "plan_update_for_session",
+    description: "Update the latest high-level execution plan for the current agent session while carrying out an approved complex task. Use this when a step starts, completes, is skipped, or becomes blocked.",
+    schema: {
+      type: "object",
+      properties: {
+        stepIndex: { type: "number", description: "Zero-based index of the step to update." },
+        status: {
+          type: "string",
+          enum: ["pending", "in_progress", "completed", "blocked", "skipped"],
+          description: "New status for the selected step."
+        },
+        note: { type: "string", description: "Optional short progress note, finding, or blocker for this step." }
+      },
+      required: ["stepIndex", "status"]
+    }
+  }
+];
+
+const USER_INPUT_TOOLS = [{
+  name: "request_user_input",
+  description: "Ask the user for missing information that materially affects how you should proceed. Use this before implementation when important requirements are ambiguous and different answers would lead to meaningfully different results. The application displays suggested choices and an Other text field, pauses execution, and returns `{ answered: true, answers: Record<string, string> }` after submission or `{ answered: false, cancelled: true, answers: {} }` if cancelled. Ask 1-3 concise questions, provide 2-4 mutually exclusive options per question, put the recommended option first when one is clearly preferable, and do not use this tool for questions whose answer can be discovered with available tools.",
+  schema: {
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        minItems: 1,
+        maxItems: 3,
+        description: "One to three requirement questions that should be answered together.",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Stable short identifier used as the key in the returned answers object." },
+            header: { type: "string", description: "Short section label, ideally no more than 12 characters." },
+            question: { type: "string", description: "The concrete question shown to the user." },
+            options: {
+              type: "array",
+              minItems: 2,
+              maxItems: 4,
+              description: "Two to four suggested answers. The UI automatically adds an Other option.",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string", description: "Short answer label." },
+                  description: { type: "string", description: "One sentence explaining the choice or tradeoff." }
+                },
+                required: ["label", "description"]
+              }
+            }
+          },
+          required: ["id", "header", "question", "options"]
+        }
+      }
+    },
+    required: ["questions"]
+  }
+}];
+
+const CODE_MODE_TOOLS = [
+  {
+    name: "exec",
+    description:
+      "Run JavaScript in the browser assistant runtime. The code runs inside an async function, so use await and return the final value explicitly. " +
+      "Built-in tools are asynchronous functions on the global `tools` object, for example `const state = await tools.tab_list({}); return state;`. " +
+      "Core tools include tab_list, tab_get_active, tab_extract, tab_open, tab_focus, dom_query, dom_click, dom_set_value, and eval_js. " +
+      CODE_MODE_TAB_OUTPUT_GUIDE +
+      "Use `await tools.listDomains()` to discover built-in and MCP domains, `await tools.listTools(domain)` to list a domain, and `await tools.describeTool(domain, name)` for full schemas. Results include `source`, `domain`, and an exact `call` example. If an MCP server and built-in domain share a name, pass `{ source: 'mcp', domain }` or `{ source: 'builtin', domain }` to disambiguate. " +
+      "Built-in tools are called as `await tools.tool_name(args)`; MCP tools are normally called as `await tools.mcp.server_name.tool_name(args)`. Use bracket notation only when an MCP tool name is not a valid JavaScript identifier. Treat a non-null MCP outputSchema as server-declared; when it is null, inspect the actual result instead of guessing fields. " +
+      "Image-producing tools return local placeholders such as `|deRef:img_1|` instead of base64 data URLs; pass the placeholder unchanged to later image tools, or return it so the host can display the image. " +
+      "Use `await sleep(milliseconds)` for a delay inside the script. All tool functions return Promises. console.log output is diagnostic; only an explicit return value is the script result. " +
+      "Never write an unbounded or non-terminating loop such as `while (true)` or `for (;;)`, and avoid recursion unless its termination is clearly bounded, because synchronous infinite execution cannot be interrupted by this runtime.",
+    schema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description: "JavaScript async-function body. Use await for tool calls and return the final JSON-serializable value."
+        }
+      },
+      required: ["code"]
+    }
+  },
+  {
+    name: "wait",
+    description: "Pause the agent for a fixed number of seconds. Use this for external work or page transitions that need time to settle. Range: 1 to 300 seconds.",
+    schema: {
+      type: "object",
+      properties: {
+        seconds: {
+          type: "number",
+          description: "Whole number of seconds to wait, from 1 through 300."
+        }
+      },
+      required: ["seconds"]
+    }
+  },
+  ...PLAN_TOOLS,
+  ...USER_INPUT_TOOLS
+];
 
 export function isImageToolName(toolName) {
   return IMAGE_TOOL_NAMES.has(String(toolName || "").trim());
@@ -92,46 +237,8 @@ export const TOOLS = [
     }
   },
 
-  {
-    name: "plan_create_for_session",
-    description: "Create or replace the latest high-level execution plan for the current agent session. Use this before starting a complex multi-step task. The plan must be user-readable and should describe meaningful task steps, not low-level tool calls. The application will ask the user to approve or revise the plan before you continue.",
-    schema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "Short user-facing title of the plan." },
-        steps: {
-          type: "array",
-          description: "High-level task steps in execution order. Keep steps concise, concrete, and outcome-oriented.",
-          items: {
-            type: "object",
-            properties: {
-              title: { type: "string", description: "Short title of this step." },
-              description: { type: "string", description: "Optional detail explaining what this step will accomplish." }
-            },
-            required: ["title"]
-          }
-        }
-      },
-      required: ["title", "steps"]
-    }
-  },
-  {
-    name: "plan_update_for_session",
-    description: "Update the latest high-level execution plan for the current agent session while carrying out an approved complex task. Use this when a step starts, completes, is skipped, or becomes blocked.",
-    schema: {
-      type: "object",
-      properties: {
-        stepIndex: { type: "number", description: "Zero-based index of the step to update." },
-        status: {
-          type: "string",
-          enum: ["pending", "in_progress", "completed", "blocked", "skipped"],
-          description: "New status for the selected step."
-        },
-        note: { type: "string", description: "Optional short progress note, finding, or blocker for this step." }
-      },
-      required: ["stepIndex", "status"]
-    }
-  },
+  ...PLAN_TOOLS,
+  ...USER_INPUT_TOOLS,
   {
     name: "tab_list",
     description: "Get a snapshot of all currently open browser tabs. Returns each tab's id, url, title, and lastAccessed, plus capturedAt timing fields so you can judge whether the tab state may be stale and refresh it again if needed. Use when the user asks about open tabs, browser context, or page-related questions and you need to identify the right tab first.",
@@ -1011,13 +1118,14 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.enableBetaFeatures=true] - Whether to enable beta-only provider behavior.
  * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
  * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
+ * @param {boolean} [options.useCodeMode=false] - Expose exec/wait instead of individual built-in tools.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, useToolSelection = false, activeToolNames = [] } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, useToolSelection = false, useCodeMode = false, activeToolNames = [] } = {}) {
   void enableBetaFeatures;
   const activeNames = new Set(Array.isArray(activeToolNames) ? activeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
   // Convert MCP tools to our internal format
-  const externalTools = mcpTools.filter(t => {
+  const externalTools = (useCodeMode ? [] : mcpTools).filter(t => {
     if (!useToolSelection || t?._lazyLoad !== true) return true;
     return activeNames.has(t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name));
   }).map(t => ({
@@ -1027,13 +1135,19 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
   }));
 
   const builtInTools = includeBuiltins
-    ? TOOLS.filter(tool => {
+    ? (useCodeMode ? CODE_MODE_TOOLS : TOOLS).filter(tool => {
       if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled })) return false;
-      if (useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
+      if (!useCodeMode && useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
       return true;
     })
     : [];
   const allTools = [...builtInTools, ...externalTools].map(tool => {
+    if (tool.name === "exec" && useCodeMode) {
+      return {
+        ...tool,
+        description: `${tool.description}\n\n${buildMcpRuntimePrompt(mcpTools)}`
+      };
+    }
     if (tool.name !== "tool_list_group" || !useToolSelection) return tool;
     const lazyServers = new Map();
     for (const item of mcpTools) {
@@ -1087,6 +1201,12 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
       parameters: t.schema
     }
   }));
+}
+
+export function getCodeRuntimeToolDefinitions(options = {}) {
+  return TOOLS
+    .filter(tool => !CODE_RUNTIME_EXCLUDED_TOOL_NAMES.has(tool.name))
+    .filter(tool => isBuiltinToolAvailable(tool, options));
 }
 
 function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled }) {

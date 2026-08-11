@@ -31,7 +31,7 @@ export function buildSkillsSystemPrompt(agentSkills) {
       `\n\nSkills via skill-bridge:\n` +
       `- The user configured the skill-bridge MCP endpoint ${JSON.stringify(normalized.serverUrl)}.\n` +
       `- Skills index has not been loaded yet.\n` +
-      `- When skill details are needed, use the MCP tool mcp_skill_bridge_get_skill_detail (the wrapped MCP tool for get_skill_detail).\n` +
+      `- When skill details are needed, use exec to call tools.mcp.skill_bridge.get_skill_detail({ directoryName }). Use tools.describeTool("skill_bridge", "get_skill_detail") first if the input schema is unclear.\n` +
       `- If a skill's full content has already been loaded into the current conversation context, reuse that content directly and do not read the same skill again unless the user explicitly asks to reload it.\n`
     );
   }
@@ -52,7 +52,7 @@ export function buildSkillsSystemPrompt(agentSkills) {
     `- The user configured the skill-bridge MCP endpoint ${JSON.stringify(normalized.serverUrl)}.\n` +
     `- The following entries are indexed summaries loaded from the MCP resource skills://index:\n` +
     `${lines.join("\n")}\n` +
-    `- When a task matches one of these skills, use the MCP tool mcp_skill_bridge_get_skill_detail with the skill directory name to read the full SKILL.md.\n` +
+    `- When a task matches one of these skills, use exec to call tools.mcp.skill_bridge.get_skill_detail({ directoryName: "..." }) to read the full SKILL.md. Use tools.describeTool("skill_bridge", "get_skill_detail") first if the input schema is unclear.\n` +
     `- If a skill's full content has already been loaded into the current conversation context, reuse that content directly and do not read the same skill again unless the user explicitly asks to reload it.\n` +
     `- Do not rely on the summary alone when the task depends on the actual skill workflow.\n`
   );

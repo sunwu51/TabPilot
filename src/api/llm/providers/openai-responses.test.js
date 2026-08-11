@@ -242,6 +242,62 @@ describe("OpenAI responses reasoning helpers", () => {
     expect(body.tools[0]).toEqual({ type: "web_search" });
   });
 
+  it("throws provider errors received as standalone SSE error events", async () => {
+    const onDone = vi.fn();
+    const events = [
+      { type: "response.in_progress", response: { id: "resp_failed" } },
+      {
+        type: "error",
+        error: {
+          type: "service_unavailable_error",
+          code: "server_error",
+          message: "The service is temporarily unavailable."
+        }
+      },
+      { type: "response.failed", response: { id: "resp_failed" } }
+    ];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } }
+    )));
+
+    await expect(streamOpenAIResponsesAttempt({
+      baseUrl: "https://api.openai.test/v1/responses",
+      apiKey: "test-key",
+      model: "gpt-test"
+    }, [], new AbortController().signal, { onDone }, [], { includeBuiltins: false })).rejects.toMatchObject({
+      code: "server_error",
+      message: "The service is temporarily unavailable.",
+      detail: expect.objectContaining({ type: "service_unavailable_error" })
+    });
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("throws response.failed errors when no standalone error event is sent", async () => {
+    const onDone = vi.fn();
+    const event = {
+      type: "response.failed",
+      response: {
+        id: "resp_failed",
+        error: { code: "rate_limit_exceeded", message: "Too many requests." }
+      }
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
+      `event: response.failed\ndata: ${JSON.stringify(event)}\n\n`,
+      { status: 200, headers: { "Content-Type": "text/event-stream" } }
+    )));
+
+    await expect(streamOpenAIResponsesAttempt({
+      baseUrl: "https://api.openai.test/v1/responses",
+      apiKey: "test-key",
+      model: "gpt-test"
+    }, [], new AbortController().signal, { onDone }, [], { includeBuiltins: false })).rejects.toMatchObject({
+      code: "rate_limit_exceeded",
+      message: "Too many requests."
+    });
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
   it("preserves completed response annotations and renders their links", async () => {
     const marker = "citeturn1search1";
     const text = `Result ${marker}`;

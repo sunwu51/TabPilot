@@ -3,6 +3,18 @@ import { buildOAuthHeaders } from "./oauth";
 let _rpcId = 0;
 const DEFAULT_MCP_TOOL_TIMEOUT_MS = 60000;
 const MCP_SESSION_ID_HEADER = "Mcp-Session-Id";
+
+function normalizeMcpTextResult(texts) {
+  let result = texts.length === 1 ? texts[0] : texts.join("\n");
+  for (let depth = 0; depth < 3 && typeof result === "string" && result.trim(); depth += 1) {
+    try {
+      result = JSON.parse(result);
+    } catch {
+      break;
+    }
+  }
+  return { result };
+}
 const _sessionIds = new Map();
 const EXTENSION_PROTOCOL_VERSION = "2025-03-26";
 
@@ -337,8 +349,7 @@ export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs =
       const texts = result.content
         .filter(c => c.type === "text")
         .map(c => c.text);
-      if (texts.length === 1) return { result: texts[0] };
-      if (texts.length > 1) return { result: texts.join("\n") };
+      if (texts.length > 0) return normalizeMcpTextResult(texts);
     }
     return result;
   }
@@ -353,8 +364,7 @@ export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs =
     const texts = result.content
       .filter(c => c.type === "text")
       .map(c => c.text);
-    if (texts.length === 1) return { result: texts[0] };
-    if (texts.length > 1) return { result: texts.join("\n") };
+    if (texts.length > 0) return normalizeMcpTextResult(texts);
   }
   return result;
 }
@@ -373,6 +383,7 @@ export async function connectMcpServer(url, headers = {}) {
     const tools = await listMcpTools(endpoint, endpoint.headers || {});
     return {
       name: info.serverInfo?.name || "MCP Server",
+      description: info.serverInfo?.description || "",
       tools,
       error: null
     };
@@ -387,7 +398,7 @@ export async function connectMcpServer(url, headers = {}) {
         const authorizedHeaders = buildOAuthHeaders(endpoint.headers, token);
         const info = await initializeMcp(endpoint.url, authorizedHeaders);
         const tools = await listMcpTools(endpoint.url, authorizedHeaders);
-        return { name: info.serverInfo?.name || "MCP Server", tools, error: null, headers: authorizedHeaders };
+        return { name: info.serverInfo?.name || "MCP Server", description: info.serverInfo?.description || "", tools, error: null, headers: authorizedHeaders };
       } catch (oauthError) {
         return { name: "MCP Server", tools: [], error: `OAuth 授权失败: ${oauthError.message}` };
       }

@@ -38,6 +38,49 @@ Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
 });
 
 describe("ChatMessage image actions", () => {
+  it("copies the signed URL immediately after uploading", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+    await chrome.storage.local.set({
+      supabaseConfig: {
+        url: "https://demo.supabase.co",
+        key: "anon-key",
+        bucket: "tabmanager",
+        basePath: "tabmanager"
+      },
+      sessions_index: [{ id: "s_1", updatedAt: 1 }],
+      session_s_1: { messages: [] }
+    });
+    const signedUrl = "https://demo.supabase.co/storage/v1/object/sign/tabmanager/tabmanager/images/s_1/img_1.png?token=signed";
+    vi.stubGlobal("fetch", vi.fn(async url => {
+      if (String(url).includes("/storage/v1/object/sign/")) {
+        return { ok: true, status: 200, json: async () => ({ signedURL: signedUrl.replace("https://demo.supabase.co/storage/v1", "") }) };
+      }
+      return { ok: true, status: 200, text: async () => "{}" };
+    }));
+    render(
+      <ChatMessage
+        msg={{
+          role: "user",
+          content: [{
+            type: "image",
+            ref: "img_1",
+            source: { type: "base64", media_type: "image/png", data: "dXNlcg==", ref: "img_1" }
+          }],
+          imageRefs: [{ ref: "img_1", dataUrl: "data:image/png;base64,dXNlcg==" }]
+        }}
+        sessionId="s_1"
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "上传图片到 Supabase" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(signedUrl));
+    expect(screen.getByRole("button", { name: "复制图片 URL" })).toBeInTheDocument();
+  });
+
   it("copies an existing uploaded URL instead of uploading again", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

@@ -1,5 +1,4 @@
-/* eslint-disable react/prop-types */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./ChatMessage", () => ({
@@ -58,5 +57,132 @@ describe("ChatMessageList", () => {
 
     expect(screen.getByText("以上消息已经被压缩")).toBeTruthy();
     expect(screen.getAllByText("展开查看 6 个工具调用详情")).toHaveLength(2);
+  });
+
+  it("keeps a long tool group expanded while new tool results arrive", () => {
+    const makeMessages = count => Array.from({ length: count }, (_, index) => ({
+      role: "tool",
+      tool_call_id: `call_${index}`,
+      tool_name: `tool_${index}`,
+      content: "{\"ok\":true}"
+    }));
+    const { rerender } = render(<ChatMessageList messages={makeMessages(6)} />);
+
+    fireEvent.click(screen.getByText("展开查看 6 个工具调用详情"));
+    expect(document.querySelector(".tool-result-arrow")?.textContent).toBe("▼");
+
+    rerender(<ChatMessageList messages={makeMessages(7)} />);
+    expect(screen.getByText("展开查看 7 个工具调用详情")).toBeTruthy();
+    expect(document.querySelector(".tool-result-arrow")?.textContent).toBe("▼");
+  });
+
+  it("shows nested code-mode calls in the exec title and highlights the code input", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ id: "call_exec", function: { name: "exec", arguments: JSON.stringify({ code: "const tabs = await tools.tab_list({});\nreturn tabs;" }) } }]
+          },
+          {
+            role: "tool",
+            tool_call_id: "call_exec",
+            tool_name: "exec",
+            content: JSON.stringify({ status: "completed", value: { count: 0 } }),
+            _codeToolCalls: [{ name: "tab_list", args: {}, status: "completed" }]
+          }
+        ]}
+      />
+    );
+
+    const title = screen.getByText(/tab_list\(\)/);
+    expect(title.textContent).not.toContain("exec:");
+    expect(title.textContent).not.toContain("const tabs");
+    fireEvent.click(title.closest(".tool-result-header"));
+    const code = document.querySelector(".tool-exec-code-content code.language-javascript");
+    expect(code).not.toBeNull();
+    expect(code.textContent).toContain("await tools.tab_list");
+    expect(code.innerHTML).toContain("hljs-keyword");
+  });
+
+  it("serializes object-valued tool arguments instead of rendering object coercion", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          { role: "assistant", tool_calls: [{ id: "call_exec", function: { name: "exec", arguments: "{}" } }] },
+          { role: "tool", tool_call_id: "call_exec", tool_name: "exec", content: "{}", _codeToolCalls: [{ name: "tab_list", args: { query: { active: true } } }] }
+        ]}
+      />
+    );
+    expect(screen.getByText(/tab_list\(\{"active":true\}\)/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("[object Object]");
+  });
+
+  it("shows namespaced MCP calls in the exec card title", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          { role: "assistant", tool_calls: [{ id: "call_exec", function: { name: "exec", arguments: "{}" } }] },
+          {
+            role: "tool",
+            tool_call_id: "call_exec",
+            tool_name: "exec",
+            content: "{}",
+            _codeToolCalls: [{ name: "mcp.github.search-issues", args: { query: "bug" }, status: "completed" }]
+          }
+        ]}
+      />
+    );
+
+    const title = screen.getByText(/mcp\.github\.search-issues\(bug\)/);
+    expect(title.textContent).not.toContain("exec:");
+  });
+
+  it("shows runtime discovery helpers in the tool card title", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          { role: "assistant", tool_calls: [{ id: "call_exec", function: { name: "exec", arguments: "{}" } }] },
+          {
+            role: "tool",
+            tool_call_id: "call_exec",
+            tool_name: "exec",
+            content: "{}",
+            _codeToolCalls: [
+              { name: "tools.listTools", args: { domain: "tabs" }, status: "completed" },
+              { name: "tools.describeMcpTool", args: { serverName: "docs", toolName: "lookup" }, status: "completed" }
+            ]
+          }
+        ]}
+      />
+    );
+
+    const title = screen.getByText(/tools\.listTools\(\{"domain":"tabs"\}\).*tools\.describeMcpTool/);
+    expect(title.textContent).not.toContain("exec:");
+  });
+
+  it("keeps structured exec errors out of the card title", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          { role: "assistant", tool_calls: [{ id: "call_exec", function: { name: "exec", arguments: "{}" } }] },
+          {
+            role: "tool",
+            tool_call_id: "call_exec",
+            tool_name: "exec",
+            content: JSON.stringify({ status: "failed", error: { code: "RUNTIME_ERROR", message: "tabs is not iterable" } }),
+            _codeToolCalls: [{ name: "tab_list", args: {}, status: "completed" }]
+          }
+        ]}
+      />
+    );
+
+    const title = screen.getByText(/tab_list\(\)/);
+    expect(title.textContent).not.toContain("exec:");
+    expect(title.textContent).not.toContain("tabs is not iterable");
+    expect(document.body.textContent).not.toContain("[object Object]");
+    fireEvent.click(title.closest(".tool-result-header"));
+    expect(screen.getByText(/"message": "tabs is not iterable"/)).toBeTruthy();
   });
 });
