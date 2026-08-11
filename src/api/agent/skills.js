@@ -26,6 +26,7 @@ export function buildSkillsSystemPrompt(agentSkills) {
     return "";
   }
 
+  const enabledSkills = normalized.skills.filter(skill => skill.enabled);
   if (normalized.skills.length === 0) {
     return (
       `\n\nSkills via skill-bridge:\n` +
@@ -36,7 +37,15 @@ export function buildSkillsSystemPrompt(agentSkills) {
     );
   }
 
-  const lines = normalized.skills.map(skill => {
+  if (enabledSkills.length === 0) {
+    return (
+      `\n\nSkills via skill-bridge:\n` +
+      `- The user configured the skill-bridge MCP endpoint ${JSON.stringify(normalized.serverUrl)}.\n` +
+      `- All indexed skills are currently disabled by the user.\n`
+    );
+  }
+
+  const lines = enabledSkills.map(skill => {
     const parts = [`directoryName=${JSON.stringify(skill.path)}`];
     if (skill.name) parts.push(`name=${JSON.stringify(skill.name)}`);
     if (skill.description) parts.push(`description=${JSON.stringify(skill.description)}`);
@@ -69,6 +78,7 @@ export function normalizeAgentSkills(agentSkills) {
       path: normalizeRelativePath(skill?.path || ""),
       name: String(skill?.name || ""),
       description: String(skill?.description || ""),
+      enabled: skill?.enabled !== false,
       header: normalizeHeader(skill?.header)
     }))
     .filter(skill => skill.path)
@@ -95,11 +105,26 @@ export function mergeAgentSkillsServerUrl(agentSkills, serverUrl) {
 
 export function mergeLoadedSkills(_agentSkills, serverUrl, skills) {
   const normalizedCurrent = normalizeAgentSkills(_agentSkills);
+  const enabledByPath = new Map(normalizedCurrent.skills.map(skill => [skill.path, skill.enabled]));
   return normalizeAgentSkills({
     serverUrl,
     loadedAt: Date.now(),
     bridgeToolSettings: normalizedCurrent.bridgeToolSettings,
-    skills
+    skills: skills.map(skill => ({
+      ...skill,
+      enabled: enabledByPath.get(normalizeRelativePath(skill?.path || "")) !== false
+    }))
+  });
+}
+
+export function mergeSkillEnabled(agentSkills, skillPath, enabled) {
+  const normalized = normalizeAgentSkills(agentSkills);
+  const normalizedPath = normalizeRelativePath(skillPath);
+  return normalizeAgentSkills({
+    ...normalized,
+    skills: normalized.skills.map(skill => skill.path === normalizedPath
+      ? { ...skill, enabled: !!enabled }
+      : skill)
   });
 }
 

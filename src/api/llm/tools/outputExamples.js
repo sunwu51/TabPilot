@@ -15,6 +15,7 @@ export const BUILTIN_TOOL_OUTPUT_EXAMPLES = {
   tab_group: { success: true, groupId: 7, name: "Research", tabCount: 1, group },
   tab_get_active: { capturedAt, tabId: tab.id, url: tab.url, title: tab.title, windowId: tab.windowId, groupId: null, splitViewId: null, lastAccessed: tab.lastAccessed, lastAccessedIso: tab.lastAccessedIso },
   tab_screenshot: { success: true, tabId: tab.id, dataUrl: "|deRef:img_1|", mediaType: "image/jpeg", width: 1280, height: 720 },
+  page_agent_execute: { success: true, tabId: tab.id, url: tab.url, data: { success: true, data: "Task completed" }, status: "idle" },
   dom_query: { tabId: tab.id, windowId: 1, success: true, selector: "button", text: null, count: 1, truncated: false, matches: [element] },
   dom_click: { tabId: tab.id, windowId: 1, success: true, action: "click", totalMatches: 1, target: element },
   dom_set_value: { tabId: tab.id, windowId: 1, success: true, action: "set_value", totalMatches: 1, value: "hello", target: { ...element, tagName: "input" } },

@@ -39,6 +39,7 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "dom_style",
   "dom_get_html",
   "dom_highlight",
+  "page_agent_execute",
   "eval_js",
   "get_current_time",
   "sleep",
@@ -266,6 +267,18 @@ export const TOOLS = [
         tabId: { type: "number", description: "The browser tab ID to extract content from" }
       },
       required: ["tabId"]
+    }
+  },
+  {
+    name: "page_agent_execute",
+    description: "Run a natural-language task on a specified web page using Page Agent. It injects the Page Agent CDN into the tab and reuses the page instance. If injection is rejected or the page is unsupported, the result includes an error and alternative tab_extract/dom_* tools to use instead.",
+    schema: {
+      type: "object",
+      properties: {
+        tabId: { type: "number", description: "The browser tab ID to operate on." },
+        instruction: { type: "string", description: "A concrete natural-language instruction for the current page." }
+      },
+      required: ["tabId", "instruction"]
     }
   },
   {
@@ -1027,7 +1040,7 @@ export const BUILTIN_TOOL_NAMES = TOOLS.map(t => t.name);
 export function getBuiltinToolGroup(toolName) {
   const name = String(toolName || "").trim();
   if (name.startsWith("tab_")) return "tabs";
-  if (name.startsWith("dom_") || name === "eval_js") return "page";
+  if (name.startsWith("dom_") || name === "eval_js" || name === "page_agent_execute") return "page";
   if (name.startsWith("group_")) return "groups";
   if (name.startsWith("window_")) return "windows";
   if (name.startsWith("history_")) return "history";

@@ -63,7 +63,8 @@ import {
   saveAgentSkills,
   mergeBridgeToolDangerous,
   mergeAgentSkillsServerUrl,
-  mergeLoadedSkills
+  mergeLoadedSkills,
+  mergeSkillEnabled
 } from "../../api/agent/skills";
 import ChatMessageList from "./ChatMessageList";
 import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
@@ -203,6 +204,7 @@ export { buildRewindRestoredAttachments, buildImageEditRewindHint };
 
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
@@ -462,6 +464,7 @@ export default function AgentPanel() {
   const [agentSkills, setAgentSkills] = useState(EMPTY_AGENT_SKILLS);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillStationTools, setSkillStationTools] = useState([]);
+  const skillsRefreshInFlightRef = useRef(false);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [llmConfigInfo, setLlmConfigInfo] = useState({
@@ -774,18 +777,59 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      const savedSkills = await loadAgentSkills();
-      setAgentSkills(savedSkills);
-      if (savedSkills.serverUrl) {
-        try {
-          setSkillStationTools(await loadSkillStationTools(savedSkills.serverUrl, savedSkills.bridgeToolSettings));
-        } catch (error) {
-          console.error("Failed to restore skill-bridge tools:", error);
+    let disposed = false;
+    async function refreshSkills({ showLoading = false } = {}) {
+      if (disposed || skillsRefreshInFlightRef.current) return;
+      skillsRefreshInFlightRef.current = true;
+      if (showLoading) setSkillsLoading(true);
+
+      let savedSkills = null;
+      try {
+        savedSkills = await loadAgentSkills();
+        if (disposed) return;
+        setAgentSkills(savedSkills);
+        if (!savedSkills.serverUrl) {
+          setSkillStationTools([]);
+          return;
+        }
+
+        const [loadedSkills, loadedTools] = await Promise.all([
+          loadSkillsIndexFromSkillStation(savedSkills.serverUrl),
+          loadSkillStationTools(savedSkills.serverUrl, savedSkills.bridgeToolSettings)
+        ]);
+        if (disposed) return;
+
+        const refreshed = await saveAgentSkills(mergeLoadedSkills(
+          savedSkills,
+          savedSkills.serverUrl,
+          loadedSkills
+        ));
+        if (disposed) return;
+        setAgentSkills(refreshed);
+        setSkillStationTools(loadedTools);
+      } catch (error) {
+        console.error("Failed to refresh skill-bridge data:", error);
+        if (!disposed && savedSkills?.serverUrl) {
+          const cleared = mergeLoadedSkills(savedSkills, savedSkills.serverUrl, []);
+          await saveAgentSkills(cleared);
+          setAgentSkills(cleared);
           setSkillStationTools([]);
         }
+      } finally {
+        skillsRefreshInFlightRef.current = false;
+        if (showLoading && !disposed) setSkillsLoading(false);
       }
-    })();
+    }
+
+    void refreshSkills({ showLoading: true });
+    const intervalId = setInterval(() => {
+      void refreshSkills();
+    }, SKILLS_REFRESH_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(intervalId);
+    };
   }, []);
 
   useEffect(() => {
@@ -2724,6 +2768,14 @@ export default function AgentPanel() {
         .catch((error) => {
           console.error("Failed to refresh skill-bridge tools:", error);
         });
+      return next;
+    });
+  }
+
+  function handleSkillEnabledChange(skillPath, enabled) {
+    setAgentSkills(prev => {
+      const next = mergeSkillEnabled(prev, skillPath, enabled);
+      void saveAgentSkills(next);
       return next;
     });
   }
@@ -4788,6 +4840,7 @@ export default function AgentPanel() {
                   skillBridgeTools={skillStationTools}
                   onServerUrlChange={handleSkillsServerUrlChange}
                   onBridgeToolDangerousChange={handleBridgeToolDangerousChange}
+                  onSkillEnabledChange={handleSkillEnabledChange}
                   onLoad={handleLoadSkills}
                 />
                 <McpConfig onToolsChanged={setMcpTools} />
