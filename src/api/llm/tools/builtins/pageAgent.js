@@ -10,7 +10,9 @@ export async function initializePageAgent({ tabId } = {}) {
   const resolved = await _resolveControllableTab(tabId, "initialize Page Agent on");
   if (resolved.error) return { error: resolved.error, code: "PAGE_AGENT_TAB_UNAVAILABLE" };
 
+  const bridgeId = crypto.randomUUID();
   try {
+    await enablePageAgentBridge(resolved.tab.id, bridgeId);
     await ensurePageAgentRuntime(resolved.tab.id);
     const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
     const activeConfig = resolveActiveLlmConfig(llmConfig);
@@ -23,13 +25,23 @@ export async function initializePageAgent({ tabId } = {}) {
       world: "MAIN",
       func: initializePageAgentPanel,
       args: [{
+        bridgeId,
         model: activeConfig.model,
         baseURL: baseUrl,
         language: "zh-CN"
       }]
     });
-    return { success: true, tabId: resolved.tab.id, url: resolved.tab.url || "", ...(result?.result || {}) };
+    const pageState = result?.result || {};
+    await enablePageAgentBridge(resolved.tab.id, pageState.bridgeId || bridgeId);
+    if (pageState.bridgeId && pageState.bridgeId !== bridgeId) {
+      await disablePageAgentBridge(resolved.tab.id, bridgeId);
+    }
+    if (pageState.previousBridgeId && pageState.previousBridgeId !== pageState.bridgeId) {
+      await disablePageAgentBridge(resolved.tab.id, pageState.previousBridgeId);
+    }
+    return { success: true, tabId: resolved.tab.id, url: resolved.tab.url || "", ...pageState };
   } catch (error) {
+    await disablePageAgentBridge(resolved.tab.id, bridgeId);
     return {
       error: `Page Agent 无法注入: ${error?.message || String(error)}`,
       code: "PAGE_AGENT_INJECTION_FAILED"
@@ -38,12 +50,76 @@ export async function initializePageAgent({ tabId } = {}) {
 }
 
 function initializePageAgentPanel(config) {
-  if (!window.PageAgent) throw new Error("Page Agent runtime was not injected");
-  if (!window.__tabManagerPageAgent || window.__tabManagerPageAgent.disposed) {
-    window.__tabManagerPageAgent = new window.PageAgent(config);
+  function configurePanel(agent) {
+    const panel = agent?.panel;
+    if (!panel) return;
+    const wrapper = panel.wrapper;
+    if (wrapper && !panel.__tabManagerPositionConfigured) {
+      panel.__tabManagerPositionConfigured = true;
+      const show = panel.show.bind(panel);
+      panel.show = () => {
+        show();
+        wrapper.style.left = "auto";
+        wrapper.style.right = "16px";
+        wrapper.style.transform = "translateY(0)";
+      };
+      wrapper.style.left = "auto";
+      wrapper.style.right = "16px";
+      wrapper.style.transform = "translateY(20px)";
+    }
   }
-  window.__tabManagerPageAgent.panel?.show?.();
-  return { panelVisible: true };
+
+  function createProxyFetch() {
+    return async (url, init = {}) => new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      const timeoutId = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        reject(new Error("Timed out waiting for the extension Page Agent request proxy"));
+      }, 60000);
+      function onMessage(event) {
+        const payload = event.data;
+        if (event.source !== window || payload?.type !== "tabpilot_page_agent_proxy:response" || payload.bridgeId !== config.bridgeId || payload.requestId !== requestId) return;
+        clearTimeout(timeoutId);
+        window.removeEventListener("message", onMessage);
+        if (!payload.success) {
+          reject(new Error(payload.error || "Extension Page Agent request proxy failed"));
+          return;
+        }
+        resolve(new Response(payload.body || "", {
+          status: payload.status,
+          statusText: payload.statusText,
+          headers: payload.headers || {}
+        }));
+      }
+      window.addEventListener("message", onMessage);
+      window.postMessage({
+        type: "tabpilot_page_agent_proxy:request",
+        bridgeId: config.bridgeId,
+        requestId,
+        request: {
+          url: String(url),
+          method: String(init.method || "GET"),
+          body: typeof init.body === "string" ? init.body : ""
+        }
+      }, "*");
+    });
+  }
+
+  if (!window.PageAgent) throw new Error("Page Agent runtime was not injected");
+  const configKey = JSON.stringify({ model: config.model, baseURL: config.baseURL, language: config.language });
+  const state = window.__tabManagerPageAgentState;
+  if (state?.agent && state.configKey === configKey) {
+    state.agent.panel?.show?.();
+    return { panelVisible: true, reused: true, bridgeId: state.bridgeId };
+  }
+  const previousBridgeId = state?.bridgeId;
+  state?.agent?.dispose?.();
+  const agent = new window.PageAgent({ ...config, customFetch: createProxyFetch() });
+  window.__tabManagerPageAgent = agent;
+  window.__tabManagerPageAgentState = { agent, bridgeId: config.bridgeId, configKey };
+  configurePanel(agent);
+  agent.panel?.show?.();
+  return { panelVisible: true, reused: false, bridgeId: config.bridgeId, previousBridgeId };
 }
 
 export async function _execPageAgent({ tabId, instruction }) {
@@ -78,10 +154,7 @@ export async function _execPageAgent({ tabId, instruction }) {
 
   const bridgeId = crypto.randomUUID();
   try {
-    await chrome.tabs.sendMessage(resolved.tab.id, {
-      type: "page_agent_proxy_enable",
-      bridgeId
-    });
+    await enablePageAgentBridge(resolved.tab.id, bridgeId);
     await ensurePageAgentRuntime(resolved.tab.id);
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: resolved.tab.id },
@@ -98,23 +171,56 @@ export async function _execPageAgent({ tabId, instruction }) {
       }]
     });
 
+    const pageState = result?.result || { error: "Page Agent returned no result", code: "PAGE_AGENT_EMPTY_RESULT" };
+    if (pageState.bridgeId) {
+      await enablePageAgentBridge(resolved.tab.id, pageState.bridgeId);
+      if (pageState.previousBridgeId && pageState.previousBridgeId !== pageState.bridgeId) {
+        await disablePageAgentBridge(resolved.tab.id, pageState.previousBridgeId);
+      }
+      if (pageState.bridgeId !== bridgeId) await disablePageAgentBridge(resolved.tab.id, bridgeId);
+    }
     return {
       tabId: resolved.tab.id,
       url: resolved.tab.url || "",
-      ...(result?.result || { error: "Page Agent returned no result", code: "PAGE_AGENT_EMPTY_RESULT" })
+      ...pageState
     };
   } catch (error) {
+    await disablePageAgentBridge(resolved.tab.id, bridgeId);
     return {
       error: `Page Agent 无法注入或执行: ${error?.message || String(error)}`,
       code: "PAGE_AGENT_INJECTION_FAILED",
       hint: "该页面可能禁止脚本注入或处于 Chrome 特殊页面。请改用 tab_extract/dom_query/dom_click/dom_set_value/eval_js 等工具。"
     };
-  } finally {
-    try {
-      await chrome.tabs.sendMessage(resolved.tab.id, { type: "page_agent_proxy_disable", bridgeId });
-    } catch {
-      // The page may have navigated or been closed during Page Agent execution.
-    }
+  }
+}
+
+async function enablePageAgentBridge(tabId, bridgeId) {
+  const message = { type: "page_agent_proxy_enable", bridgeId };
+  try {
+    await chrome.tabs.sendMessage(tabId, message);
+    return;
+  } catch (error) {
+    if (!isMissingContentScriptError(error)) throw error;
+  }
+
+  // Tabs that were open before an extension update may not have the new content script.
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
+  await chrome.tabs.sendMessage(tabId, message);
+}
+
+function isMissingContentScriptError(error) {
+  const message = String(error?.message || error || "");
+  return /receiving end does not exist|could not establish connection/i.test(message);
+}
+
+async function disablePageAgentBridge(tabId, bridgeId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "page_agent_proxy_disable", bridgeId });
+  } catch {
+    // The page may have navigated or been closed.
   }
 }
 
@@ -138,6 +244,25 @@ function normalizePageAgentBaseUrl(apiType, value) {
 }
 
 async function executePageAgentInPage({ instruction, bridgeId, config }) {
+  function configurePanel(agent) {
+    const panel = agent?.panel;
+    if (!panel) return;
+    const wrapper = panel.wrapper;
+    if (wrapper && !panel.__tabManagerPositionConfigured) {
+      panel.__tabManagerPositionConfigured = true;
+      const show = panel.show.bind(panel);
+      panel.show = () => {
+        show();
+        wrapper.style.left = "auto";
+        wrapper.style.right = "16px";
+        wrapper.style.transform = "translateY(0)";
+      };
+      wrapper.style.left = "auto";
+      wrapper.style.right = "16px";
+      wrapper.style.transform = "translateY(20px)";
+    }
+  }
+
   function createProxyFetch() {
     return async (url, init = {}) => new Promise((resolve, reject) => {
       const requestId = crypto.randomUUID();
@@ -180,17 +305,25 @@ async function executePageAgentInPage({ instruction, bridgeId, config }) {
       throw new Error("Page Agent runtime was not injected");
     }
 
-    window.__tabManagerPageAgent?.dispose?.();
-    window.__tabManagerPageAgent = new window.PageAgent({
-      ...config,
-      customFetch: createProxyFetch()
-    });
-
-    const result = await window.__tabManagerPageAgent.execute(instruction);
+    const configKey = JSON.stringify({ model: config.model, baseURL: config.baseURL, language: config.language });
+    const state = window.__tabManagerPageAgentState;
+    let agent = state?.agent;
+    let previousBridgeId;
+    if (!agent || state.configKey !== configKey || agent.status === "disposed") {
+      previousBridgeId = state?.bridgeId;
+      state?.agent?.dispose?.();
+      agent = new window.PageAgent({ ...config, customFetch: createProxyFetch() });
+      window.__tabManagerPageAgent = agent;
+      window.__tabManagerPageAgentState = { agent, bridgeId, configKey };
+      configurePanel(agent);
+    }
+    const result = await agent.execute(instruction);
     return {
       success: result?.success !== false,
       data: result?.data ?? result,
-      status: window.__tabManagerPageAgent.status
+      status: agent.status,
+      bridgeId: window.__tabManagerPageAgentState.bridgeId,
+      previousBridgeId
     };
   } catch (error) {
     return {
