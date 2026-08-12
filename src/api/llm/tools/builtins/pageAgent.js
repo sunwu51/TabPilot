@@ -153,23 +153,27 @@ export async function _execPageAgent({ tabId, instruction }) {
   }
 
   const bridgeId = crypto.randomUUID();
+  const navigationGuard = createPageAgentNavigationGuard(resolved.tab.id, resolved.tab.url || "");
   try {
     await enablePageAgentBridge(resolved.tab.id, bridgeId);
     await ensurePageAgentRuntime(resolved.tab.id);
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: resolved.tab.id },
-      world: "MAIN",
-      func: executePageAgentInPage,
-      args: [{
-        instruction: task,
-        bridgeId,
-        config: {
-          model: activeConfig.model,
-          baseURL: baseUrl,
-          language: "zh-CN"
-        }
-      }]
-    });
+    const [result] = await Promise.race([
+      chrome.scripting.executeScript({
+        target: { tabId: resolved.tab.id },
+        world: "MAIN",
+        func: executePageAgentInPage,
+        args: [{
+          instruction: task,
+          bridgeId,
+          config: {
+            model: activeConfig.model,
+            baseURL: baseUrl,
+            language: "zh-CN"
+          }
+        }]
+      }),
+      navigationGuard.promise
+    ]);
 
     const pageState = result?.result || { error: "Page Agent returned no result", code: "PAGE_AGENT_EMPTY_RESULT" };
     if (pageState.bridgeId) {
@@ -186,11 +190,58 @@ export async function _execPageAgent({ tabId, instruction }) {
     };
   } catch (error) {
     await disablePageAgentBridge(resolved.tab.id, bridgeId);
+    if (error instanceof PageAgentLifecycleError) {
+      return { error: error.message, code: error.code, ...error.details };
+    }
     return {
       error: `Page Agent 无法注入或执行: ${error?.message || String(error)}`,
       code: "PAGE_AGENT_INJECTION_FAILED",
       hint: "该页面可能禁止脚本注入或处于 Chrome 特殊页面。请改用 tab_extract/dom_query/dom_click/dom_set_value/eval_js 等工具。"
     };
+  } finally {
+    navigationGuard.dispose();
+  }
+}
+
+function createPageAgentNavigationGuard(tabId, previousUrl) {
+  let disposed = false;
+  let rejectPromise;
+  const promise = new Promise((_, reject) => {
+    rejectPromise = reject;
+  });
+  const onCommitted = details => {
+    if (disposed || details.tabId !== tabId || details.frameId !== 0) return;
+    rejectPromise(new PageAgentLifecycleError(
+      "Page Agent task interrupted because the target tab navigated",
+      "PAGE_AGENT_TAB_NAVIGATED",
+      { tabId, previousUrl, currentUrl: details.url || "" }
+    ));
+  };
+  const onRemoved = removedTabId => {
+    if (disposed || removedTabId !== tabId) return;
+    rejectPromise(new PageAgentLifecycleError(
+      "Page Agent task interrupted because the target tab was closed",
+      "PAGE_AGENT_TAB_CLOSED",
+      { tabId, previousUrl }
+    ));
+  };
+  chrome.webNavigation?.onCommitted?.addListener?.(onCommitted);
+  chrome.tabs.onRemoved.addListener(onRemoved);
+  return {
+    promise,
+    dispose() {
+      disposed = true;
+      chrome.webNavigation?.onCommitted?.removeListener?.(onCommitted);
+      chrome.tabs.onRemoved.removeListener?.(onRemoved);
+    }
+  };
+}
+
+class PageAgentLifecycleError extends Error {
+  constructor(message, code, details) {
+    super(message);
+    this.code = code;
+    this.details = details;
   }
 }
 

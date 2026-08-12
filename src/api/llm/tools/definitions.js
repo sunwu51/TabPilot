@@ -297,7 +297,7 @@ export const TOOLS = [
   },
   {
     name: "page_agent_execute",
-    description: "Run a natural-language task on a specified web page using Page Agent. It injects the packaged Page Agent runtime into the tab with chrome.scripting and reuses the page instance, avoiding page CSP restrictions on dynamic script tags. If injection is rejected or the page is unsupported, the result includes an error and alternative tab_extract/dom_* tools to use instead.",
+    description: "Run a natural-language task on the current page of one specified browser tab using Page Agent. Page Agent is a single-page execution engine: it cannot navigate to another URL, continue after the target tab navigates, operate across tabs, or follow work into a newly opened tab. For navigation or cross-tab workflows, stop this call and use tab_* tools to select the new target tab, then start a separate operation. It injects the packaged Page Agent runtime into the tab with chrome.scripting and avoids page CSP restrictions on dynamic script tags. If injection is rejected, the page navigates, the tab is closed, or the page is unsupported, the result includes an error and alternative tab_extract/dom_* tools to use instead.",
     schema: {
       type: "object",
       properties: {
