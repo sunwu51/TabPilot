@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { executeCodeRuntime } from "./codeRuntime";
-import { getCodeRuntimeToolDefinitions } from "./definitions";
+import { getTools, getCodeRuntimeToolDefinitions } from "./definitions";
+import { API_TYPES } from "../core/config";
 import { getBuiltinToolOutputSchema } from "./outputExamples";
 
 describe("code runtime", () => {
@@ -12,6 +13,33 @@ describe("code runtime", () => {
     });
 
     expect(definitions.filter(tool => !getBuiltinToolOutputSchema(tool.name))).toEqual([]);
+  });
+
+  it("exposes Page Agent to exec discovery by default and hides it when disabled", async () => {
+    const enabled = await executeCodeRuntime({ code: "return await tools.listTools('page');" }, { invokeTool: vi.fn() });
+    const disabled = await executeCodeRuntime({ code: "return await tools.listTools('page');" }, {
+      invokeTool: vi.fn(),
+      pageAgentToolsEnabled: false
+    });
+
+    expect(enabled.value.map(tool => tool.name)).toContain("page_agent_execute");
+    expect(disabled.value.map(tool => tool.name)).not.toContain("page_agent_execute");
+  });
+
+  it("documents core tool schemas and discovery request and result examples for exec", () => {
+    const [exec] = getTools(API_TYPES.OPENAI_CHAT_COMPLETIONS, [], {
+      supportsImageInput: true,
+      imageToolsEnabled: true,
+      postdogToolsEnabled: true,
+      useCodeMode: true
+    }).filter(tool => tool.function.name === "exec").map(tool => tool.function);
+
+    expect(exec.description).toContain("tools.eval_js({ jsScript: string })");
+    expect(exec.description).toContain("do not guess argument names");
+    expect(exec.description).toContain("await tools.listTools('tabs')");
+    expect(exec.description).toContain("Array<{ source: 'builtin'|'mcp'");
+    expect(exec.description).toContain("await tools.describeTool('tab_open')");
+    expect(exec.description).toContain("inputSchema: object");
   });
 
   it("awaits built-in tools and returns an explicit value", async () => {

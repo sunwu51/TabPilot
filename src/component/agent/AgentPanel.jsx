@@ -63,7 +63,8 @@ import {
   saveAgentSkills,
   mergeBridgeToolDangerous,
   mergeAgentSkillsServerUrl,
-  mergeLoadedSkills
+  mergeLoadedSkills,
+  mergeSkillEnabled
 } from "../../api/agent/skills";
 import ChatMessageList from "./ChatMessageList";
 import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
@@ -203,6 +204,7 @@ export { buildRewindRestoredAttachments, buildImageEditRewindHint };
 
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
@@ -462,6 +464,7 @@ export default function AgentPanel() {
   const [agentSkills, setAgentSkills] = useState(EMPTY_AGENT_SKILLS);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillStationTools, setSkillStationTools] = useState([]);
+  const skillsRefreshInFlightRef = useRef(false);
   const [platformInfo, setPlatformInfo] = useState(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [llmConfigInfo, setLlmConfigInfo] = useState({
@@ -774,18 +777,59 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      const savedSkills = await loadAgentSkills();
-      setAgentSkills(savedSkills);
-      if (savedSkills.serverUrl) {
-        try {
-          setSkillStationTools(await loadSkillStationTools(savedSkills.serverUrl, savedSkills.bridgeToolSettings));
-        } catch (error) {
-          console.error("Failed to restore skill-bridge tools:", error);
+    let disposed = false;
+    async function refreshSkills({ showLoading = false } = {}) {
+      if (disposed || skillsRefreshInFlightRef.current) return;
+      skillsRefreshInFlightRef.current = true;
+      if (showLoading) setSkillsLoading(true);
+
+      let savedSkills = null;
+      try {
+        savedSkills = await loadAgentSkills();
+        if (disposed) return;
+        setAgentSkills(savedSkills);
+        if (!savedSkills.serverUrl) {
+          setSkillStationTools([]);
+          return;
+        }
+
+        const [loadedSkills, loadedTools] = await Promise.all([
+          loadSkillsIndexFromSkillStation(savedSkills.serverUrl),
+          loadSkillStationTools(savedSkills.serverUrl, savedSkills.bridgeToolSettings)
+        ]);
+        if (disposed) return;
+
+        const refreshed = await saveAgentSkills(mergeLoadedSkills(
+          savedSkills,
+          savedSkills.serverUrl,
+          loadedSkills
+        ));
+        if (disposed) return;
+        setAgentSkills(refreshed);
+        setSkillStationTools(loadedTools);
+      } catch (error) {
+        console.error("Failed to refresh skill-bridge data:", error);
+        if (!disposed && savedSkills?.serverUrl) {
+          const cleared = mergeLoadedSkills(savedSkills, savedSkills.serverUrl, []);
+          await saveAgentSkills(cleared);
+          setAgentSkills(cleared);
           setSkillStationTools([]);
         }
+      } finally {
+        skillsRefreshInFlightRef.current = false;
+        if (showLoading && !disposed) setSkillsLoading(false);
       }
-    })();
+    }
+
+    void refreshSkills({ showLoading: true });
+    const intervalId = setInterval(() => {
+      void refreshSkills();
+    }, SKILLS_REFRESH_INTERVAL_MS);
+
+    return () => {
+      disposed = true;
+      clearInterval(intervalId);
+    };
   }, []);
 
   useEffect(() => {
@@ -2512,6 +2556,7 @@ export default function AgentPanel() {
       `- For built-in tab groups, windows, page interaction, downloads, history, automation, scheduling, images, or Postdog capabilities, use exec and discover unfamiliar built-ins through tools.listDomains/listTools/describeTool.\n` +
       `- In exec code, never write unbounded loops such as while (true) or for (;;), and avoid recursion unless its termination is clearly bounded, because synchronous infinite execution cannot be interrupted.\n` +
       `- For page interaction, inspect the DOM before clicking, filling, styling, or locating an element. Use highlighting when it would help the user visually locate the element.\n` +
+      (config.pageAgentToolsEnabled !== false ? `- Choose page-operation tools by task shape: for single-step, precise, and locatable reading/clicking/filling, prefer tab_extract or dom_*; for a simple operation that is best expressed in JavaScript, use eval_js; for complex multi-step tasks on a page with unknown structure, prefer page_agent_execute. Page Agent is the fallback for complex page workflows, not the fallback for eval_js.\n` : "") +
       `- tab_list returns the currently open tabs with id, url, title, and capturedAt timing fields.\n` +
       `- group_list and group_get return tab group snapshots with their tabs and capturedAt timing fields.\n` +
       `- tab_get_active returns the active tab in the current extension/side-panel window with capturedAt timing fields.\n` +
@@ -2611,7 +2656,7 @@ export default function AgentPanel() {
 
   async function getLLMConfig() {
     await ensureSettingsMigrated();
-    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled, pageAgentToolsEnabled } = await chrome.storage.local.get({
       llmConfig: {
         activeLlmModelId: "",
         llmModels: [],
@@ -2625,7 +2670,8 @@ export default function AgentPanel() {
         imageModels: []
       },
       betaFeaturesEnabled: false,
-      postdogToolsEnabled: false
+      postdogToolsEnabled: false,
+      pageAgentToolsEnabled: true
     });
     const syncedConfig = syncActiveModelFields(llmConfig);
     setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
@@ -2640,7 +2686,8 @@ export default function AgentPanel() {
       imageApiProtocol: normalizeImageApiProtocol(syncedConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(syncedConfig),
       enableBetaFeatures: betaFeaturesEnabled === true,
-      postdogToolsEnabled: postdogToolsEnabled === true
+      postdogToolsEnabled: postdogToolsEnabled === true,
+      pageAgentToolsEnabled: pageAgentToolsEnabled !== false
     };
   }
 
@@ -2648,7 +2695,8 @@ export default function AgentPanel() {
     return {
       supportsImageInput: config.supportsImageInput === true,
       imageToolsEnabled: config.imageToolsEnabled === true,
-      postdogToolsEnabled: config.postdogToolsEnabled === true
+      postdogToolsEnabled: config.postdogToolsEnabled === true,
+      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false
     };
   }
 
@@ -2724,6 +2772,14 @@ export default function AgentPanel() {
         .catch((error) => {
           console.error("Failed to refresh skill-bridge tools:", error);
         });
+      return next;
+    });
+  }
+
+  function handleSkillEnabledChange(skillPath, enabled) {
+    setAgentSkills(prev => {
+      const next = mergeSkillEnabled(prev, skillPath, enabled);
+      void saveAgentSkills(next);
       return next;
     });
   }
@@ -3239,6 +3295,7 @@ export default function AgentPanel() {
                 supportsImageInput: config.supportsImageInput === true,
                 imageToolsEnabled: config.imageToolsEnabled === true,
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
+                pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
                 mcpTools: combinedMcpTools,
                 transformToolResult: ({ result: nestedResult }) => (
                   replaceBase64ImageDataUrlsWithRefs(
@@ -3339,6 +3396,7 @@ export default function AgentPanel() {
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
       postdogToolsEnabled: config.postdogToolsEnabled === true,
+      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
       imageToolsEnabled: config.imageToolsEnabled === true,
       useToolSelection: true,
       useCodeMode: true,
@@ -4788,6 +4846,7 @@ export default function AgentPanel() {
                   skillBridgeTools={skillStationTools}
                   onServerUrlChange={handleSkillsServerUrlChange}
                   onBridgeToolDangerousChange={handleBridgeToolDangerousChange}
+                  onSkillEnabledChange={handleSkillEnabledChange}
                   onLoad={handleLoadSkills}
                 />
                 <McpConfig onToolsChanged={setMcpTools} />

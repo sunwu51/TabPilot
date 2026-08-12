@@ -10,6 +10,7 @@ export default function SkillsConfig({
   skillBridgeTools,
   onServerUrlChange,
   onBridgeToolDangerousChange,
+  onSkillEnabledChange,
   onLoad
 }) {
   const rootRef = useLocalizedDom();
@@ -133,6 +134,14 @@ export default function SkillsConfig({
                 <div className="text-xs text-gray-400 mt-1 break-all">{skill.path}</div>
                 <div className="text-xs text-gray-500 mt-1 break-all whitespace-normal">
                   {skill.description || "无描述"}
+                </div>
+                <div className="mt-2">
+                  <Checkbox
+                    isSelected={skill.enabled !== false}
+                    onChange={(checked) => onSkillEnabledChange(skill.path, checked)}
+                  >
+                    <span className="text-xs text-gray-600">启用 skill</span>
+                  </Checkbox>
                 </div>
               </div>
             ))}

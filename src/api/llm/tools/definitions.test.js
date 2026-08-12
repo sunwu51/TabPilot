@@ -168,6 +168,11 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
   });
 
+  it("exposes Page Agent by default and hides it when explicitly disabled", () => {
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).toContain("page_agent_execute");
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES, { pageAgentToolsEnabled: false })).not.toContain("page_agent_execute");
+  });
+
   it("exposes Postdog tools for saved API request workflows when enabled", () => {
     const names = namesFor(API_TYPES.OPENAI_RESPONSES, { postdogToolsEnabled: true });
 
@@ -179,13 +184,15 @@ describe("llm tool definitions", () => {
     expect(names).not.toContain("postdog_export");
   });
 
-  it("describes eval_js as usable for fetch/xhr proxy debugging", () => {
+  it("describes eval_js as a CSP-resistant main-world Sval runtime", () => {
     const evalJs = getTools(API_TYPES.OPENAI_RESPONSES)
       .find(tool => tool.name === "eval_js");
 
-    expect(evalJs.description).toContain("fetch");
+    expect(evalJs.description).toContain("Sval");
+    expect(evalJs.description).toContain("sandBox:false");
+    expect(evalJs.description).toContain("main JavaScript world");
+    expect(evalJs.description).toContain("chrome.scripting");
     expect(evalJs.description).toContain("XMLHttpRequest");
-    expect(evalJs.description).toContain("network requests and responses");
   });
 
   it("describes image_model_id as a configured image profile selector", () => {

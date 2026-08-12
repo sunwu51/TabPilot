@@ -399,14 +399,14 @@ export default function McpConfig({ onToolsChanged }) {
             {expandedServers[s.id] && s.tools?.length > 0 && (
               <div className="mt-2 border-t border-gray-100 pt-2 flex flex-col gap-2 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 whitespace-nowrap">功能描述</span>
+                  <span className="text-xs text-gray-500 whitespace-nowrap">{t("功能描述")}</span>
                   <Input
-                    aria-label="功能描述"
+                    aria-label={t("功能描述")}
                     labelClassName="!text-xs !text-gray-500"
                     inputClassName="!min-h-8"
                     defaultValue={s.description || ""}
                     onChange={(value) => handleDescriptionChange(s, value)}
-                    placeholder="例如：GitHub repositories, issues, and pull requests"
+                    placeholder={t("例如：GitHub repositories, issues, and pull requests")}
                   />
                 </div>
                 <div
@@ -519,7 +519,7 @@ export default function McpConfig({ onToolsChanged }) {
             placeholder="abcdefghijklmnopabcdefghijklmnop"
           />
         )}
-        <Input label="功能描述" labelClassName="!text-xs !text-gray-500" inputClassName="!min-h-8" defaultValue={newDescription} onChange={setNewDescription} placeholder="可选，描述此 MCP 的主要功能" />
+        <Input label={t("功能描述")} labelClassName="!text-xs !text-gray-500" inputClassName="!min-h-8" defaultValue={newDescription} onChange={setNewDescription} placeholder={t("可选，描述此 MCP 的主要功能")} />
         <div className="mt-2 mb-1 text-xs leading-5 text-amber-700">
           {t("mcpOauthHint")}
         </div>

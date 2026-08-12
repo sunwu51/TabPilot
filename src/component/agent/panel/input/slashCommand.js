@@ -39,6 +39,7 @@ export function filterSlashCommands(commands, skills, selectedSkills, input) {
       return command.id.includes(query) || command.name.toLowerCase().includes(query) || command.title.toLowerCase().includes(query);
     });
   const skillCommands = (skills || [])
+    .filter(skill => skill.enabled !== false)
     .map(serializeMentionSkill)
     .filter(skill => skill.path && !selectedSkillPaths.has(skill.path))
     .filter(skill => {
