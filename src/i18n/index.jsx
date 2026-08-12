@@ -249,6 +249,8 @@ const UI_TEXT = {
   "工具": "Tools",
   "惰性加载工具": "Lazy load tools",
   "功能描述": "Capability description",
+  "例如：GitHub repositories, issues, and pull requests": "Example: GitHub repositories, issues, and pull requests",
+  "可选，描述此 MCP 的主要功能": "Optional: describe this MCP's main capabilities",
   "危险工具": "Dangerous tool",
   "启用": "Enabled",
   "连接": "Connect",
