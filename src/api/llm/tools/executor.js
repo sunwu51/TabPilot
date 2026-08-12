@@ -62,7 +62,7 @@ import {
 } from "./builtins/stash";
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
-import { _execPageAgent } from "./builtins/pageAgent";
+import { _execPageAgent, initializePageAgent } from "./builtins/pageAgent";
 import {
   _execPostdogGetHistoryRun,
   _execPostdogGetRequest,
@@ -130,10 +130,11 @@ export async function executeTool(name, args, mcpRegistry = []) {
 
 export function getBuiltinToolTimeoutSeconds(name) {
   if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
-  if (name === "page_agent_execute") return 600;
-  if (name === "image_gen" || name === "image_edit") return 600;
+  if (name === "page_agent_execute" || name === "image_gen" || name === "image_edit") return 900;
   return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
 }
+
+export { initializePageAgent };
 
 const BUILTIN_TOOL_HANDLERS = {
   tab_list: (args) => _execTabList(args),

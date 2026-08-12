@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TabPilot CSP Injection Test</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 40px; max-width: 760px; color: #17202a; }
+      h1 { margin-bottom: 8px; }
+      .status { padding: 12px; border: 1px solid #bac4ce; margin: 18px 0; }
+      button { padding: 8px 12px; margin-right: 8px; }
+      #result { font-family: ui-monospace, monospace; white-space: pre-wrap; }
+    </style>
+    <script src="/csp-test-page.js" defer></script>
+  </head>
+  <body>
+    <h1>TabPilot CSP Injection Test</h1>
+    <p>This response blocks inline scripts, <code>eval()</code>, and <code>Function()</code>. The page script below is static and same-origin.</p>
+    <div class="status" id="csp-status">Checking CSP probes...</div>
+    <button id="increment-button" type="button">Increment counter</button>
+    <button id="reset-button" type="button">Reset counter</button>
+    <p>Counter: <strong id="counter">0</strong></p>
+    <div class="status" id="result">Ready for eval_js or Page Agent.</div>
+  </body>
+</html>

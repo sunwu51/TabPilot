@@ -1,12 +1,50 @@
 /* global chrome */
-import {
-  DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE,
-  resolveActiveLlmConfig
-} from "../../core/modelProfiles";
+import { resolveActiveLlmConfig } from "../../core/modelProfiles";
 import { API_TYPES } from "../../core/config";
+import { resolveLlmRequestUrl } from "../../core/endpoint";
 import { _resolveControllableTab } from "./_shared";
 
-const PAGE_AGENT_CDN_URL = "https://cdn.jsdelivr.net/npm/page-agent@1.12.2/dist/iife/page-agent.demo.js?autoInit=false";
+const PAGE_AGENT_RUNTIME_FILE = "vendor/page-agent.demo.js";
+
+export async function initializePageAgent({ tabId } = {}) {
+  const resolved = await _resolveControllableTab(tabId, "initialize Page Agent on");
+  if (resolved.error) return { error: resolved.error, code: "PAGE_AGENT_TAB_UNAVAILABLE" };
+
+  try {
+    await ensurePageAgentRuntime(resolved.tab.id);
+    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const activeConfig = resolveActiveLlmConfig(llmConfig);
+    const baseUrl = normalizePageAgentBaseUrl(activeConfig.apiType, activeConfig.baseUrl);
+    if (!baseUrl || !activeConfig.model) {
+      return { error: "No usable model is configured for Page Agent", code: "PAGE_AGENT_NO_CHAT_MODEL" };
+    }
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: resolved.tab.id },
+      world: "MAIN",
+      func: initializePageAgentPanel,
+      args: [{
+        model: activeConfig.model,
+        baseURL: baseUrl,
+        language: "zh-CN"
+      }]
+    });
+    return { success: true, tabId: resolved.tab.id, url: resolved.tab.url || "", ...(result?.result || {}) };
+  } catch (error) {
+    return {
+      error: `Page Agent 无法注入: ${error?.message || String(error)}`,
+      code: "PAGE_AGENT_INJECTION_FAILED"
+    };
+  }
+}
+
+function initializePageAgentPanel(config) {
+  if (!window.PageAgent) throw new Error("Page Agent runtime was not injected");
+  if (!window.__tabManagerPageAgent || window.__tabManagerPageAgent.disposed) {
+    window.__tabManagerPageAgent = new window.PageAgent(config);
+  }
+  window.__tabManagerPageAgent.panel?.show?.();
+  return { panelVisible: true };
+}
 
 export async function _execPageAgent({ tabId, instruction }) {
   const resolved = await _resolveControllableTab(tabId, "run Page Agent on");
@@ -28,31 +66,33 @@ export async function _execPageAgent({ tabId, instruction }) {
 
   const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
   const activeConfig = resolveActiveLlmConfig(llmConfig);
-  const profile = activeConfig.apiType === API_TYPES.OPENAI_CHAT_COMPLETIONS
-    ? activeConfig
-    : DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE;
-  const baseUrl = normalizeChatBaseUrl(profile.baseUrl);
+  const baseUrl = normalizePageAgentBaseUrl(activeConfig.apiType, activeConfig.baseUrl);
 
-  if (!baseUrl || !profile.model) {
+  if (!baseUrl || !activeConfig.model) {
     return {
-      error: "No usable Chat Completions model is configured for Page Agent",
+      error: "No usable model is configured for Page Agent",
       code: "PAGE_AGENT_NO_CHAT_MODEL",
-      hint: "Use the existing tab_extract/dom_* tools, or configure a Chat Completions model."
+      hint: "Use the existing tab_extract/dom_* tools, or configure an LLM model."
     };
   }
 
+  const bridgeId = crypto.randomUUID();
   try {
+    await chrome.tabs.sendMessage(resolved.tab.id, {
+      type: "page_agent_proxy_enable",
+      bridgeId
+    });
+    await ensurePageAgentRuntime(resolved.tab.id);
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: resolved.tab.id },
       world: "MAIN",
       func: executePageAgentInPage,
       args: [{
         instruction: task,
-        cdnUrl: PAGE_AGENT_CDN_URL,
+        bridgeId,
         config: {
-          model: profile.model,
+          model: activeConfig.model,
           baseURL: baseUrl,
-          apiKey: profile.apiKey || "",
           language: "zh-CN"
         }
       }]
@@ -67,31 +107,84 @@ export async function _execPageAgent({ tabId, instruction }) {
     return {
       error: `Page Agent 无法注入或执行: ${error?.message || String(error)}`,
       code: "PAGE_AGENT_INJECTION_FAILED",
-      hint: "该页面可能禁止脚本注入、处于 Chrome 特殊页面，或 CDN 无法加载。请改用 tab_extract/dom_query/dom_click/dom_set_value/eval_js 等工具。"
+      hint: "该页面可能禁止脚本注入或处于 Chrome 特殊页面。请改用 tab_extract/dom_query/dom_click/dom_set_value/eval_js 等工具。"
     };
+  } finally {
+    try {
+      await chrome.tabs.sendMessage(resolved.tab.id, { type: "page_agent_proxy_disable", bridgeId });
+    } catch {
+      // The page may have navigated or been closed during Page Agent execution.
+    }
   }
 }
 
-function normalizeChatBaseUrl(value) {
-  return String(value || "").trim().replace(/\/chat\/completions\/?$/i, "");
+async function ensurePageAgentRuntime(tabId) {
+  const [{ result: pageAgentLoaded }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => typeof window.PageAgent === "function"
+  });
+  if (pageAgentLoaded) return;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    files: [PAGE_AGENT_RUNTIME_FILE]
+  });
 }
 
-async function executePageAgentInPage({ instruction, cdnUrl, config }) {
+function normalizePageAgentBaseUrl(apiType, value) {
+  return resolveLlmRequestUrl(apiType, value)
+    .replace(/\/(chat\/completions|responses|messages)\/?$/i, "");
+}
+
+async function executePageAgentInPage({ instruction, bridgeId, config }) {
+  function createProxyFetch() {
+    return async (url, init = {}) => new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      const responseType = "tabpilot_page_agent_proxy:response";
+      const timeoutId = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        reject(new Error("Timed out waiting for the extension Page Agent request proxy"));
+      }, 60000);
+      function onMessage(event) {
+        const payload = event.data;
+        if (event.source !== window || payload?.type !== responseType || payload.bridgeId !== bridgeId || payload.requestId !== requestId) return;
+        clearTimeout(timeoutId);
+        window.removeEventListener("message", onMessage);
+        if (!payload.success) {
+          reject(new Error(payload.error || "Extension Page Agent request proxy failed"));
+          return;
+        }
+        resolve(new Response(payload.body || "", {
+          status: payload.status,
+          statusText: payload.statusText,
+          headers: payload.headers || {}
+        }));
+      }
+      window.addEventListener("message", onMessage);
+      window.postMessage({
+        type: "tabpilot_page_agent_proxy:request",
+        bridgeId,
+        requestId,
+        request: {
+          url: String(url),
+          method: String(init.method || "GET"),
+          body: typeof init.body === "string" ? init.body : ""
+        }
+      }, "*");
+    });
+  }
+
   try {
     if (!window.PageAgent) {
-      await new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.src = cdnUrl;
-        script.crossOrigin = "anonymous";
-        script.onload = resolve;
-        script.onerror = () => reject(new Error("Page Agent CDN 加载失败"));
-        (document.head || document.documentElement).appendChild(script);
-      });
+      throw new Error("Page Agent runtime was not injected");
     }
 
-    if (!window.__tabManagerPageAgent || window.__tabManagerPageAgent.disposed) {
-      window.__tabManagerPageAgent = new window.PageAgent(config);
-    }
+    window.__tabManagerPageAgent?.dispose?.();
+    window.__tabManagerPageAgent = new window.PageAgent({
+      ...config,
+      customFetch: createProxyFetch()
+    });
 
     const result = await window.__tabManagerPageAgent.execute(instruction);
     return {

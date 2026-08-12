@@ -21,6 +21,26 @@ const HIGHLIGHT_OVERLAY_ID = "__tab_manager_highlight_overlay__";
 const REUSE_PROMPT_STYLE_ID = "__tab_manager_reuse_prompt_style__";
 const REUSE_PROMPT_ID = "__tab_manager_reuse_prompt__";
 let highlightTimerId = null;
+const pageAgentProxyBridges = new Set();
+
+window.addEventListener("message", event => {
+  const payload = event.data;
+  if (event.source !== window || payload?.type !== "tabpilot_page_agent_proxy:request") return;
+  if (!pageAgentProxyBridges.has(payload.bridgeId)) return;
+  chrome.runtime.sendMessage({
+    type: "page_agent_fetch",
+    bridgeId: payload.bridgeId,
+    requestId: payload.requestId,
+    request: payload.request
+  }, response => {
+    window.postMessage({
+      type: "tabpilot_page_agent_proxy:response",
+      bridgeId: payload.bridgeId,
+      requestId: payload.requestId,
+      ...(response || { success: false, error: chrome.runtime.lastError?.message || "Empty extension response" })
+    }, "*");
+  });
+});
 
 function truncateText(text, maxLength = TEXT_LIMIT) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
@@ -615,6 +635,17 @@ function handleDomHighlight(msg, sendResponse) {
  * Responds to messages for page extraction, scrolling, and structured DOM actions.
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "page_agent_proxy_enable") {
+    pageAgentProxyBridges.add(msg.bridgeId);
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (msg.type === "page_agent_proxy_disable") {
+    pageAgentProxyBridges.delete(msg.bridgeId);
+    sendResponse({ success: true });
+    return false;
+  }
   if (msg.type === "tab_extract_content") {
     sendResponse({
       url: document.URL,

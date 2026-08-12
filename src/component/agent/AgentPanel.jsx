@@ -2556,6 +2556,7 @@ export default function AgentPanel() {
       `- For built-in tab groups, windows, page interaction, downloads, history, automation, scheduling, images, or Postdog capabilities, use exec and discover unfamiliar built-ins through tools.listDomains/listTools/describeTool.\n` +
       `- In exec code, never write unbounded loops such as while (true) or for (;;), and avoid recursion unless its termination is clearly bounded, because synchronous infinite execution cannot be interrupted.\n` +
       `- For page interaction, inspect the DOM before clicking, filling, styling, or locating an element. Use highlighting when it would help the user visually locate the element.\n` +
+      (config.pageAgentToolsEnabled !== false ? `- Choose page-operation tools by task shape: for single-step, precise, and locatable reading/clicking/filling, prefer tab_extract or dom_*; for a simple operation that is best expressed in JavaScript, use eval_js; for complex multi-step tasks on a page with unknown structure, prefer page_agent_execute. Page Agent is the fallback for complex page workflows, not the fallback for eval_js.\n` : "") +
       `- tab_list returns the currently open tabs with id, url, title, and capturedAt timing fields.\n` +
       `- group_list and group_get return tab group snapshots with their tabs and capturedAt timing fields.\n` +
       `- tab_get_active returns the active tab in the current extension/side-panel window with capturedAt timing fields.\n` +
@@ -2655,7 +2656,7 @@ export default function AgentPanel() {
 
   async function getLLMConfig() {
     await ensureSettingsMigrated();
-    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled, pageAgentToolsEnabled } = await chrome.storage.local.get({
       llmConfig: {
         activeLlmModelId: "",
         llmModels: [],
@@ -2669,7 +2670,8 @@ export default function AgentPanel() {
         imageModels: []
       },
       betaFeaturesEnabled: false,
-      postdogToolsEnabled: false
+      postdogToolsEnabled: false,
+      pageAgentToolsEnabled: true
     });
     const syncedConfig = syncActiveModelFields(llmConfig);
     setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
@@ -2684,7 +2686,8 @@ export default function AgentPanel() {
       imageApiProtocol: normalizeImageApiProtocol(syncedConfig?.imageApiProtocol),
       imageToolsEnabled: isImageApiConfigured(syncedConfig),
       enableBetaFeatures: betaFeaturesEnabled === true,
-      postdogToolsEnabled: postdogToolsEnabled === true
+      postdogToolsEnabled: postdogToolsEnabled === true,
+      pageAgentToolsEnabled: pageAgentToolsEnabled !== false
     };
   }
 
@@ -2692,7 +2695,8 @@ export default function AgentPanel() {
     return {
       supportsImageInput: config.supportsImageInput === true,
       imageToolsEnabled: config.imageToolsEnabled === true,
-      postdogToolsEnabled: config.postdogToolsEnabled === true
+      postdogToolsEnabled: config.postdogToolsEnabled === true,
+      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false
     };
   }
 
@@ -3291,6 +3295,7 @@ export default function AgentPanel() {
                 supportsImageInput: config.supportsImageInput === true,
                 imageToolsEnabled: config.imageToolsEnabled === true,
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
+                pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
                 mcpTools: combinedMcpTools,
                 transformToolResult: ({ result: nestedResult }) => (
                   replaceBase64ImageDataUrlsWithRefs(
@@ -3391,6 +3396,7 @@ export default function AgentPanel() {
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
       postdogToolsEnabled: config.postdogToolsEnabled === true,
+      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
       imageToolsEnabled: config.imageToolsEnabled === true,
       useToolSelection: true,
       useCodeMode: true,

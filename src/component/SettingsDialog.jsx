@@ -21,6 +21,7 @@ import {
   normalizeModelContextLimitTokens,
   normalizeStoredModelConfig,
   openHelloWorldPlayground,
+  initializePageAgent,
   resolveImageApiRequestUrl
 } from "../api/llm";
 import {
@@ -68,7 +69,8 @@ const DEFAULT_SETTINGS = {
   hideCopyButton: false,
   ttsVoiceName: "",
   dangerousToolSkipApproval: false,
-  postdogToolsEnabled: false
+  postdogToolsEnabled: false,
+  pageAgentToolsEnabled: true
 };
 
 /**
@@ -134,6 +136,7 @@ function SettingsDialogBody() {
   const [ttsVoices, setTtsVoices] = useState([]);
   const [dangerousToolSkipApproval, setDangerousToolSkipApproval] = useState(DEFAULT_SETTINGS.dangerousToolSkipApproval);
   const [postdogToolsEnabled, setPostdogToolsEnabled] = useState(DEFAULT_SETTINGS.postdogToolsEnabled);
+  const [pageAgentToolsEnabled, setPageAgentToolsEnabled] = useState(DEFAULT_SETTINGS.pageAgentToolsEnabled);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [supabaseUrl, setSupabaseUrl] = useState(SUPABASE_DEFAULT_CONFIG.url);
@@ -258,6 +261,7 @@ function SettingsDialogBody() {
       setTtsVoiceName(typeof res.ttsVoiceName === "string" ? res.ttsVoiceName : "");
       setDangerousToolSkipApproval(!!res.dangerousToolSkipApproval);
       setPostdogToolsEnabled(!!res.postdogToolsEnabled);
+      setPageAgentToolsEnabled(res.pageAgentToolsEnabled !== false);
       setWsBridgeStatus({
         ...DEFAULT_WS_BRIDGE_STATUS,
         ...(res[WS_BRIDGE_STATUS_STORAGE_KEY] || {})
@@ -320,7 +324,8 @@ function SettingsDialogBody() {
         hideCopyButton,
         ttsVoiceName,
         dangerousToolSkipApproval,
-        postdogToolsEnabled
+        postdogToolsEnabled,
+        pageAgentToolsEnabled
       });
       await saveSupabaseConfig(currentSupabaseConfig());
       toast.success(t("settingsSaved"));
@@ -619,6 +624,17 @@ function SettingsDialogBody() {
     } catch (error) {
       toast.error(error?.message || "打开 Postdog 失败");
     }
+  }
+
+  async function handleInitializePageAgent() {
+    const toastId = toast.loading("正在注入 Page Agent...");
+    const result = await initializePageAgent();
+    toast.dismiss(toastId);
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Page Agent 已注入当前页面");
   }
 
   async function handleExportSettings() {
@@ -1044,6 +1060,11 @@ function SettingsDialogBody() {
               <span className="text-sm">开启 Postdog 工具</span>
             </Checkbox>
           </div>
+          <div className="mt-2">
+            <Checkbox isSelected={pageAgentToolsEnabled} onChange={setPageAgentToolsEnabled}>
+              <span className="text-sm">开启 Page Agent 工具</span>
+            </Checkbox>
+          </div>
         </div>
 
         <div className="settings-card">
@@ -1125,6 +1146,12 @@ function SettingsDialogBody() {
               onPress={handleOpenPostdog}
             >
               postdog
+            </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleInitializePageAgent}
+            >
+              page agent
             </Button>
           </div>
           <hr className="settings-quick-entry-divider" />

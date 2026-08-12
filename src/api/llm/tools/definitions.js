@@ -73,6 +73,27 @@ const CODE_MODE_TAB_OUTPUT_GUIDE =
   "Any tool may instead return `{ error: string, hint?: string }`, so check `result.error` before reading success fields. " +
   "Example: `const state = await tools.tab_list({}); if (state.error) return state; return state.tabs.reduce((sum, tab) => sum + tab.id, 0);`. ";
 
+const CODE_MODE_CORE_TOOL_SCHEMAS =
+  "Core tools and exact input schemas: " +
+  "`await tools.tab_list({ maxSize?: number, briefUrl?: boolean })`; " +
+  "`await tools.tab_get_active({})`; " +
+  "`await tools.tab_extract({ tabId: number })`; " +
+  "`await tools.tab_open({ url: string, active?: boolean })`; " +
+  "`await tools.tab_focus({ tabId: number })`; " +
+  "`await tools.dom_query({ tabId?: number, selector?: string, text?: string, matchExact?: boolean, index?: number, maxResults?: number })`; " +
+  "`await tools.dom_click({ tabId?: number, selector?: string, text?: string, matchExact?: boolean, index?: number })`; " +
+  "`await tools.dom_set_value({ tabId?: number, selector?: string, text?: string, matchExact?: boolean, index?: number, value: string })`; " +
+  "`await tools.eval_js({ jsScript: string })`. ";
+
+const CODE_MODE_DISCOVERY_EXAMPLES =
+  "Before calling any other tool, when its input or result schema is unknown, do not guess argument names: call `describeTool` or `listTools` first. " +
+  "`listTools` request examples: `await tools.listTools('tabs')` or `await tools.listTools({ source: 'builtin', domain: 'tabs' })`; " +
+  "its result is `Array<{ source: 'builtin'|'mcp', domain: string, name: string, summary: string, input: Record<string, { type: string, required: boolean }>, outputSchema: object|null, call: string }>`; " +
+  "example: `[{ source: 'builtin', domain: 'tabs', name: 'tab_open', input: { url: { type: 'string', required: true }, active: { type: 'boolean', required: false } }, outputSchema: { example: { success: true, tabId: 101, url: 'https://example.com/' } }, call: 'tools.tab_open(args)' }]`. " +
+  "`describeTool` request examples: `await tools.describeTool('tab_open')`, `await tools.describeTool('tabs', 'tab_open')`, or `await tools.describeTool({ source: 'builtin', domain: 'tabs', name: 'tab_open' })`; " +
+  "its result is `null` or `{ source: 'builtin'|'mcp', domain: string, name: string, description: string, inputSchema: object, outputSchema: object|null, call: string }`; " +
+  "example: `{ source: 'builtin', domain: 'tabs', name: 'tab_open', inputSchema: { type: 'object', properties: { url: { type: 'string' }, active: { type: 'boolean' } }, required: ['url'] }, outputSchema: { example: { success: true, tabId: 101, url: 'https://example.com/' } }, call: 'tools.tab_open(args)' }`. ";
+
 const PLAN_TOOLS = [
   {
     name: "plan_create_for_session",
@@ -162,9 +183,10 @@ const CODE_MODE_TOOLS = [
     description:
       "Run JavaScript in the browser assistant runtime. The code runs inside an async function, so use await and return the final value explicitly. " +
       "Built-in tools are asynchronous functions on the global `tools` object, for example `const state = await tools.tab_list({}); return state;`. " +
-      "Core tools include tab_list, tab_get_active, tab_extract, tab_open, tab_focus, dom_query, dom_click, dom_set_value, and eval_js. " +
+      CODE_MODE_CORE_TOOL_SCHEMAS +
       CODE_MODE_TAB_OUTPUT_GUIDE +
       "Use `await tools.listDomains()` to discover built-in and MCP domains, `await tools.listTools(domain)` to list a domain, and `await tools.describeTool(domain, name)` for full schemas. Results include `source`, `domain`, and an exact `call` example. If an MCP server and built-in domain share a name, pass `{ source: 'mcp', domain }` or `{ source: 'builtin', domain }` to disambiguate. " +
+      CODE_MODE_DISCOVERY_EXAMPLES +
       "Built-in tools are called as `await tools.tool_name(args)`; MCP tools are normally called as `await tools.mcp.server_name.tool_name(args)`. Use bracket notation only when an MCP tool name is not a valid JavaScript identifier. Treat a non-null MCP outputSchema as server-declared; when it is null, inspect the actual result instead of guessing fields. " +
       "Image-producing tools return local placeholders such as `|deRef:img_1|` instead of base64 data URLs; pass the placeholder unchanged to later image tools, or return it so the host can display the image. " +
       "Use `await sleep(milliseconds)` for a delay inside the script. All tool functions return Promises. console.log output is diagnostic; only an explicit return value is the script result. " +
@@ -204,6 +226,10 @@ export function isImageToolName(toolName) {
 
 export function isPostdogToolName(toolName) {
   return String(toolName || "").trim().startsWith("postdog_");
+}
+
+export function isPageAgentToolName(toolName) {
+  return String(toolName || "").trim() === "page_agent_execute";
 }
 
 // ==================== Tool Definitions ====================
@@ -271,7 +297,7 @@ export const TOOLS = [
   },
   {
     name: "page_agent_execute",
-    description: "Run a natural-language task on a specified web page using Page Agent. It injects the Page Agent CDN into the tab and reuses the page instance. If injection is rejected or the page is unsupported, the result includes an error and alternative tab_extract/dom_* tools to use instead.",
+    description: "Run a natural-language task on a specified web page using Page Agent. It injects the packaged Page Agent runtime into the tab with chrome.scripting and reuses the page instance, avoiding page CSP restrictions on dynamic script tags. If injection is rejected or the page is unsupported, the result includes an error and alternative tab_extract/dom_* tools to use instead.",
     schema: {
       type: "object",
       properties: {
@@ -384,11 +410,11 @@ export const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page in the page's main JavaScript context. Use only when structured DOM tools are insufficient. This can also be used to temporarily proxy or monkey-patch page APIs such as fetch and XMLHttpRequest so you can observe network requests and responses while debugging. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
+    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page through a Sval interpreter with sandBox:false in the page's main JavaScript world. The packaged interpreter is injected with chrome.scripting when needed, so page CSP cannot block loading or evaluation. Use only when structured DOM tools are insufficient. It can access page-owned JavaScript variables and page-world APIs such as fetch and XMLHttpRequest. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
     schema: {
       type: "object",
       properties: {
-        jsScript: { type: "string", description: "JavaScript source code to execute in the page's main world. Use `return ...` if you want a result value back." }
+        jsScript: { type: "string", description: "JavaScript source code to execute through Sval with sandBox:false in the page's main world. Use `return ...` if you want a result value back." }
       },
       required: ["jsScript"]
     }
@@ -1131,10 +1157,11 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.enableBetaFeatures=true] - Whether to enable beta-only provider behavior.
  * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
  * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
+ * @param {boolean} [options.pageAgentToolsEnabled=true] - Whether Page Agent should be exposed.
  * @param {boolean} [options.useCodeMode=false] - Expose exec/wait instead of individual built-in tools.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, useToolSelection = false, useCodeMode = false, activeToolNames = [] } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, pageAgentToolsEnabled = true, useToolSelection = false, useCodeMode = false, activeToolNames = [] } = {}) {
   void enableBetaFeatures;
   const activeNames = new Set(Array.isArray(activeToolNames) ? activeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
   // Convert MCP tools to our internal format
@@ -1149,7 +1176,7 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 
   const builtInTools = includeBuiltins
     ? (useCodeMode ? CODE_MODE_TOOLS : TOOLS).filter(tool => {
-      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled })) return false;
+      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled })) return false;
       if (!useCodeMode && useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
       return true;
     })
@@ -1222,10 +1249,11 @@ export function getCodeRuntimeToolDefinitions(options = {}) {
     .filter(tool => isBuiltinToolAvailable(tool, options));
 }
 
-function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled }) {
+function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled }) {
   if (!supportsImageInput && tool.name === "tab_screenshot") return false;
   if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
   if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
+  if (pageAgentToolsEnabled === false && isPageAgentToolName(tool.name)) return false;
   return true;
 }
 

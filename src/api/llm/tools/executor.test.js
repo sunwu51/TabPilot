@@ -78,9 +78,10 @@ describe("built-in tool execution", () => {
     );
   });
 
-  it("uses a longer timeout for image tools", () => {
-    expect(getBuiltinToolTimeoutSeconds("image_gen")).toBe(600);
-    expect(getBuiltinToolTimeoutSeconds("image_edit")).toBe(600);
+  it("uses a longer timeout for image and Page Agent tools", () => {
+    expect(getBuiltinToolTimeoutSeconds("image_gen")).toBe(900);
+    expect(getBuiltinToolTimeoutSeconds("image_edit")).toBe(900);
+    expect(getBuiltinToolTimeoutSeconds("page_agent_execute")).toBe(900);
     expect(getBuiltinToolTimeoutSeconds("tab_list")).toBe(10);
   });
 
