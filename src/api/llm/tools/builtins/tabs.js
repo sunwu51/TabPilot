@@ -224,6 +224,38 @@ export async function _execTabFocus({ tabId }) {
     ..._buildLastAccessed(tab.lastAccessed)
   };
 }
+
+async function _execTabNavigation(tabId, action) {
+  const resolved = await _resolveControllableTab(tabId, "navigate");
+  if (resolved.error) return { error: resolved.error };
+  if (action === "reload") await chrome.tabs.reload(resolved.tab.id);
+  else if (action === "back") await chrome.tabs.goBack(resolved.tab.id);
+  else await chrome.tabs.goForward(resolved.tab.id);
+  return { success: true, action, tabId: resolved.tab.id, windowId: resolved.tab.windowId, previousUrl: resolved.tab.url };
+}
+
+export async function _execTabReload({ tabId }) { return _execTabNavigation(tabId, "reload"); }
+export async function _execTabBack({ tabId }) { return _execTabNavigation(tabId, "back"); }
+export async function _execTabForward({ tabId }) { return _execTabNavigation(tabId, "forward"); }
+
+export async function _execTabWait({ tabId, url, match = "contains", timeoutMs = 5000, pollIntervalMs = 100 }) {
+  const resolved = await _resolveControllableTab(tabId, "wait for");
+  if (resolved.error) return { error: resolved.error };
+  if (!url) return { error: "Please provide a URL pattern" };
+  const limit = Math.min(10000, Math.max(0, Number(timeoutMs) || 5000));
+  const interval = Math.min(1000, Math.max(50, Number(pollIntervalMs) || 100));
+  const startedAt = Date.now();
+  const deadline = startedAt + limit;
+  let currentUrl = resolved.tab.url || resolved.tab.pendingUrl || "";
+  while (Date.now() <= deadline) {
+    const tab = await chrome.tabs.get(resolved.tab.id);
+    currentUrl = tab.url || tab.pendingUrl || "";
+    const matches = match === "exact" ? currentUrl === url : currentUrl.includes(url);
+    if (matches) return { success: true, action: "wait_url", match, url: currentUrl, elapsedMs: Date.now() - startedAt, tabId: tab.id, windowId: tab.windowId };
+    await _sleepMs(interval);
+  }
+  return { error: `Timed out waiting for URL: ${url}`, match, timeoutMs: limit, url: currentUrl };
+}
 export async function _execTabClose({ tabIds }) {
   const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
   // Collect tab titles before closing

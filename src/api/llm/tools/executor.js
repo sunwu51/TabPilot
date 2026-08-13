@@ -15,6 +15,10 @@ import {
   _execTabScroll,
   _execTabOpen,
   _execTabFocus,
+  _execTabReload,
+  _execTabBack,
+  _execTabForward,
+  _execTabWait,
   _execTabClose,
   _execTabGroup,
   _execTabGetActive,
@@ -22,9 +26,18 @@ import {
   captureFullPageScreenshotToTab
 } from "./builtins/tabs";
 import {
+  _execTabSnapshot,
   _execDomQuery,
   _execDomClick,
+  _execDomDoubleClick,
+  _execDomRightClick,
+  _execDomCheck,
+  _execDomScrollIntoView,
+  _execDomWait,
+  _execDomHover,
+  _execDomFocus,
   _execDomSetValue,
+  _execDomSelectOption,
   _execDomStyle,
   _execDomGetHtml,
   _execDomHighlight
@@ -62,7 +75,7 @@ import {
 } from "./builtins/stash";
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
-import { _execPageAgent, initializePageAgent } from "./builtins/pageAgent";
+import { initializePageAgent } from "./builtins/pageAgent";
 import {
   _execPostdogGetHistoryRun,
   _execPostdogGetRequest,
@@ -130,7 +143,8 @@ export async function executeTool(name, args, mcpRegistry = []) {
 
 export function getBuiltinToolTimeoutSeconds(name) {
   if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
-  if (name === "page_agent_execute" || name === "image_gen" || name === "image_edit") return 900;
+  if (name === "image_gen" || name === "image_edit") return 900;
+  if (name === "dom_wait" || name === "tab_wait") return 12;
   return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
 }
 
@@ -140,17 +154,29 @@ const BUILTIN_TOOL_HANDLERS = {
   tab_list: (args) => _execTabList(args),
   tab_extract: (args) => _execTabExtract(args),
   tab_scroll: (args) => _execTabScroll(args),
+  tab_snapshot: (args) => _execTabSnapshot(args),
   tab_open: (args) => _execTabOpen(args),
   tab_focus: (args) => _execTabFocus(args),
+  tab_reload: (args) => _execTabReload(args),
+  tab_back: (args) => _execTabBack(args),
+  tab_forward: (args) => _execTabForward(args),
+  tab_wait: (args) => _execTabWait(args),
   tab_close: (args) => _execTabClose(args),
   tab_group: (args) => _execTabGroup(args),
   tab_get_active: () => _execTabGetActive(),
   tab_screenshot: (args) => _execTabScreenshot(args),
-  page_agent_execute: (args) => _execPageAgent(args),
 
   dom_query: (args) => _execDomQuery(args),
   dom_click: (args) => _execDomClick(args),
+  dom_double_click: (args) => _execDomDoubleClick(args),
+  dom_right_click: (args) => _execDomRightClick(args),
+  dom_check: (args) => _execDomCheck(args),
+  dom_scroll_into_view: (args) => _execDomScrollIntoView(args),
+  dom_wait: (args) => _execDomWait(args),
+  dom_hover: (args) => _execDomHover(args),
+  dom_focus: (args) => _execDomFocus(args),
   dom_set_value: (args) => _execDomSetValue(args),
+  dom_select_option: (args) => _execDomSelectOption(args),
   dom_style: (args) => _execDomStyle(args),
   dom_get_html: (args) => _execDomGetHtml(args),
   dom_highlight: (args) => _execDomHighlight(args),

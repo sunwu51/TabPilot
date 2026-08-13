@@ -31,6 +31,305 @@ describe("built-in tool execution", () => {
     await expect(executeTool("missing_tool", {})).resolves.toEqual({ error: "Unknown tool: missing_tool" });
   });
 
+  it("creates interaction snapshots and reuses refs for DOM actions", async () => {
+    document.body.innerHTML = `
+      <label for="email">Email address</label>
+      <input id="email" type="email" placeholder="name@example.com">
+      <button type="submit">Sign in</button>
+    `;
+    document.querySelectorAll("input, button").forEach(element => {
+      element.scrollIntoView = vi.fn();
+    });
+    chrome.tabs.get.mockResolvedValue({ id: 41, windowId: 2, url: "https://example.com/login" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 41, includeHidden: true });
+
+    expect(snapshot).toMatchObject({
+      success: true,
+      tabId: 41,
+      snapshotId: expect.stringMatching(/^snap_/),
+      count: 2
+    });
+    expect(snapshot).not.toHaveProperty("nodes");
+    expect(snapshot.content).toContain(`- group\n  - text: "Email address"\n  - textbox "Email address" [selector="@${snapshot.snapshotId}#e1"]`);
+    expect(snapshot.content).toContain(`  - button "Sign in" [selector="@${snapshot.snapshotId}#e2"]`);
+
+    const filled = await executeTool("dom_set_value", {
+      tabId: 41,
+      selector: `@${snapshot.snapshotId}#e1`,
+      value: "user@example.com"
+    });
+    expect(filled).toMatchObject({ success: true, value: "user@example.com", target: { ref: "e1" } });
+    expect(document.getElementById("email").value).toBe("user@example.com");
+
+    const cssFilled = await executeTool("dom_set_value", {
+      tabId: 41,
+      selector: "#email",
+      value: "css@example.com"
+    });
+    expect(cssFilled).toMatchObject({ success: true, value: "css@example.com" });
+    expect(document.getElementById("email").value).toBe("css@example.com");
+
+    await expect(executeTool("dom_click", {
+      tabId: 41,
+      selector: "@snap_old#e2"
+    })).resolves.toMatchObject({ error: "stale_snapshot" });
+  });
+
+  it("hovers, focuses, and selects options through DOM tools", async () => {
+    document.body.innerHTML = `
+      <button id="menu">Menu</button>
+      <select aria-label="Country">
+        <option value="cn">China</option>
+        <option value="us">United States</option>
+      </select>
+    `;
+    document.querySelectorAll("button, select").forEach(element => {
+      element.scrollIntoView = vi.fn();
+      element.getBoundingClientRect = () => ({ width: 100, height: 20, x: 10, y: 20, top: 20, left: 10, right: 110, bottom: 40 });
+    });
+    const hoverEvents = [];
+    document.getElementById("menu").addEventListener("mouseover", () => hoverEvents.push("mouseover"));
+    document.getElementById("menu").addEventListener("mouseenter", () => hoverEvents.push("mouseenter"));
+    const changeHandler = vi.fn();
+    document.querySelector("select").addEventListener("change", changeHandler);
+    chrome.tabs.get.mockResolvedValue({ id: 48, windowId: 2, url: "https://example.com/form" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 48, includeHidden: true });
+    const selectSelector = snapshot.content.match(/combobox[^\n]*\[selector="([^"]+)"/)?.[1];
+    expect(selectSelector).toBeTruthy();
+    const hovered = await executeTool("dom_hover", { tabId: 48, selector: `@${snapshot.snapshotId}#e1` });
+    expect(hovered).toMatchObject({ success: true, action: "hover", synthetic: true, target: { ref: "e1" } });
+    expect(hoverEvents).toEqual(["mouseover", "mouseenter"]);
+
+    const focused = await executeTool("dom_focus", { tabId: 48, selector: selectSelector });
+    expect(focused).toMatchObject({ success: true, action: "focus", focused: true });
+    expect(document.activeElement).toBe(document.querySelector("select"));
+
+    const selected = await executeTool("dom_select_option", {
+      tabId: 48,
+      selector: selectSelector,
+      values: ["United States"]
+    });
+    expect(selected).toMatchObject({ success: true, action: "select_option", values: ["us"], labels: ["United States"] });
+    expect(changeHandler).toHaveBeenCalledOnce();
+
+    await expect(executeTool("dom_select_option", {
+      tabId: 48,
+      selector: selectSelector,
+      values: ["missing"]
+    })).resolves.toMatchObject({ error: "Options not found: missing" });
+  });
+
+  it("supports deep DOM queries, contenteditable, check, scroll, and waits", async () => {
+    document.body.innerHTML = '<div id="host"></div><div id="editor" contenteditable="true"></div><input id="flag" type="checkbox">';
+    const shadow = document.getElementById("host").attachShadow({ mode: "open" });
+    shadow.innerHTML = '<button class="deep">Shadow action</button>';
+    document.querySelectorAll("#editor, #flag").forEach(element => { element.scrollIntoView = vi.fn(); });
+    shadow.querySelector("button").scrollIntoView = vi.fn();
+    chrome.tabs.get.mockResolvedValue({ id: 49, windowId: 2, url: "https://example.com/deep" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const query = await executeTool("dom_query", { tabId: 49, selector: ".deep" });
+    expect(query).toMatchObject({ success: true, count: 1, matches: [{ text: "Shadow action" }] });
+    await expect(executeTool("dom_set_value", { tabId: 49, selector: "#editor", value: "Hello editor" }))
+      .resolves.toMatchObject({ success: true, value: "Hello editor" });
+    await expect(executeTool("dom_check", { tabId: 49, selector: "#flag", checked: true }))
+      .resolves.toMatchObject({ success: true, checked: true, changed: true });
+    await expect(executeTool("dom_scroll_into_view", { tabId: 49, selector: ".deep" }))
+      .resolves.toMatchObject({ success: true, action: "scroll_into_view" });
+    await expect(executeTool("dom_wait", { tabId: 49, selector: "#flag", state: "enabled", timeoutMs: 100 }))
+      .resolves.toMatchObject({ success: true, state: "enabled" });
+    await expect(executeTool("dom_wait", { tabId: 49, selector: ".missing", state: "absent", timeoutMs: 100 }))
+      .resolves.toMatchObject({ success: true, state: "absent", target: null });
+  });
+
+  it("routes navigation and URL waits to an explicit tab", async () => {
+    chrome.tabs.get.mockResolvedValue({ id: 74, windowId: 4, url: "https://example.com/next" });
+    chrome.tabs.reload.mockResolvedValue();
+    chrome.tabs.goBack.mockResolvedValue();
+    chrome.tabs.goForward.mockResolvedValue();
+
+    await expect(executeTool("tab_reload", { tabId: 74 })).resolves.toMatchObject({ success: true, action: "reload", tabId: 74 });
+    await expect(executeTool("tab_back", { tabId: 74 })).resolves.toMatchObject({ success: true, action: "back", tabId: 74 });
+    await expect(executeTool("tab_forward", { tabId: 74 })).resolves.toMatchObject({ success: true, action: "forward", tabId: 74 });
+    await expect(executeTool("tab_wait", { tabId: 74, url: "/next", timeoutMs: 100 }))
+      .resolves.toMatchObject({ success: true, action: "wait_url", tabId: 74 });
+    expect(chrome.tabs.reload).toHaveBeenCalledWith(74);
+    expect(chrome.tabs.goBack).toHaveBeenCalledWith(74);
+    expect(chrome.tabs.goForward).toHaveBeenCalledWith(74);
+  });
+
+  it("keeps article text and card context without assigning refs to static content", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <h1>Snapshot design</h1>
+          <p>Static article text explains the feature.</p>
+          <pre>const enabled = true;</pre>
+        </article>
+        <section><h2>Project A</h2><button aria-label="Delete">Delete</button></section>
+        <section><h2>Project B</h2><button aria-label="Delete">Delete</button></section>
+      </main>
+    `;
+    chrome.tabs.get.mockResolvedValue({ id: 42, windowId: 2, url: "https://example.com/projects" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 42, includeHidden: true });
+    expect(snapshot.count).toBe(2);
+
+    expect(snapshot.content).toContain('- main\n  - article\n    - heading [level=1]\n      - text: "Snapshot design"');
+    expect(snapshot.content).toContain('    - paragraph\n      - text: "Static article text explains the feature."');
+    expect(snapshot.content).toContain('    - code\n      - text: "const enabled = true;"');
+    expect(snapshot.content).toContain(`  - region\n    - heading [level=2]\n      - text: "Project A"\n    - button "Delete" [selector="@${snapshot.snapshotId}#e1"]`);
+    expect(snapshot.content).toContain(`  - region\n    - heading [level=2]\n      - text: "Project B"\n    - button "Delete" [selector="@${snapshot.snapshotId}#e2"]`);
+  });
+
+  it("preserves table row and cell structure around actions", async () => {
+    document.body.innerHTML = `
+      <table><tbody>
+        <tr><td>Project A</td><td><button>Delete</button></td></tr>
+        <tr><td>Project B</td><td><button>Delete</button></td></tr>
+      </tbody></table>
+    `;
+    chrome.tabs.get.mockResolvedValue({ id: 43, windowId: 2, url: "https://example.com/table" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 43, includeHidden: true });
+    expect(snapshot.content).toContain(`- table\n  - rowgroup\n    - row\n      - cell\n        - text: "Project A"\n      - cell\n        - button "Delete" [selector="@${snapshot.snapshotId}#e1"]`);
+  });
+
+  it("enforces per-text and total snapshot character limits", async () => {
+    const cards = Array.from({ length: 40 }, (_, index) => `
+      <section><h2>Project ${index}</h2><p>${"x".repeat(300)}</p><button>Delete ${index}</button></section>
+    `).join("");
+    document.body.innerHTML = `<main>${cards}</main>`;
+    chrome.tabs.get.mockResolvedValue({ id: 44, windowId: 2, url: "https://example.com/large" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", {
+      tabId: 44,
+      includeHidden: true,
+      maxTextLength: 80,
+      maxSnapshotChars: 4000
+    });
+
+    expect(JSON.stringify(snapshot).length).toBeLessThanOrEqual(4000);
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.truncation).toMatchObject({ text: true, sizeLimit: true });
+    expect(snapshot.limits).toEqual({ maxResults: 500, maxTextLength: 80, maxSnapshotChars: 4000 });
+    const textLines = snapshot.content.split("\n").filter(line => line.includes("- text: "));
+    expect(textLines.every(line => JSON.parse(line.slice(line.indexOf(":") + 1).trim()).length <= 80)).toBe(true);
+    expect(snapshot.count).toBeLessThan(40);
+  });
+
+  it("formats control states directly in snapshot content", async () => {
+    document.body.innerHTML = `
+      <form>
+        <input type="checkbox" aria-label="Notifications" checked required>
+        <input aria-label="Account" value="alice" readonly>
+        <button aria-label="Advanced" aria-expanded="false" disabled></button>
+      </form>
+    `;
+    chrome.tabs.get.mockResolvedValue({ id: 46, windowId: 2, url: "https://example.com/settings" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 46, includeHidden: true });
+    expect(snapshot).not.toHaveProperty("nodes");
+    expect(snapshot.content).toContain(`- checkbox "Notifications" [selector="@${snapshot.snapshotId}#e1", checked, required]`);
+    expect(snapshot.content).toContain(`- textbox "Account" [selector="@${snapshot.snapshotId}#e2", readonly, value="alice"]`);
+    expect(snapshot.content).toContain(`- button "Advanced" [selector="@${snapshot.snapshotId}#e3", disabled, expanded=false]`);
+  });
+
+  it("flattens meaningless wrappers while preserving list and card hierarchy", async () => {
+    document.body.innerHTML = `
+      <main>
+        <div class="layout"><div><span><b></b></span></div></div>
+        <div class="shell"><span><b>Workspace</b></span></div>
+        <div class="list-wrapper"><div class="inner">
+          <ul>
+            <li>
+              <div><span><b>Project Alpha</b></span></div>
+              <div><span>Running</span></div>
+              <div><button>Open</button><span><button aria-label="Delete Project Alpha"></button></span></div>
+            </li>
+            <li style="display:none"><span>Hidden Project</span><button>Open</button></li>
+            <li>
+              <div><span>Project Beta</span></div>
+              <div><input aria-label="Project name" value="Beta" required></div>
+            </li>
+          </ul>
+        </div></div>
+      </main>
+    `;
+    document.body.getBoundingClientRect = () => ({ width: 800, height: 600, x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600 });
+    document.querySelectorAll("main, div, span, b, ul, li, button, input").forEach(element => {
+      if (!element.style.display) element.getBoundingClientRect = () => ({ width: 100, height: 20, x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 20 });
+    });
+    chrome.tabs.get.mockResolvedValue({ id: 47, windowId: 2, url: "https://example.com/workspace" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 47, includeHidden: false });
+    expect(snapshot.content).toBe([
+      "- main",
+      "  - text: \"Workspace\"",
+      "  - list",
+      "    - listitem",
+      "      - text: \"Project Alpha\"",
+      "      - text: \"Running\"",
+      `      - button "Open" [selector="@${snapshot.snapshotId}#e1"]`,
+      "        - text: \"Open\"",
+      `      - button "Delete Project Alpha" [selector="@${snapshot.snapshotId}#e2"]`,
+      "    - listitem",
+      "      - text: \"Project Beta\"",
+      `      - textbox "Project name" [selector="@${snapshot.snapshotId}#e3", required, value="Beta"]`
+    ].join("\n"));
+  });
+
+  it("omits hidden and empty ordinary elements from snapshot content", async () => {
+    document.body.innerHTML = `
+      <main>
+        <p></p><div><span></span><b></b></div>
+        <p style="display:none">Hidden paragraph</p>
+        <p>Visible paragraph</p>
+        <button aria-label="Icon action"></button>
+      </main>
+    `;
+    document.body.getBoundingClientRect = () => ({ width: 100, height: 100, x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 100 });
+    document.querySelector("main").getBoundingClientRect = () => ({ width: 100, height: 100, x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 100 });
+    document.querySelectorAll("p, button").forEach(element => {
+      if (!element.style.display) element.getBoundingClientRect = () => ({ width: 50, height: 20, x: 0, y: 0, top: 0, left: 0, right: 50, bottom: 20 });
+    });
+    chrome.tabs.get.mockResolvedValue({ id: 45, windowId: 2, url: "https://example.com/visibility" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 45 });
+    expect(snapshot.content).toContain('paragraph\n    - text: "Visible paragraph"');
+    expect(snapshot.content).toContain(`button "Icon action" [selector="@${snapshot.snapshotId}#e1"]`);
+    expect(snapshot.content).not.toContain("Hidden paragraph");
+    expect(snapshot.content).not.toMatch(/\b(span|b|div)\b/);
+  });
+
+  it("runs eval_js against an explicitly selected tab", async () => {
+    chrome.tabs.get.mockResolvedValue({ id: 73, windowId: 4, url: "https://example.com/app" });
+    chrome.scripting.executeScript.mockResolvedValue([{ result: {
+      success: true,
+      strategy: "function",
+      url: "https://example.com/app",
+      title: "App",
+      result: 2
+    } }]);
+
+    await expect(executeTool("eval_js", { tabId: 73, jsScript: "return 1 + 1" }))
+      .resolves.toMatchObject({ success: true, tabId: 73, result: 2 });
+    expect(chrome.scripting.executeScript).toHaveBeenCalledWith(expect.objectContaining({
+      target: { tabId: 73 },
+      world: "MAIN"
+    }));
+  });
+
   it("routes MCP names to MCP registry tools", async () => {
     const { callMcpTool } = await import("../../mcp");
     chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
@@ -78,10 +377,9 @@ describe("built-in tool execution", () => {
     );
   });
 
-  it("uses a longer timeout for image and Page Agent tools", () => {
+  it("uses a longer timeout for image tools", () => {
     expect(getBuiltinToolTimeoutSeconds("image_gen")).toBe(900);
     expect(getBuiltinToolTimeoutSeconds("image_edit")).toBe(900);
-    expect(getBuiltinToolTimeoutSeconds("page_agent_execute")).toBe(900);
     expect(getBuiltinToolTimeoutSeconds("tab_list")).toBe(10);
   });
 

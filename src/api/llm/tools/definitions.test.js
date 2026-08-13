@@ -168,8 +168,8 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
   });
 
-  it("exposes Page Agent by default and hides it when explicitly disabled", () => {
-    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).toContain("page_agent_execute");
+  it("does not expose Page Agent", () => {
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).not.toContain("page_agent_execute");
     expect(namesFor(API_TYPES.OPENAI_RESPONSES, { pageAgentToolsEnabled: false })).not.toContain("page_agent_execute");
   });
 
@@ -193,6 +193,23 @@ describe("llm tool definitions", () => {
     expect(evalJs.description).toContain("main JavaScript world");
     expect(evalJs.description).toContain("chrome.scripting");
     expect(evalJs.description).toContain("XMLHttpRequest");
+    expect(evalJs.description).toContain("network requests and responses");
+    expect(evalJs.parameters.properties.tabId).toBeDefined();
+  });
+
+  it("exposes snapshot selectors through the existing selector parameter", () => {
+    const tools = getTools(API_TYPES.OPENAI_RESPONSES);
+    const snapshot = tools.find(tool => tool.name === "tab_snapshot");
+    const click = tools.find(tool => tool.name === "dom_click");
+
+    expect(snapshot.parameters.properties).toHaveProperty("tabId");
+    expect(snapshot.parameters.properties).toHaveProperty("maxTextLength");
+    expect(snapshot.parameters.properties).toHaveProperty("maxSnapshotChars");
+    expect(snapshot.description).toContain("@snapshotId#ref");
+    expect(click.parameters.properties).toHaveProperty("selector");
+    expect(click.parameters.properties.selector.description).toContain("@snapshotId#ref");
+    expect(click.parameters.properties).not.toHaveProperty("snapshotId");
+    expect(click.parameters.properties).not.toHaveProperty("ref");
   });
 
   it("describes image_model_id as a configured image profile selector", () => {
@@ -214,7 +231,11 @@ describe("llm tool definitions", () => {
     expect(names).toContain("tool_list_group");
     expect(names).toContain("tool_enable");
     expect(names).toContain("tab_extract");
+    expect(names).toContain("tab_snapshot");
     expect(names).toContain("dom_query");
+    expect(names).toContain("dom_hover");
+    expect(names).toContain("dom_focus");
+    expect(names).toContain("dom_select_option");
     expect(names).not.toContain("download_search");
   });
 

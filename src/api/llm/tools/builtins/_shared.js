@@ -273,16 +273,140 @@ export async function _executePageAction(tab, action, params, failureHint) {
           };
         }
 
+        function getElementRole(element) {
+          const explicit = element.getAttribute("role");
+          if (explicit) return explicit;
+          const tagName = element.tagName.toLowerCase();
+          const type = String(element.getAttribute("type") || "").toLowerCase();
+          if (tagName === "a" && element.hasAttribute("href")) return "link";
+          if (tagName === "button") return "button";
+          if (tagName === "textarea") return "textbox";
+          if (tagName === "select") return element.multiple ? "listbox" : "combobox";
+          if (tagName === "summary") return "button";
+          if (tagName === "input") {
+            if (["button", "submit", "reset", "image"].includes(type)) return "button";
+            if (type === "checkbox") return "checkbox";
+            if (type === "radio") return "radio";
+            if (type === "range") return "slider";
+            if (type === "number") return "spinbutton";
+            if (type === "search") return "searchbox";
+            if (type !== "hidden") return "textbox";
+          }
+          if (element.isContentEditable || element.getAttribute("contenteditable") === "true") return "textbox";
+          return tagName;
+        }
+
+        function getElementName(element) {
+          const labelledBy = String(element.getAttribute("aria-labelledby") || "").trim();
+          const labelledText = labelledBy
+            ? labelledBy.split(/\s+/).map(id => document.getElementById(id)?.textContent || "").join(" ")
+            : "";
+          const labels = element.labels ? Array.from(element.labels).map(label => label.innerText || label.textContent || "").join(" ") : "";
+          return truncateText(
+            element.getAttribute("aria-label") ||
+            labelledText ||
+            labels ||
+            element.getAttribute("alt") ||
+            element.getAttribute("title") ||
+            element.getAttribute("placeholder") ||
+            element.innerText ||
+            element.textContent ||
+            element.getAttribute("value") ||
+            "",
+            500
+          );
+        }
+
+        function serializeSnapshotNode(element, ref) {
+          const node = {
+            ref,
+            role: getElementRole(element),
+            name: getElementName(element),
+            tagName: element.tagName.toLowerCase(),
+            visible: isElementVisible(element),
+            disabled: Boolean(element.disabled) || element.getAttribute("aria-disabled") === "true",
+            rect: serializeRect(element)
+          };
+          if ("value" in element && element.type !== "password" && !["checkbox", "radio"].includes(element.type)) {
+            node.value = truncateText(element.value || "", 300);
+          }
+          if ("checked" in element) node.checked = Boolean(element.checked);
+          if ("selected" in element) node.selected = Boolean(element.selected);
+          for (const [key, attribute] of [["expanded", "aria-expanded"], ["pressed", "aria-pressed"]]) {
+            if (element.hasAttribute(attribute)) node[key] = element.getAttribute(attribute);
+          }
+          if (element.required || element.getAttribute("aria-required") === "true") node.required = true;
+          if (element.readOnly || element.getAttribute("aria-readonly") === "true") node.readonly = true;
+          const attributes = serializeAttributes(element);
+          if (Object.keys(attributes).length) node.attributes = attributes;
+          return node;
+        }
+
+        function isSnapshotInteractive(element) {
+          const role = getElementRole(element);
+          const interactiveRoles = new Set([
+            "button", "link", "textbox", "searchbox", "checkbox", "radio", "switch",
+            "combobox", "listbox", "option", "slider", "spinbutton", "tab", "menuitem",
+            "menuitemcheckbox", "menuitemradio", "treeitem"
+          ]);
+          return interactiveRoles.has(role) || element.matches(
+            "a[href], button, input:not([type=hidden]), textarea, select, summary, " +
+            "[contenteditable]:not([contenteditable=false]), [onclick], [tabindex]:not([tabindex='-1'])"
+          );
+        }
+
+        function getSnapshotSemanticRole(element) {
+          const explicitRole = element.getAttribute("role");
+          if (explicitRole) return explicitRole;
+          const tagName = element.tagName.toLowerCase();
+          if (/^h[1-6]$/.test(tagName)) return "heading";
+          const roles = {
+            header: "banner", nav: "navigation", main: "main", aside: "complementary",
+            footer: "contentinfo", article: "article", section: "region", form: "form",
+            dialog: "dialog", ul: "list", ol: "list", li: "listitem", table: "table",
+            thead: "rowgroup", tbody: "rowgroup", tfoot: "rowgroup", tr: "row",
+            th: "columnheader", td: "cell", fieldset: "group", details: "group",
+            p: "paragraph", pre: "code", blockquote: "blockquote", img: "img"
+          };
+          return roles[tagName] || null;
+        }
+
+        function shouldPreserveSnapshotContainer(element, childEntries) {
+          const meaningfulChildren = childEntries.filter(child => child.type !== "text" || child.text.trim());
+          if (!meaningfulChildren.length) return false;
+          if (getSnapshotSemanticRole(element)) return true;
+          if (meaningfulChildren.length < 2) return false;
+          const hasInteractive = meaningfulChildren.some(child => child.ref || child.containsInteractive);
+          const hasContext = meaningfulChildren.some(child =>
+            child.type === "text" || child.role === "heading" || child.role === "img" || child.role === "paragraph"
+          );
+          return hasInteractive && hasContext;
+        }
+
         function findMatchingElements(locator) {
           if (!locator.selector && !locator.text) {
             return { error: "Please provide at least one locator: selector or text" };
           }
 
+          const queryAllDeep = (selector, root = document, results = []) => {
+            const matches = Array.from(root.querySelectorAll(selector));
+            results.push(...matches);
+            for (const element of Array.from(root.querySelectorAll("*"))) {
+              if (element.shadowRoot) queryAllDeep(selector, element.shadowRoot, results);
+              if (element.tagName?.toLowerCase() === "iframe") {
+                try {
+                  if (element.contentDocument) queryAllDeep(selector, element.contentDocument, results);
+                } catch (e) { /* Cross-origin frames are not script-accessible. */ }
+              }
+            }
+            return results;
+          };
+
           let elements;
           try {
             elements = locator.selector
-              ? Array.from(document.querySelectorAll(locator.selector))
-              : Array.from(document.querySelectorAll("body *"));
+              ? queryAllDeep(locator.selector)
+              : queryAllDeep("body *");
           } catch (e) {
             return { error: `Invalid selector: ${e.message}` };
           }
@@ -301,6 +425,20 @@ export async function _executePageAction(tab, action, params, failureHint) {
         }
 
         function resolveElement(locator) {
+          const snapshotSelectorMatch = typeof locator.selector === "string"
+            ? /^@([^#\s]+)#([^#\s]+)$/.exec(locator.selector.trim())
+            : null;
+          const snapshotId = snapshotSelectorMatch?.[1] || locator.snapshotId;
+          const ref = snapshotSelectorMatch?.[2] || locator.ref;
+          if (ref || snapshotId) {
+            const registry = globalThis.__tabManagerInteractionSnapshot;
+            if (!ref || !snapshotId || !registry || registry.id !== snapshotId) {
+              return { error: "stale_snapshot" };
+            }
+            const element = registry.nodes.get(ref);
+            if (!element || !element.isConnected) return { error: "stale_snapshot" };
+            return { element, index: null, totalMatches: 1, ref, snapshotId: registry.id };
+          }
           const { elements, error } = findMatchingElements(locator);
           if (error) return { error };
 
@@ -379,6 +517,186 @@ export async function _executePageAction(tab, action, params, failureHint) {
         }
 
         try {
+          if (pageAction === "tab_snapshot") {
+            const maxResults = Math.min(1000, Math.max(1, Number.isInteger(pageParams.maxResults) ? pageParams.maxResults : 500));
+            const maxTextLength = Math.min(2000, Math.max(50, Number.isInteger(pageParams.maxTextLength) ? pageParams.maxTextLength : 500));
+            const maxSnapshotChars = Math.min(100000, Math.max(2000, Number.isInteger(pageParams.maxSnapshotChars) ? pageParams.maxSnapshotChars : 30000));
+            const pageResponseBudget = Math.max(1000, maxSnapshotChars - 1000);
+            const includeHidden = pageParams.includeHidden === true;
+            const snapshotId = `snap_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+            const nodes = new Map();
+            const serialized = [];
+            let visitedCount = 0;
+            let textTruncated = false;
+            let nodeLimitTruncated = false;
+            const capSnapshotText = (value) => {
+              const normalized = String(value || "").replace(/\s+/g, " ").trim();
+              if (normalized.length <= maxTextLength) return normalized;
+              textTruncated = true;
+              return maxTextLength <= 3 ? normalized.slice(0, maxTextLength) : normalized.slice(0, maxTextLength - 3) + "...";
+            };
+
+            const buildSnapshotTree = (domNode) => {
+              if (visitedCount >= maxResults) {
+                nodeLimitTruncated = true;
+                return [];
+              }
+              if (domNode.nodeType === Node.TEXT_NODE) {
+                const text = capSnapshotText(domNode.textContent || "");
+                if (!text || !domNode.parentElement || (!includeHidden && !isElementVisible(domNode.parentElement))) return [];
+                visitedCount += 1;
+                return [{ type: "text", text, containsInteractive: false }];
+              }
+              if (domNode.nodeType !== Node.ELEMENT_NODE) return [];
+              const element = domNode;
+              const tagName = element.tagName.toLowerCase();
+              if (["script", "style", "noscript", "template"].includes(tagName)) return [];
+              if (element.getAttribute("aria-hidden") === "true" || (!includeHidden && !isElementVisible(element))) return [];
+
+              const childEntries = [];
+              let childSource = element.shadowRoot ? element.shadowRoot.childNodes : element.childNodes;
+              if (tagName === "iframe") {
+                try {
+                  if (element.contentDocument?.body) childSource = element.contentDocument.body.childNodes;
+                } catch (e) { /* Keep the iframe node without inaccessible cross-origin contents. */ }
+              }
+              for (const child of childSource) childEntries.push(...buildSnapshotTree(child));
+
+              const interactive = isSnapshotInteractive(element);
+              const semanticRole = getSnapshotSemanticRole(element);
+              if (!interactive && !shouldPreserveSnapshotContainer(element, childEntries)) return childEntries;
+              if (visitedCount >= maxResults) {
+                nodeLimitTruncated = true;
+                return childEntries;
+              }
+
+              visitedCount += 1;
+              let ref = null;
+              if (interactive) {
+                ref = `e${serialized.length + 1}`;
+                nodes.set(ref, element);
+                const serializedNode = serializeSnapshotNode(element, ref);
+                for (const key of ["name", "value", "text"]) {
+                  if (typeof serializedNode[key] !== "string") continue;
+                  serializedNode[key] = capSnapshotText(serializedNode[key]);
+                }
+                serialized.push(serializedNode);
+              }
+              const entry = {
+                type: "element",
+                role: interactive ? getElementRole(element) : (semanticRole || "group"),
+                tagName,
+                ...(ref ? { ref } : {}),
+                ...(/^h[1-6]$/.test(tagName) ? { level: Number(tagName.slice(1)) } : {}),
+                ...(childEntries.length ? { children: childEntries } : {}),
+                containsInteractive: interactive || childEntries.some(child => child.ref || child.containsInteractive)
+              };
+              const name = getElementName(element);
+              if (interactive && name) {
+                entry.name = capSnapshotText(name);
+              }
+              return [entry];
+            };
+
+            const internalTree = buildSnapshotTree(document.body || document.documentElement);
+            const toPublicSnapshotEntry = (entry) => {
+              const publicEntry = { ...entry };
+              const children = publicEntry.children;
+              delete publicEntry.containsInteractive;
+              delete publicEntry.children;
+              if (children?.length) publicEntry.children = children.map(toPublicSnapshotEntry);
+              return publicEntry;
+            };
+            const tree = internalTree.map(toPublicSnapshotEntry);
+            const formatSnapshotTree = (entries, depth = 0) => {
+              const lines = [];
+              const indent = "  ".repeat(depth);
+              for (const entry of entries) {
+                if (entry.type === "text") {
+                  lines.push(`${indent}- text: ${JSON.stringify(entry.text)}`);
+                  continue;
+                }
+                let line = `${indent}- ${entry.role || entry.tagName || "generic"}`;
+                if (entry.name) line += ` ${JSON.stringify(entry.name)}`;
+                const annotations = [];
+                if (entry.ref) annotations.push(`selector=${JSON.stringify(`@${snapshotId}#${entry.ref}`)}`);
+                if (entry.level) annotations.push(`level=${entry.level}`);
+                if (entry.ref) {
+                  const state = serialized.find(node => node.ref === entry.ref);
+                  if (state?.checked === true) annotations.push("checked");
+                  if (state?.selected === true) annotations.push("selected");
+                  if (state?.disabled === true) annotations.push("disabled");
+                  if (state?.required === true) annotations.push("required");
+                  if (state?.readonly === true) annotations.push("readonly");
+                  if (state?.expanded != null) annotations.push(`expanded=${state.expanded}`);
+                  if (state?.pressed != null) annotations.push(`pressed=${state.pressed}`);
+                  if (state?.value) annotations.push(`value=${JSON.stringify(state.value)}`);
+                }
+                if (annotations.length) line += ` [${annotations.join(", ")}]`;
+                lines.push(line);
+                if (entry.children?.length) lines.push(...formatSnapshotTree(entry.children, depth + 1));
+              }
+              return lines;
+            };
+            let returnedNodes = serialized;
+            let sizeLimitTruncated = false;
+            const response = {
+              success: true,
+              snapshotId,
+              url: document.URL,
+              title: document.title,
+              count: returnedNodes.length,
+              treeNodeCount: visitedCount,
+              truncated: textTruncated || nodeLimitTruncated,
+              truncation: {
+                text: textTruncated,
+                nodeLimit: nodeLimitTruncated,
+                sizeLimit: false
+              },
+              limits: { maxResults, maxTextLength, maxSnapshotChars },
+              content: formatSnapshotTree(tree).join("\n")
+            };
+
+            const removeLastTreeEntry = (entries) => {
+              if (!entries.length) return false;
+              const last = entries[entries.length - 1];
+              if (last.children?.length && removeLastTreeEntry(last.children)) {
+                if (!last.children.length) delete last.children;
+                return true;
+              }
+              entries.pop();
+              return true;
+            };
+            while (JSON.stringify(response).length > pageResponseBudget && removeLastTreeEntry(tree)) {
+              sizeLimitTruncated = true;
+              response.content = formatSnapshotTree(tree).join("\n");
+            }
+            const syncReturnedNodes = () => {
+              const retainedRefs = new Set();
+              const collectRefs = (entries) => {
+                for (const entry of entries) {
+                  if (entry.ref) retainedRefs.add(entry.ref);
+                  if (entry.children) collectRefs(entry.children);
+                }
+              };
+              collectRefs(tree);
+              returnedNodes = serialized.filter(node => retainedRefs.has(node.ref));
+              response.count = returnedNodes.length;
+            };
+            if (sizeLimitTruncated) {
+              syncReturnedNodes();
+              response.truncated = true;
+              response.truncation.sizeLimit = true;
+              while (JSON.stringify(response).length > pageResponseBudget && removeLastTreeEntry(tree)) {
+                response.content = formatSnapshotTree(tree).join("\n");
+                syncReturnedNodes();
+              }
+            }
+            const returnedRegistry = new Map(returnedNodes.map(node => [node.ref, nodes.get(node.ref)]));
+            globalThis.__tabManagerInteractionSnapshot = { id: snapshotId, nodes: returnedRegistry };
+            return response;
+          }
+
           if (pageAction === "tab_scroll") {
             const stateBefore = getScrollState();
             const behavior = pageParams.behavior === "smooth" ? "smooth" : "auto";
@@ -437,7 +755,117 @@ export async function _executePageAction(tab, action, params, failureHint) {
               success: true,
               action: "click",
               totalMatches: resolved.totalMatches,
-              target: serializeElement(element, resolved.index)
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
+            };
+          }
+
+          if (pageAction === "dom_double_click" || pageAction === "dom_right_click") {
+            const resolved = resolveElement(pageParams);
+            if (resolved.error) return { error: resolved.error };
+            const element = resolved.element;
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            await sleep(350);
+            const rect = element.getBoundingClientRect();
+            const rightClick = pageAction === "dom_right_click";
+            const init = { bubbles: true, cancelable: true, composed: true, button: rightClick ? 2 : 0, buttons: rightClick ? 2 : 1, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+            const names = rightClick ? ["pointerdown", "mousedown", "pointerup", "mouseup", "contextmenu"] : ["pointerdown", "mousedown", "pointerup", "mouseup", "click", "pointerdown", "mousedown", "pointerup", "mouseup", "click", "dblclick"];
+            for (const name of names) {
+              const EventConstructor = name.startsWith("pointer") && typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+              element.dispatchEvent(new EventConstructor(name, { ...init, detail: name === "dblclick" ? 2 : (name === "click" ? 1 : 0) }));
+            }
+            return { success: true, action: rightClick ? "right_click" : "double_click", synthetic: true, events: names, totalMatches: resolved.totalMatches, target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) } };
+          }
+
+          if (pageAction === "dom_scroll_into_view") {
+            const resolved = resolveElement(pageParams);
+            if (resolved.error) return { error: resolved.error };
+            resolved.element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            await sleep(350);
+            return { success: true, action: "scroll_into_view", totalMatches: resolved.totalMatches, target: { ...serializeElement(resolved.element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }, scroll: getScrollState() };
+          }
+
+          if (pageAction === "dom_check") {
+            const resolved = resolveElement(pageParams);
+            if (resolved.error) return { error: resolved.error };
+            const element = resolved.element;
+            const type = String(element.type || "").toLowerCase();
+            if (element.tagName.toLowerCase() !== "input" || !["checkbox", "radio"].includes(type)) return { error: "Element is not a checkbox or radio" };
+            if (type === "radio" && pageParams.checked === false) return { error: "A radio cannot be unchecked directly; check another radio in the group" };
+            const checked = pageParams.checked === true;
+            const changed = element.checked !== checked;
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            element.checked = checked;
+            if (changed) {
+              element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+              element.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            return { success: true, action: "check", checked: element.checked, changed, totalMatches: resolved.totalMatches, target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) } };
+          }
+
+          if (pageAction === "dom_wait") {
+            const state = ["present", "absent", "visible", "hidden", "enabled", "disabled"].includes(pageParams.state) ? pageParams.state : "present";
+            const timeoutMs = Math.min(10000, Math.max(0, Number.isFinite(pageParams.timeoutMs) ? pageParams.timeoutMs : 5000));
+            const pollIntervalMs = Math.min(1000, Math.max(50, Number.isFinite(pageParams.pollIntervalMs) ? pageParams.pollIntervalMs : 100));
+            const startedAt = Date.now();
+            const deadline = startedAt + timeoutMs;
+            while (Date.now() <= deadline) {
+              const { elements, error } = findMatchingElements(pageParams);
+              if (error) return { error };
+              const element = elements[Number.isInteger(pageParams.index) ? pageParams.index : 0];
+              const visible = element ? isElementVisible(element) : false;
+              const disabled = element ? (Boolean(element.disabled) || element.getAttribute("aria-disabled") === "true") : false;
+              const satisfied = state === "absent" ? !element : state === "hidden" ? (!element || !visible) : state === "visible" ? visible : state === "enabled" ? (Boolean(element) && !disabled) : state === "disabled" ? (Boolean(element) && disabled) : Boolean(element);
+              if (satisfied) return { success: true, action: "wait", state, elapsedMs: Date.now() - startedAt, target: element ? serializeElement(element, Number.isInteger(pageParams.index) ? pageParams.index : 0) : null };
+              await sleep(pollIntervalMs);
+            }
+            return { error: `Timed out waiting for element state: ${state}`, state, timeoutMs };
+          }
+
+          if (pageAction === "dom_hover") {
+            const resolved = resolveElement(pageParams);
+            if (resolved.error) return { error: resolved.error };
+            const element = resolved.element;
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            await sleep(350);
+            const rect = element.getBoundingClientRect();
+            const eventInit = {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top + rect.height / 2
+            };
+            const eventNames = ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"];
+            for (const eventName of eventNames) {
+              const EventConstructor = eventName.startsWith("pointer") && typeof PointerEvent === "function"
+                ? PointerEvent
+                : MouseEvent;
+              element.dispatchEvent(new EventConstructor(eventName, eventInit));
+            }
+            return {
+              success: true,
+              action: "hover",
+              synthetic: true,
+              events: eventNames,
+              totalMatches: resolved.totalMatches,
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
+            };
+          }
+
+          if (pageAction === "dom_focus") {
+            const resolved = resolveElement(pageParams);
+            if (resolved.error) return { error: resolved.error };
+            const element = resolved.element;
+            if (typeof element.focus !== "function") return { error: "Element cannot be focused" };
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            await sleep(350);
+            try { element.focus({ preventScroll: true }); } catch (e) { element.focus(); }
+            return {
+              success: true,
+              action: "focus",
+              focused: document.activeElement === element,
+              totalMatches: resolved.totalMatches,
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
             };
           }
 
@@ -446,7 +874,8 @@ export async function _executePageAction(tab, action, params, failureHint) {
             if (resolved.error) return { error: resolved.error };
             const element = resolved.element;
             const tagName = element.tagName.toLowerCase();
-            if (!["input", "textarea", "select"].includes(tagName)) {
+            const contentEditable = element.isContentEditable || element.getAttribute("contenteditable") === "true";
+            if (!["input", "textarea", "select"].includes(tagName) && !contentEditable) {
               return { error: `Element is not a form field: <${tagName}>` };
             }
             element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
@@ -454,13 +883,57 @@ export async function _executePageAction(tab, action, params, failureHint) {
               try { element.focus({ preventScroll: true }); } catch (e) { element.focus(); }
             }
             await sleep(350);
-            setFormElementValue(element, pageParams.value);
+            if (contentEditable) {
+              element.textContent = String(pageParams.value ?? "");
+              element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertText", data: String(pageParams.value ?? "") }));
+              element.dispatchEvent(new Event("change", { bubbles: true }));
+            } else {
+              setFormElementValue(element, pageParams.value);
+            }
             return {
               success: true,
               action: "set_value",
               totalMatches: resolved.totalMatches,
-              value: truncateText(element.value || "", 500),
-              target: serializeElement(element, resolved.index)
+              value: truncateText(contentEditable ? element.textContent : (element.value || ""), 500),
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
+            };
+          }
+
+          if (pageAction === "dom_select_option") {
+            const resolved = resolveElement(pageParams);
+            if (resolved.error) return { error: resolved.error };
+            const element = resolved.element;
+            if (element.tagName.toLowerCase() !== "select") return { error: "Element is not a select field" };
+            if (!Array.isArray(pageParams.values) || pageParams.values.length === 0) {
+              return { error: "Please provide at least one option value or label" };
+            }
+            const requested = pageParams.values.map(value => String(value));
+            const requestedSet = new Set(requested);
+            const options = Array.from(element.options);
+            const matched = options.filter(option => requestedSet.has(option.value) || requestedSet.has(option.text.trim()));
+            const matchedRequested = new Set();
+            for (const option of matched) {
+              if (requestedSet.has(option.value)) matchedRequested.add(option.value);
+              if (requestedSet.has(option.text.trim())) matchedRequested.add(option.text.trim());
+            }
+            const missing = requested.filter(value => !matchedRequested.has(value));
+            if (missing.length) return { error: `Options not found: ${missing.join(", ")}` };
+            if (!element.multiple && matched.length > 1) matched.splice(1);
+            const selectedOptions = new Set(matched);
+            for (const option of options) option.selected = selectedOptions.has(option);
+            element.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+            if (typeof element.focus === "function") {
+              try { element.focus({ preventScroll: true }); } catch (e) { element.focus(); }
+            }
+            element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+            return {
+              success: true,
+              action: "select_option",
+              values: Array.from(element.selectedOptions).map(option => option.value),
+              labels: Array.from(element.selectedOptions).map(option => option.text.trim()),
+              totalMatches: resolved.totalMatches,
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
             };
           }
 
@@ -490,7 +963,7 @@ export async function _executePageAction(tab, action, params, failureHint) {
               action: "style",
               durationMs,
               styles: pageParams.styles,
-              target: serializeElement(element, resolved.index)
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
             };
           }
 
@@ -506,7 +979,7 @@ export async function _executePageAction(tab, action, params, failureHint) {
               mode,
               truncated: html.length > maxLength,
               html: html.length > maxLength ? html.slice(0, maxLength) + "..." : html,
-              target: serializeElement(element, resolved.index)
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) }
             };
           }
 
@@ -522,7 +995,7 @@ export async function _executePageAction(tab, action, params, failureHint) {
               success: true,
               action: "highlight",
               durationMs,
-              target: serializeElement(element, resolved.index),
+              target: { ...serializeElement(element, resolved.index), ...(resolved.ref ? { ref: resolved.ref } : {}) },
               scroll: getScrollState()
             };
           }
