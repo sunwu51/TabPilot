@@ -50,6 +50,10 @@ export async function initializePageAgent({ tabId } = {}) {
 }
 
 function initializePageAgentPanel(config) {
+  function isPageAgentInstanceUsable(agent) {
+    return agent?.disposed !== true && agent?.status !== "disposed" && agent?.panel?.wrapper?.isConnected === true;
+  }
+
   function configurePanel(agent) {
     const panel = agent?.panel;
     if (!panel) return;
@@ -108,7 +112,7 @@ function initializePageAgentPanel(config) {
   if (!window.PageAgent) throw new Error("Page Agent runtime was not injected");
   const configKey = JSON.stringify({ model: config.model, baseURL: config.baseURL, language: config.language });
   const state = window.__tabManagerPageAgentState;
-  if (state?.agent && state.configKey === configKey) {
+  if (state?.agent && state.configKey === configKey && isPageAgentInstanceUsable(state.agent)) {
     state.agent.panel?.show?.();
     return { panelVisible: true, reused: true, bridgeId: state.bridgeId };
   }
@@ -295,6 +299,10 @@ function normalizePageAgentBaseUrl(apiType, value) {
 }
 
 async function executePageAgentInPage({ instruction, bridgeId, config }) {
+  function isPageAgentInstanceUsable(agent) {
+    return agent?.disposed !== true && agent?.status !== "disposed" && agent?.panel?.wrapper?.isConnected === true;
+  }
+
   function configurePanel(agent) {
     const panel = agent?.panel;
     if (!panel) return;
@@ -360,7 +368,7 @@ async function executePageAgentInPage({ instruction, bridgeId, config }) {
     const state = window.__tabManagerPageAgentState;
     let agent = state?.agent;
     let previousBridgeId;
-    if (!agent || state.configKey !== configKey || agent.status === "disposed") {
+    if (!agent || state.configKey !== configKey || !isPageAgentInstanceUsable(agent)) {
       previousBridgeId = state?.bridgeId;
       state?.agent?.dispose?.();
       agent = new window.PageAgent({ ...config, customFetch: createProxyFetch() });
