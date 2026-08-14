@@ -2,6 +2,7 @@ import { streamChat } from "../../../../api/llm";
 import { buildApiMessages } from "./buildApiMessages";
 import { buildAssistantToolCallMessage } from "../messages/assistantMessages";
 import { serializeToolResult, summarizeToolResult } from "../messages/toolResults";
+import { buildWebSearchActionLabels } from "../../webSearchActions";
 import {
   SUBAGENT_DEFAULT_MAX_ITERATIONS,
   SUBAGENT_MAX_ITERATIONS,
@@ -98,7 +99,7 @@ function withDeadline(promise, timeoutMs, message) {
   });
 }
 
-function streamSubagentTurn(config, fullMessages, mcpTools, options = {}) {
+function streamSubagentTurn(config, fullMessages, mcpTools, options = {}, onNativeWebSearch) {
   let settled = false;
   let resolvePromise;
   let rejectPromise;
@@ -116,7 +117,8 @@ function streamSubagentTurn(config, fullMessages, mcpTools, options = {}) {
       if (settled) return;
       settled = true;
       rejectPromise(error);
-    }
+    },
+    onNativeWebSearch
   }, mcpTools, options);
   return {
     promise,
@@ -195,6 +197,26 @@ export async function runSubagent(
     onStep?.(null, steps.slice(0, MAX_STEPS).map(s => ({ ...s })));
   };
 
+  const webSearchStepById = new Map();
+  const handleNativeWebSearch = (event) => {
+    if (!event || !event.id) return;
+    const labels = buildWebSearchActionLabels(event.action || {});
+    const title = labels[0] || "web_search";
+    const status = event.status === "in_progress" ? "running" : "completed";
+    const existingIndex = webSearchStepById.get(event.id);
+    if (existingIndex != null) {
+      const existingStep = steps[existingIndex];
+      if (existingStep) {
+        existingStep.status = status;
+        emitSteps();
+      }
+      return;
+    }
+    webSearchStepById.set(event.id, steps.length);
+    steps.push({ name: "web_search", title, summary: "", status, durationMs: 0 });
+    emitSteps();
+  };
+
   try {
     for (let round = 0; round < iterationLimit; round++) {
       if (shouldStop()) {
@@ -217,7 +239,7 @@ export async function runSubagent(
         postdogToolsEnabled,
         pageAgentToolsEnabled,
         useCodeMode
-      });
+      }, handleNativeWebSearch);
       activeAbort = turn.abort;
       let msg;
       try {
