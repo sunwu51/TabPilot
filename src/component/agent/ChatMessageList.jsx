@@ -784,8 +784,9 @@ function HighlightedExecCode({ code }) {
 function formatSubagentLabel(runs) {
   const prefix = "创建子agent";
   if (!Array.isArray(runs) || runs.length === 0) return prefix;
-  const completed = runs.filter(run => run?.status === "completed").length;
-  return `${prefix} · ${completed}/${runs.length} 步`;
+  const finished = runs.filter(run => run?.status === "completed" || run?.status === "error").length;
+  const failed = runs.filter(run => run?.status === "error").length;
+  return `${prefix} · ${finished}/${runs.length} 步${failed > 0 ? ` · ${failed} 失败` : ""}`;
 }
 
 function formatExecToolLabel(toolCalls) {
