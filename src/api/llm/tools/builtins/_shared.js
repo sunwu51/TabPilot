@@ -366,12 +366,14 @@ export async function _executePageAction(tab, action, params, failureHint) {
             dialog: "dialog", ul: "list", ol: "list", li: "listitem", table: "table",
             thead: "rowgroup", tbody: "rowgroup", tfoot: "rowgroup", tr: "row",
             th: "columnheader", td: "cell", fieldset: "group", details: "group",
-            p: "paragraph", pre: "code", blockquote: "blockquote", img: "img"
+            p: "paragraph", pre: "code", blockquote: "blockquote", img: "img",
+            iframe: "iframe"
           };
           return roles[tagName] || null;
         }
 
         function shouldPreserveSnapshotContainer(element, childEntries) {
+          if (element.tagName.toLowerCase() === "iframe") return true;
           const meaningfulChildren = childEntries.filter(child => child.type !== "text" || child.text.trim());
           if (!meaningfulChildren.length) return false;
           if (getSnapshotSemanticRole(element)) return true;
@@ -553,14 +555,30 @@ export async function _executePageAction(tab, action, params, failureHint) {
               if (["script", "style", "noscript", "template"].includes(tagName)) return [];
               if (element.getAttribute("aria-hidden") === "true" || (!includeHidden && !isElementVisible(element))) return [];
 
-              const childEntries = [];
+              let childEntries = [];
               let childSource = element.shadowRoot ? element.shadowRoot.childNodes : element.childNodes;
+              let frameDocument = null;
+              let frameInaccessible = false;
               if (tagName === "iframe") {
                 try {
-                  if (element.contentDocument?.body) childSource = element.contentDocument.body.childNodes;
-                } catch (e) { /* Keep the iframe node without inaccessible cross-origin contents. */ }
+                  frameDocument = element.contentDocument;
+                  if (frameDocument?.body) childSource = frameDocument.body.childNodes;
+                  else frameInaccessible = true;
+                } catch (e) {
+                  frameInaccessible = true;
+                }
               }
               for (const child of childSource) childEntries.push(...buildSnapshotTree(child));
+              if (tagName === "iframe" && frameDocument) {
+                childEntries = [{
+                  type: "element",
+                  role: "document",
+                  ...(frameDocument.title ? { name: capSnapshotText(frameDocument.title) } : {}),
+                  url: frameDocument.URL,
+                  ...(childEntries.length ? { children: childEntries } : {}),
+                  containsInteractive: childEntries.some(child => child.ref || child.containsInteractive)
+                }];
+              }
 
               const interactive = isSnapshotInteractive(element);
               const semanticRole = getSnapshotSemanticRole(element);
@@ -591,6 +609,12 @@ export async function _executePageAction(tab, action, params, failureHint) {
                 ...(childEntries.length ? { children: childEntries } : {}),
                 containsInteractive: interactive || childEntries.some(child => child.ref || child.containsInteractive)
               };
+              if (tagName === "iframe") {
+                const frameName = element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("name") || "";
+                if (frameName) entry.name = capSnapshotText(frameName);
+                if (element.src) entry.src = element.src;
+                if (frameInaccessible) entry.inaccessible = true;
+              }
               const name = getElementName(element);
               if (interactive && name) {
                 entry.name = capSnapshotText(name);
@@ -621,6 +645,9 @@ export async function _executePageAction(tab, action, params, failureHint) {
                 const annotations = [];
                 if (entry.ref) annotations.push(`selector=${JSON.stringify(`@${snapshotId}#${entry.ref}`)}`);
                 if (entry.level) annotations.push(`level=${entry.level}`);
+                if (entry.src) annotations.push(`src=${JSON.stringify(entry.src)}`);
+                if (entry.url) annotations.push(`url=${JSON.stringify(entry.url)}`);
+                if (entry.inaccessible) annotations.push("inaccessible");
                 if (entry.ref) {
                   const state = serialized.find(node => node.ref === entry.ref);
                   if (state?.checked === true) annotations.push("checked");

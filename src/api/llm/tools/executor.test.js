@@ -187,6 +187,34 @@ describe("built-in tool execution", () => {
     expect(snapshot.content).toContain(`  - region\n    - heading [level=2]\n      - text: "Project B"\n    - button "Delete" [selector="@${snapshot.snapshotId}#e2"]`);
   });
 
+  it("preserves iframe and nested document boundaries in snapshot content", async () => {
+    document.body.innerHTML = '<main><h1>Checkout</h1><iframe title="Payment" src="https://example.com/payment"></iframe></main>';
+    const iframe = document.querySelector("iframe");
+    const frameDocument = document.implementation.createHTMLDocument("Secure payment");
+    frameDocument.body.innerHTML = '<h2>Card details</h2><button>Confirm payment</button>';
+    Object.defineProperty(frameDocument, "URL", { value: "https://example.com/payment" });
+    Object.defineProperty(iframe, "contentDocument", { value: frameDocument });
+    const frameButton = frameDocument.querySelector("button");
+    frameButton.scrollIntoView = vi.fn();
+    const clickHandler = vi.fn();
+    frameButton.addEventListener("click", clickHandler);
+    chrome.tabs.get.mockResolvedValue({ id: 50, windowId: 2, url: "https://example.com/checkout" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 50, includeHidden: true });
+    expect(snapshot.content).toContain(
+      '- iframe "Payment" [src="https://example.com/payment"]\n' +
+      '    - document "Secure payment" [url="https://example.com/payment"]\n' +
+      '      - heading [level=2]\n' +
+      '        - text: "Card details"'
+    );
+    expect(snapshot.content).toContain(`      - button "Confirm payment" [selector="@${snapshot.snapshotId}#e1"]`);
+
+    await expect(executeTool("dom_click", { tabId: 50, selector: `@${snapshot.snapshotId}#e1` }))
+      .resolves.toMatchObject({ success: true, target: { ref: "e1" } });
+    expect(clickHandler).toHaveBeenCalledOnce();
+  });
+
   it("preserves table row and cell structure around actions", async () => {
     document.body.innerHTML = `
       <table><tbody>
