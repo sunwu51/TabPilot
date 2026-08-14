@@ -203,11 +203,13 @@ export async function _executePageAction(tab, action, params, failureHint) {
 
         function isElementVisible(element) {
           const rect = element.getBoundingClientRect();
-          const style = window.getComputedStyle(element);
-          if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
-            return false;
-          }
+          if (isElementStyleHidden(element)) return false;
           return rect.width > 0 && rect.height > 0;
+        }
+
+        function isElementStyleHidden(element) {
+          const style = window.getComputedStyle(element);
+          return style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0;
         }
 
         function isElementClickable(element) {
@@ -553,7 +555,7 @@ export async function _executePageAction(tab, action, params, failureHint) {
               const element = domNode;
               const tagName = element.tagName.toLowerCase();
               if (["script", "style", "noscript", "template"].includes(tagName)) return [];
-              if (element.getAttribute("aria-hidden") === "true" || (!includeHidden && !isElementVisible(element))) return [];
+              if (element.getAttribute("aria-hidden") === "true" || (!includeHidden && isElementStyleHidden(element))) return [];
 
               let childEntries = [];
               let childSource = element.shadowRoot ? element.shadowRoot.childNodes : element.childNodes;

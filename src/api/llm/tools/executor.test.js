@@ -340,6 +340,25 @@ describe("built-in tool execution", () => {
     expect(snapshot.content).not.toMatch(/\b(span|b|div)\b/);
   });
 
+  it("keeps visible descendants inside zero-sized containers", async () => {
+    document.body.innerHTML = `
+      <main>
+        <div id="portal-root">
+          <button aria-label="Open menu">Open</button>
+        </div>
+      </main>
+    `;
+    document.body.getBoundingClientRect = () => ({ width: 100, height: 100, x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 100 });
+    document.querySelector("main").getBoundingClientRect = () => ({ width: 100, height: 100, x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 100 });
+    document.querySelector("button").getBoundingClientRect = () => ({ width: 50, height: 20, x: 0, y: 0, top: 0, left: 0, right: 50, bottom: 20 });
+    chrome.tabs.get.mockResolvedValue({ id: 49, windowId: 2, url: "https://example.com/zero-sized-container" });
+    chrome.scripting.executeScript.mockImplementation(async ({ func, args }) => [{ result: await func(...args) }]);
+
+    const snapshot = await executeTool("tab_snapshot", { tabId: 49 });
+    expect(snapshot.content).toContain(`button "Open menu" [selector="@${snapshot.snapshotId}#e1"]`);
+    expect(snapshot.content).toContain('text: "Open"');
+  });
+
   it("runs eval_js against an explicitly selected tab", async () => {
     chrome.tabs.get.mockResolvedValue({ id: 73, windowId: 4, url: "https://example.com/app" });
     chrome.scripting.executeScript.mockResolvedValue([{ result: {
