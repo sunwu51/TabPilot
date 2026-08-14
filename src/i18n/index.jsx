@@ -54,6 +54,12 @@ const MESSAGES = {
     ,feedback: "意见反馈"
     ,feedbackHint: "提交问题、建议或功能请求。"
     ,mcpOauthHint: "OAuth MCP 受浏览器 Origin 限制，兼容性较差；建议使用 mcp-center 绕开此限制。"
+    ,subagentRunning: "子agent执行中..."
+    ,subagentRunsSection: "子 agent 执行记录"
+    ,toolArgsSection: "调用参数"
+    ,toolResultSection: "执行结果"
+    ,subagentSteps: "步"
+    ,subagentFailed: "失败"
   },
   en: {
     tabManagement: "TabPilot",
@@ -104,6 +110,12 @@ const MESSAGES = {
     ,feedback: "Feedback"
     ,feedbackHint: "Report a problem, suggestion, or feature request."
     ,mcpOauthHint: "OAuth MCP support is limited by browser Origin restrictions. Using mcp-center is recommended to bypass this limitation."
+    ,subagentRunning: "Sub-agent running..."
+    ,subagentRunsSection: "Sub-agent runs"
+    ,toolArgsSection: "Arguments"
+    ,toolResultSection: "Result"
+    ,subagentSteps: "steps"
+    ,subagentFailed: "failed"
   }
 };
 

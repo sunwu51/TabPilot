@@ -209,7 +209,7 @@ describe("ChatMessageList", () => {
       />
     );
 
-    const title = screen.getByText(/创建子agent · 2\/2 步 · 1 失败/);
+    const title = screen.getByText(/subagent · 2\/2 步 · 1 失败/);
     fireEvent.click(title.closest(".tool-result-header"));
     expect(screen.getByText("子 agent 执行记录")).toBeTruthy();
     expect(screen.getByText("tab_list()")).toBeTruthy();

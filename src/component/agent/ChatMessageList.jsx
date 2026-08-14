@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import ChatMessage, { EditableChatImage } from "./ChatMessage";
+import { useI18n } from "../../i18n";
 
 hljs.registerLanguage("javascript", javascript);
 
@@ -215,6 +216,7 @@ function ToolMessageSequence({
 
 /* eslint-disable react/prop-types */
 function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
   const result = summarizeToolResultMessage(item.resultMessage);
@@ -230,13 +232,13 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
   const label = isExec
     ? formatExecToolLabel(codeToolCalls)
     : isSubagent
-      ? formatSubagentLabel(subagentRuns)
+      ? formatSubagentLabel(subagentRuns, t)
       : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
   const durationMs = item.resultMessage?.durationMs;
   const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
   const icon = hasResult ? (isError ? "❌" : "✅") : "⏳";
   const pendingHint = !hasResult
-    ? (isSubagent ? "子agent执行中..." : (isImageToolName(name) ? "图片生成中..." : ""))
+    ? (isSubagent ? t("subagentRunning") : (isImageToolName(name) ? "图片生成中..." : ""))
     : "";
 
   return (
@@ -267,19 +269,21 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
       )}
       {expanded && (
         <>
-          <div className="tool-merged-section-label">调用参数</div>
+          <div className="tool-merged-section-label">{t("toolArgsSection")}</div>
           {isExec
             ? <HighlightedExecCode code={item.input?.code} />
             : <pre className={buildToolContentClassName(inputDisplay.isJson)}>{inputDisplay.text}</pre>}
           {isSubagent && subagentRuns.length > 0 && (
             <>
-              <div className="tool-merged-section-label">子 agent 执行记录</div>
+              <div className="tool-merged-section-label">{t("subagentRunsSection")}</div>
               <div className="subagent-runs">
                 {subagentRuns.map((run, index) => (
                   <div key={run?.id || `subagent-run-${index}`} className={`subagent-run subagent-run-${run?.status || "running"}`}>
                     <span className="subagent-run-status">{run?.status === "error" ? "❌" : run?.status === "running" ? "⏳" : "✅"}</span>
                     <span className="subagent-run-title">{run?.title || run?.name || "tool"}</span>
-                    {run?.summary ? <span className="subagent-run-summary">{run.summary}</span> : null}
+                    {run?.status === "error" && (run?.error || run?.summary)
+                      ? <span className="subagent-run-summary">{String(run.error || run.summary)}</span>
+                      : null}
                   </div>
                 ))}
               </div>
@@ -287,7 +291,7 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
           )}
           {hasResult && (
             <>
-              <div className="tool-merged-section-label">执行结果</div>
+              <div className="tool-merged-section-label">{t("toolResultSection")}</div>
               <pre className={buildToolContentClassName(result.isJson)}>{result.displayContent}</pre>
             </>
           )}
@@ -781,12 +785,13 @@ function HighlightedExecCode({ code }) {
   );
 }
 
-function formatSubagentLabel(runs) {
-  const prefix = "创建子agent";
+function formatSubagentLabel(runs, t) {
+  const prefix = "subagent";
   if (!Array.isArray(runs) || runs.length === 0) return prefix;
   const finished = runs.filter(run => run?.status === "completed" || run?.status === "error").length;
   const failed = runs.filter(run => run?.status === "error").length;
-  return `${prefix} · ${finished}/${runs.length} 步${failed > 0 ? ` · ${failed} 失败` : ""}`;
+  const stepsLabel = t("subagentSteps");
+  return `${prefix} · ${finished}/${runs.length} ${stepsLabel}${failed > 0 ? ` · ${failed} ${t("subagentFailed")}` : ""}`;
 }
 
 function formatExecToolLabel(toolCalls) {
