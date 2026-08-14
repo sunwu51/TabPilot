@@ -94,6 +94,78 @@
   color: #991b1b;
 }
 
+/* ========== Sub-agent run summary ========== */
+.subagent-runs {
+  padding: 4px 8px 6px;
+  background: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.subagent-run {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.subagent-run-status {
+  flex-shrink: 0;
+}
+
+.subagent-run-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.subagent-run-summary {
+  color: #6b7280;
+  word-break: break-word;
+}
+
+.subagent-message-bubble {
+  margin: 8px 0 4px 22px;
+  padding: 8px 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.subagent-code-bubble-title {
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.subagent-code-bubble pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.subagent-run-error {
+  background: #fef2f2;
+}
+
+.subagent-run-error .subagent-run-title {
+  color: #991b1b;
+}
+
 .thinking-result-msg {
   border-color: #e5e7eb;
   background: #f3f4f6;

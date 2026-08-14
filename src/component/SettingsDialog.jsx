@@ -20,8 +20,8 @@ import {
   normalizeLlmModelProfiles,
   normalizeModelContextLimitTokens,
   normalizeStoredModelConfig,
+  BUILTIN_TOOL_GROUPS,
   openHelloWorldPlayground,
-  initializePageAgent,
   resolveImageApiRequestUrl
 } from "../api/llm";
 import {
@@ -30,6 +30,7 @@ import {
   importSettingsBackupFromText
 } from "../api/settings/backup";
 import { ensureSettingsMigrated } from "../api/settings/migrations";
+import { SUBAGENT_TEMPLATES_STORAGE_KEY, normalizeSubagentTemplates } from "../api/agent/subagentTemplates";
 import { useI18n, useLocalizedDom } from "../i18n";
 import {
   SUPABASE_DEFAULT_CONFIG,
@@ -69,8 +70,9 @@ const DEFAULT_SETTINGS = {
   hideCopyButton: false,
   ttsVoiceName: "",
   dangerousToolSkipApproval: false,
-  postdogToolsEnabled: false,
-  pageAgentToolsEnabled: true
+      postdogToolsEnabled: false,
+      subagentTemplates: [],
+      mcpServers: []
 };
 
 /**
@@ -136,7 +138,11 @@ function SettingsDialogBody() {
   const [ttsVoices, setTtsVoices] = useState([]);
   const [dangerousToolSkipApproval, setDangerousToolSkipApproval] = useState(DEFAULT_SETTINGS.dangerousToolSkipApproval);
   const [postdogToolsEnabled, setPostdogToolsEnabled] = useState(DEFAULT_SETTINGS.postdogToolsEnabled);
-  const [pageAgentToolsEnabled, setPageAgentToolsEnabled] = useState(DEFAULT_SETTINGS.pageAgentToolsEnabled);
+  const [subagentTemplates, setSubagentTemplates] = useState([]);
+  const [subagentTemplateFormOpen, setSubagentTemplateFormOpen] = useState(false);
+  const [editingSubagentTemplateId, setEditingSubagentTemplateId] = useState("");
+  const [subagentTemplateDraft, setSubagentTemplateDraft] = useState(createEmptySubagentTemplate());
+  const [mcpServerOptions, setMcpServerOptions] = useState([]);
   const [wsBridgeStatus, setWsBridgeStatus] = useState(DEFAULT_WS_BRIDGE_STATUS);
   const [reusePolicyCount, setReusePolicyCount] = useState(0);
   const [supabaseUrl, setSupabaseUrl] = useState(SUPABASE_DEFAULT_CONFIG.url);
@@ -261,7 +267,8 @@ function SettingsDialogBody() {
       setTtsVoiceName(typeof res.ttsVoiceName === "string" ? res.ttsVoiceName : "");
       setDangerousToolSkipApproval(!!res.dangerousToolSkipApproval);
       setPostdogToolsEnabled(!!res.postdogToolsEnabled);
-      setPageAgentToolsEnabled(res.pageAgentToolsEnabled !== false);
+      setSubagentTemplates(normalizeSubagentTemplates(res[SUBAGENT_TEMPLATES_STORAGE_KEY]));
+      setMcpServerOptions((res.mcpServers || []).map(server => String(server.name || "").trim()).filter(Boolean));
       setWsBridgeStatus({
         ...DEFAULT_WS_BRIDGE_STATUS,
         ...(res[WS_BRIDGE_STATUS_STORAGE_KEY] || {})
@@ -286,7 +293,7 @@ function SettingsDialogBody() {
   }
 
   async function handleConfirm() {
-    if (hasPendingModelDraft()) {
+    if (hasPendingSettingsDraft()) {
       const shouldDiscardDraft = window.confirm(buildPendingModelDraftMessage());
       if (!shouldDiscardDraft) return;
     }
@@ -325,7 +332,7 @@ function SettingsDialogBody() {
         ttsVoiceName,
         dangerousToolSkipApproval,
         postdogToolsEnabled,
-        pageAgentToolsEnabled
+        [SUBAGENT_TEMPLATES_STORAGE_KEY]: normalizeSubagentTemplates(subagentTemplates)
       });
       await saveSupabaseConfig(currentSupabaseConfig());
       toast.success(t("settingsSaved"));
@@ -337,8 +344,8 @@ function SettingsDialogBody() {
     }
   }
 
-  function hasPendingModelDraft() {
-    return hasPendingLlmModelDraft() || hasPendingImageModelDraft();
+  function hasPendingSettingsDraft() {
+    return hasPendingLlmModelDraft() || hasPendingImageModelDraft() || subagentTemplateFormOpen;
   }
 
   function hasPendingLlmModelDraft() {
@@ -351,9 +358,10 @@ function SettingsDialogBody() {
 
   function buildPendingModelDraftMessage() {
     const draftNames = [];
-    if (hasPendingLlmModelDraft()) draftNames.push("LLM 模型");
-    if (hasPendingImageModelDraft()) draftNames.push("图片模型");
-    return `有未保存的${draftNames.join("和")}草稿，确认要放弃这些草稿并保存其它设置吗？`;
+    if (hasPendingLlmModelDraft()) draftNames.push(t("pendingLlmModelDraft"));
+    if (hasPendingImageModelDraft()) draftNames.push(t("pendingImageModelDraft"));
+    if (subagentTemplateFormOpen) draftNames.push(t("pendingSubagentTemplateDraft"));
+    return t("confirmDiscardSettingsDrafts", { names: draftNames.join(locale === "zh" ? "和" : ", ") });
   }
 
   function currentSupabaseConfig() {
@@ -626,15 +634,56 @@ function SettingsDialogBody() {
     }
   }
 
-  async function handleInitializePageAgent() {
-    const toastId = toast.loading("正在注入 Page Agent...");
-    const result = await initializePageAgent();
-    toast.dismiss(toastId);
-    if (result.error) {
-      toast.error(result.error);
+  function openNewSubagentTemplateForm() {
+    setEditingSubagentTemplateId("");
+    setSubagentTemplateDraft(createEmptySubagentTemplate());
+    setSubagentTemplateFormOpen(true);
+  }
+
+  function openEditSubagentTemplateForm(template) {
+    setEditingSubagentTemplateId(template.id);
+    setSubagentTemplateDraft({ ...template, allowedBuiltinDomains: [...template.allowedBuiltinDomains], allowedMcpServers: [...template.allowedMcpServers] });
+    setSubagentTemplateFormOpen(true);
+  }
+
+  async function saveSubagentTemplateDraft() {
+    const templateName = String(subagentTemplateDraft.templateName || "").trim();
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(templateName)) {
+      toast.error("Template name must start with an English letter and contain only English letters, numbers, or underscores.");
       return;
     }
-    toast.success("Page Agent 已注入当前页面");
+    if (subagentTemplates.some(item => item.templateName === templateName && item.id !== editingSubagentTemplateId)) {
+      toast.error("Template name must be unique.");
+      return;
+    }
+    const normalized = normalizeSubagentTemplates([{ ...subagentTemplateDraft, id: editingSubagentTemplateId || subagentTemplateDraft.templateName }])[0];
+    if (!normalized?.templateName) {
+      toast.error(t("subagentTemplateNameRequired"));
+      return;
+    }
+    if (!normalized.description) {
+      toast.error(t("subagentTemplateDescriptionRequired"));
+      return;
+    }
+    const nextTemplates = normalizeSubagentTemplates(editingSubagentTemplateId
+      ? subagentTemplates.map(item => item.id === editingSubagentTemplateId ? normalized : item)
+      : [...subagentTemplates, normalized]
+    );
+    try {
+      await chrome.storage.local.set({ [SUBAGENT_TEMPLATES_STORAGE_KEY]: nextTemplates });
+      setSubagentTemplates(nextTemplates);
+      toast.success(t("subagentTemplateSaved"));
+    } catch (error) {
+      toast.error(t("subagentTemplateSaveFailed", { message: error?.message || String(error) }));
+      return;
+    }
+    setSubagentTemplateFormOpen(false);
+    setEditingSubagentTemplateId("");
+  }
+
+  function removeSubagentTemplate(id) {
+    setSubagentTemplates(current => current.filter(item => item.id !== id));
+    if (editingSubagentTemplateId === id) setSubagentTemplateFormOpen(false);
   }
 
   async function handleExportSettings() {
@@ -1060,11 +1109,6 @@ function SettingsDialogBody() {
               <span className="text-sm">开启 Postdog 工具</span>
             </Checkbox>
           </div>
-          <div className="mt-2">
-            <Checkbox isSelected={pageAgentToolsEnabled} onChange={setPageAgentToolsEnabled}>
-              <span className="text-sm">开启 Page Agent 工具</span>
-            </Checkbox>
-          </div>
         </div>
 
         <div className="settings-card">
@@ -1121,6 +1165,45 @@ function SettingsDialogBody() {
         </div>
 
         <div className="settings-card">
+          <div className="settings-card-title">{t("subagentTemplates")}</div>
+          <div className="settings-subagent-template-list">
+            {subagentTemplates.length === 0 ? <span className="settings-model-empty">{t("subagentNoTemplates")}</span> : subagentTemplates.map(template => (
+              <div key={template.id} className="settings-subagent-template-row">
+                <div>
+                  <strong>{template.templateName}</strong>
+                  <div className="settings-api-url-hint">{template.description}</div>
+                </div>
+                <div className="settings-subagent-template-actions">
+                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => openEditSubagentTemplateForm(template)}>{t("subagentEditTemplate")}</Button>
+                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => removeSubagentTemplate(template.id)}>{t("subagentDeleteTemplate")}</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button className="settings-model-add-toggle bg-[var(--w-indigo)]" onPress={subagentTemplateFormOpen ? () => setSubagentTemplateFormOpen(false) : openNewSubagentTemplateForm}>
+            {subagentTemplateFormOpen ? t("subagentHideTemplateForm") : t("subagentAddTemplate")}
+          </Button>
+          {subagentTemplateFormOpen && (
+            <div className="settings-model-form">
+              <Input label={t("subagentTemplateName")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.templateName} onChange={value => setSubagentTemplateDraft(current => ({ ...current, templateName: value }))} placeholder={t("subagentTemplateNamePlaceholder")} />
+              <Input label={t("subagentTemplateDescription")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder={t("subagentTemplateDescriptionPlaceholder")} />
+              <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
+              <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
+              <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
+              <div className="settings-checkbox-grid">
+                {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
+              </div>
+              <div className="settings-form-label">{t("subagentAllowedMcpServers")}</div>
+              <div className="settings-checkbox-grid">
+                {mcpServerOptions.length === 0 ? <span className="settings-api-url-hint">{t("subagentNoConnectedMcpServers")}</span> : mcpServerOptions.map(server => <Checkbox key={server} isSelected={subagentTemplateDraft.allowedMcpServers.includes(server)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedMcpServers: selected ? [...current.allowedMcpServers, server] : current.allowedMcpServers.filter(item => item !== server) }))}><span className="text-sm">{server}</span></Checkbox>)}
+              </div>
+              <Checkbox isSelected={subagentTemplateDraft.enabled} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, enabled: selected }))}><span className="text-sm">{t("subagentEnableTemplate")}</span></Checkbox>
+              <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={saveSubagentTemplateDraft}>{editingSubagentTemplateId ? t("subagentSaveTemplate") : t("subagentSubmitTemplate")}</Button>
+            </div>
+          )}
+        </div>
+
+        <div className="settings-card">
           <div className="settings-card-title">快捷入口</div>
           <div className="settings-tab-action-row">
             <Button
@@ -1146,12 +1229,6 @@ function SettingsDialogBody() {
               onPress={handleOpenPostdog}
             >
               postdog
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleInitializePageAgent}
-            >
-              page agent
             </Button>
           </div>
           <hr className="settings-quick-entry-divider" />
@@ -1363,4 +1440,15 @@ function buildTtsVoiceOptions(voices) {
 
 function normalizeReasoningEffort(value) {
   return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
+}
+
+function createEmptySubagentTemplate() {
+  return {
+    templateName: "",
+    description: "",
+    systemPrompt: "",
+    allowedBuiltinDomains: [],
+    allowedMcpServers: [],
+    enabled: true
+  };
 }

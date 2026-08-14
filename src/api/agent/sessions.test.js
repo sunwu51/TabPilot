@@ -16,6 +16,7 @@ import {
   loadSession,
   loadSessionImageStore,
   loadSessionMeta,
+  persistSessionImageDataUrls,
   pruneExpiredSessionLocks,
   releaseSessionLock,
   releaseSessionLocksForWindow,
@@ -356,6 +357,45 @@ describe("sessions storage", () => {
     }], "A");
 
     expect(await loadSessionImageStore("a")).toEqual({ img_3: dataUrl });
+  });
+
+  it("persists image base64 into the session image store immediately", async () => {
+    resetChromeMock({
+      session_a_images: { img_1: "data:image/png;base64,b2xkQQ==" },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+
+    const refs = await persistSessionImageDataUrls("a", [
+      { ref: "img_2", dataUrl: "data:image/png;base64,bmV3" },
+      { ref: "img_1", dataUrl: "data:image/png;base64,b2xkQQ==" }
+    ]);
+
+    expect(refs).toEqual(["img_2", "img_1"]);
+    expect(await loadSessionImageStore("a")).toEqual({
+      img_1: "data:image/png;base64,b2xkQQ==",
+      img_2: "data:image/png;base64,bmV3"
+    });
+  });
+
+  it("keeps imageStore entries referenced only by a deRef placeholder in tool content", async () => {
+    const dataUrl = "data:image/png;base64,dXNlcg==";
+    resetChromeMock({
+      session_a: { messages: [], nextImageRefIndex: 3 },
+      session_a_images: { img_5: dataUrl },
+      sessions_index: [{ id: "a", title: "A", updatedAt: 1, startedAt: 0, manualTitle: false }]
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Mirrors a sub-agent answer that embeds the image via markdown deRef syntax.
+    await saveSession("a", [{
+      role: "tool",
+      tool_call_id: "call_sub",
+      tool_name: "create_subagent",
+      content: JSON.stringify({ success: true, answer: "Here is the image ![image](|deRef:img_5|)" })
+    }], "A");
+
+    expect(await loadSessionImageStore("a")).toEqual({ img_5: dataUrl });
+    warnSpy.mockRestore();
   });
 
   it("keeps imageStore entries alive that are reachable through hydrated image refs", async () => {

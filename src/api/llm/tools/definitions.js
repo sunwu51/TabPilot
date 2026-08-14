@@ -1,10 +1,11 @@
 import { DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS } from "../core/constants";
 import { API_TYPES, normalizeApiType } from "../core/config";
 import { buildMcpRuntimePrompt } from "./mcpRuntime";
+import { buildSubagentTemplateTools } from "../../agent/subagentTemplates";
 
 const DOM_LOCATOR_PROPERTIES = {
   tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
-  selector: { type: "string", description: "Optional CSS selector used to find elements." },
+  selector: { type: "string", description: "Optional CSS selector or snapshot selector in the form @snapshotId#ref, for example @snap_mxyz_abcd#e3." },
   text: { type: "string", description: "Optional text to match against element text or labels." },
   matchExact: { type: "boolean", description: "Whether text matching should be exact. Defaults to false." },
   index: { type: "number", description: "Zero-based index within the matched elements. Defaults to 0." }
@@ -16,6 +17,7 @@ const CODE_RUNTIME_EXCLUDED_TOOL_NAMES = new Set([
   "plan_create_for_session",
   "plan_update_for_session",
   "request_user_input",
+  "create_subagent",
   "sleep"
 ]);
 const TOOL_SELECTION_CORE_NAMES = new Set([
@@ -28,18 +30,30 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "tab_get_active",
   "tab_extract",
   "tab_scroll",
+  "tab_snapshot",
   "tab_open",
   "tab_focus",
+  "tab_reload",
+  "tab_back",
+  "tab_forward",
+  "tab_wait",
   "tab_close",
   "tab_group",
   "tab_screenshot",
   "dom_query",
   "dom_click",
+  "dom_double_click",
+  "dom_right_click",
+  "dom_check",
+  "dom_scroll_into_view",
+  "dom_wait",
+  "dom_hover",
+  "dom_focus",
   "dom_set_value",
+  "dom_select_option",
   "dom_style",
   "dom_get_html",
   "dom_highlight",
-  "page_agent_execute",
   "eval_js",
   "get_current_time",
   "sleep",
@@ -49,10 +63,13 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "stash_in_browser",
   "unstash_in_browser",
   "list_stashes_in_browser",
-  "remove_stash_in_browser"
+  "remove_stash_in_browser",
+  "create_subagent"
 ]);
 
 export const BUILTIN_TOOL_GROUPS = {
+  tabs: "Browser tab operations",
+  page: "Page content inspection and interaction",
   groups: "Browser tab group operations",
   windows: "Browser window operations",
   history: "Browsing history search",
@@ -83,7 +100,7 @@ const CODE_MODE_CORE_TOOL_SCHEMAS =
   "`await tools.dom_query({ tabId?: number, selector?: string, text?: string, matchExact?: boolean, index?: number, maxResults?: number })`; " +
   "`await tools.dom_click({ tabId?: number, selector?: string, text?: string, matchExact?: boolean, index?: number })`; " +
   "`await tools.dom_set_value({ tabId?: number, selector?: string, text?: string, matchExact?: boolean, index?: number, value: string })`; " +
-  "`await tools.eval_js({ jsScript: string })`. ";
+  "`await tools.eval_js({ tabId?: number, jsScript: string })`. ";
 
 const CODE_MODE_DISCOVERY_EXAMPLES =
   "Before calling any other tool, when its input or result schema is unknown, do not guess argument names: call `describeTool` or `listTools` first. " +
@@ -177,6 +194,34 @@ const USER_INPUT_TOOLS = [{
   }
 }];
 
+const CREATE_SUBAGENT_TOOL = {
+  name: "create_subagent",
+  description:
+    "Create a single-layer sub-agent to autonomously complete an independent task and return a concise summary. " +
+    "The sub-agent runs its own tool-calling loop with the same tools you have, except it cannot create further sub-agents. " +
+    "Use this to parallelize independent research, comparisons, or multi-step work. " +
+    "Give the sub-agent a self-contained task with all necessary context, because it does not see the current conversation. " +
+    "When several independent pieces of work are needed, issue multiple create_subagent calls in a single response; they run in parallel and each returns its own summary.",
+  schema: {
+    type: "object",
+    properties: {
+      name: {
+        type: "string",
+        description: "Short human-readable name for this sub-agent, shown in the tool title."
+      },
+      task: {
+        type: "string",
+        description: "Self-contained objective for the sub-agent. Include all required context, constraints, and the expected output format."
+      },
+      maxIterations: {
+        type: "number",
+        description: "Optional maximum number of tool-calling rounds for the sub-agent. Defaults to 50, maximum 50."
+      }
+    },
+    required: ["name", "task"]
+  }
+};
+
 const CODE_MODE_TOOLS = [
   {
     name: "exec",
@@ -217,7 +262,8 @@ const CODE_MODE_TOOLS = [
     }
   },
   ...PLAN_TOOLS,
-  ...USER_INPUT_TOOLS
+  ...USER_INPUT_TOOLS,
+  CREATE_SUBAGENT_TOOL
 ];
 
 export function isImageToolName(toolName) {
@@ -226,10 +272,6 @@ export function isImageToolName(toolName) {
 
 export function isPostdogToolName(toolName) {
   return String(toolName || "").trim().startsWith("postdog_");
-}
-
-export function isPageAgentToolName(toolName) {
-  return String(toolName || "").trim() === "page_agent_execute";
 }
 
 // ==================== Tool Definitions ====================
@@ -296,18 +338,6 @@ export const TOOLS = [
     }
   },
   {
-    name: "page_agent_execute",
-    description: "Run a natural-language task on the current page of one specified browser tab using Page Agent. Page Agent is a single-page execution engine: it cannot navigate to another URL, continue after the target tab navigates, operate across tabs, or follow work into a newly opened tab. For navigation or cross-tab workflows, stop this call and use tab_* tools to select the new target tab, then start a separate operation. It injects the packaged Page Agent runtime into the tab with chrome.scripting and avoids page CSP restrictions on dynamic script tags. If injection is rejected, the page navigates, the tab is closed, or the page is unsupported, the result includes an error and alternative tab_extract/dom_* tools to use instead.",
-    schema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "The browser tab ID to operate on." },
-        instruction: { type: "string", description: "A concrete natural-language instruction for the current page." }
-      },
-      required: ["tabId", "instruction"]
-    }
-  },
-  {
     name: "tab_scroll",
     description: "Scroll a browser tab and return the updated scroll position. Use when you need to inspect another part of the currently visible page before taking another screenshot or reading the layout. If tabId is omitted, scrolls the current active tab.",
     schema: {
@@ -331,6 +361,31 @@ export const TOOLS = [
     }
   },
   {
+    name: "tab_snapshot",
+    description: "Create a compact AX-like semantic snapshot of a browser tab. Returns `content` as an indented text tree containing meaningful visible text, headings, lists, tables, forms, dialogs, interaction selectors, and control states. Empty non-interactive elements are omitted. Pass an @snapshotId#ref selector from the snapshot to DOM action tools. Refresh after navigation or stale_snapshot.",
+    schema: {
+      type: "object",
+      properties: {
+        tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
+        maxResults: { type: "number", description: "Maximum semantic and text nodes to process (default 500, max 1000)." },
+        maxTextLength: { type: "number", description: "Maximum characters retained for each text node or accessible name (default 500, range 50-2000)." },
+        maxSnapshotChars: { type: "number", description: "Maximum characters in the final serialized snapshot response (default 30000, range 2000-100000). The tree is pruned from the end when necessary." },
+        includeHidden: { type: "boolean", description: "Include hidden interaction nodes. Defaults to false." }
+      },
+      required: []
+    }
+  },
+  ...[
+    ["tab_reload", "Reload a browser tab."],
+    ["tab_back", "Navigate a browser tab backward in history."],
+    ["tab_forward", "Navigate a browser tab forward in history."]
+  ].map(([name, description]) => ({ name, description, schema: { type: "object", properties: { tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." } }, required: [] } })),
+  {
+    name: "tab_wait",
+    description: "Wait for a browser tab URL to contain or exactly equal a value.",
+    schema: { type: "object", properties: { tabId: { type: "number" }, url: { type: "string" }, match: { type: "string", enum: ["contains", "exact"] }, timeoutMs: { type: "number" }, pollIntervalMs: { type: "number" } }, required: ["url"] }
+  },
+  {
     name: "dom_query",
     description: "Query the current page DOM and return matching elements with text, attributes, positions, and match count. Use this to inspect the page structure before interacting with it.",
     schema: {
@@ -344,7 +399,49 @@ export const TOOLS = [
   },
   {
     name: "dom_click",
-    description: "Click a DOM element on the page by selector or text match. Use this for buttons, links, tabs, menus, and other clickable elements.",
+    description: "Click a DOM element using a snapshot selector such as @snap_mxyz_abcd#e3, a CSS selector, or a text locator. Prefer the selector returned by tab_snapshot for reliable interaction.",
+    schema: {
+      type: "object",
+      properties: DOM_LOCATOR_PROPERTIES,
+      required: []
+    }
+  },
+  ...[
+    ["dom_double_click", "Dispatch a synthetic double-click sequence to an element."],
+    ["dom_right_click", "Dispatch a synthetic right-click/contextmenu sequence to an element."],
+    ["dom_scroll_into_view", "Scroll an element into view without clicking or highlighting it."]
+  ].map(([name, description]) => ({ name, description, schema: { type: "object", properties: DOM_LOCATOR_PROPERTIES, required: [] } })),
+  {
+    name: "dom_check",
+    description: "Reliably set a checkbox or radio to the requested checked state and dispatch input/change events.",
+    schema: { type: "object", properties: { ...DOM_LOCATOR_PROPERTIES, checked: { type: "boolean", description: "Requested checked state." } }, required: ["checked"] }
+  },
+  {
+    name: "dom_wait",
+    description: "Wait until an element is present, absent, visible, hidden, enabled, or disabled.",
+    schema: {
+      type: "object",
+      properties: {
+        ...DOM_LOCATOR_PROPERTIES,
+        state: { type: "string", enum: ["present", "absent", "visible", "hidden", "enabled", "disabled"], description: "DOM state to wait for. Defaults to present." },
+        timeoutMs: { type: "number", description: "Maximum wait time in milliseconds (default 5000, max 10000)." },
+        pollIntervalMs: { type: "number", description: "Polling interval in milliseconds (default 100, minimum 50)." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "dom_hover",
+    description: "Scroll to an element and dispatch synthetic pointer and mouse hover events. This triggers JavaScript hover handlers but may not activate browser-native CSS :hover state.",
+    schema: {
+      type: "object",
+      properties: DOM_LOCATOR_PROPERTIES,
+      required: []
+    }
+  },
+  {
+    name: "dom_focus",
+    description: "Scroll to and focus a DOM element using a snapshot selector, CSS selector, or text locator.",
     schema: {
       type: "object",
       properties: DOM_LOCATOR_PROPERTIES,
@@ -353,7 +450,7 @@ export const TOOLS = [
   },
   {
     name: "dom_set_value",
-    description: "Set the value of an input, textarea, or select element and dispatch input/change events. Use this to fill forms or update controls.",
+    description: "Set the value of an input, textarea, or select element using a snapshot selector, CSS selector, or text locator, then dispatch input/change events.",
     schema: {
       type: "object",
       properties: {
@@ -361,6 +458,23 @@ export const TOOLS = [
         value: { type: "string", description: "The value to set on the target form element." }
       },
       required: ["value"]
+    }
+  },
+  {
+    name: "dom_select_option",
+    description: "Select one or more options in a native select element by option value or visible label, then dispatch input and change events.",
+    schema: {
+      type: "object",
+      properties: {
+        ...DOM_LOCATOR_PROPERTIES,
+        values: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          description: "Option values or visible labels to select. A non-multiple select uses the first match."
+        }
+      },
+      required: ["values"]
     }
   },
   {
@@ -410,10 +524,11 @@ export const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Dangerous tool. Execute arbitrary JavaScript on the current active page through a Sval interpreter with sandBox:false in the page's main JavaScript world. The packaged interpreter is injected with chrome.scripting when needed, so page CSP cannot block loading or evaluation. Use only when structured DOM tools are insufficient. It can access page-owned JavaScript variables and page-world APIs such as fetch and XMLHttpRequest. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
+    description: "Dangerous tool. Execute arbitrary JavaScript on a browser tab through a Sval interpreter with sandBox:false in the page's main JavaScript world. The packaged interpreter is injected with chrome.scripting when needed, so page CSP cannot block loading or evaluation. Use only when structured DOM tools are insufficient. It can access page-owned JavaScript variables and page-world APIs such as fetch and XMLHttpRequest to observe network requests and responses. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
     schema: {
       type: "object",
       properties: {
+        tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
         jsScript: { type: "string", description: "JavaScript source code to execute through Sval with sandBox:false in the page's main world. Use `return ...` if you want a result value back." }
       },
       required: ["jsScript"]
@@ -1057,7 +1172,8 @@ export const TOOLS = [
       },
       required: ["seconds"]
     }
-  }
+  },
+  CREATE_SUBAGENT_TOOL
 ];
 
 export const BUILTIN_TOOL_COUNT = TOOLS.length;
@@ -1066,7 +1182,7 @@ export const BUILTIN_TOOL_NAMES = TOOLS.map(t => t.name);
 export function getBuiltinToolGroup(toolName) {
   const name = String(toolName || "").trim();
   if (name.startsWith("tab_")) return "tabs";
-  if (name.startsWith("dom_") || name === "eval_js" || name === "page_agent_execute") return "page";
+  if (name.startsWith("dom_") || name === "eval_js") return "page";
   if (name.startsWith("group_")) return "groups";
   if (name.startsWith("window_")) return "windows";
   if (name.startsWith("history_")) return "history";
@@ -1157,17 +1273,19 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.enableBetaFeatures=true] - Whether to enable beta-only provider behavior.
  * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
  * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
- * @param {boolean} [options.pageAgentToolsEnabled=true] - Whether Page Agent should be exposed.
  * @param {boolean} [options.useCodeMode=false] - Expose exec/wait instead of individual built-in tools.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, pageAgentToolsEnabled = true, useToolSelection = false, useCodeMode = false, activeToolNames = [] } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, subagentTemplates = [], useToolSelection = false, useCodeMode = false, activeToolNames = [], excludeToolNames = [] } = {}) {
   void enableBetaFeatures;
   const activeNames = new Set(Array.isArray(activeToolNames) ? activeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
+  const excludedNames = new Set(Array.isArray(excludeToolNames) ? excludeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
   // Convert MCP tools to our internal format
   const externalTools = (useCodeMode ? [] : mcpTools).filter(t => {
+    const callName = t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name);
+    if (excludedNames.has(callName)) return false;
     if (!useToolSelection || t?._lazyLoad !== true) return true;
-    return activeNames.has(t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name));
+    return activeNames.has(callName);
   }).map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
     description: `[MCP] ${t.description || t.name}`,
@@ -1176,12 +1294,14 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 
   const builtInTools = includeBuiltins
     ? (useCodeMode ? CODE_MODE_TOOLS : TOOLS).filter(tool => {
-      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled })) return false;
+      if (excludedNames.has(tool.name)) return false;
+      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled })) return false;
       if (!useCodeMode && useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
       return true;
     })
     : [];
-  const allTools = [...builtInTools, ...externalTools].map(tool => {
+  const templateTools = useCodeMode ? buildSubagentTemplateTools(subagentTemplates) : [];
+  const allTools = [...builtInTools, ...externalTools, ...templateTools].map(tool => {
     if (tool.name === "exec" && useCodeMode) {
       return {
         ...tool,
@@ -1246,16 +1366,20 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 export function getCodeRuntimeToolDefinitions(options = {}) {
   return TOOLS
     .filter(tool => !CODE_RUNTIME_EXCLUDED_TOOL_NAMES.has(tool.name))
+    .filter(tool => {
+      const domains = Array.isArray(options.allowedBuiltinDomains) ? options.allowedBuiltinDomains : [];
+      return options.restrictBuiltinDomains !== true || domains.includes(getBuiltinToolGroup(tool.name));
+    })
     .filter(tool => isBuiltinToolAvailable(tool, options));
 }
 
-function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled }) {
+function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled }) {
   if (!supportsImageInput && tool.name === "tab_screenshot") return false;
   if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
   if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
-  if (pageAgentToolsEnabled === false && isPageAgentToolName(tool.name)) return false;
   return true;
 }
+
 
 export function listToolGroup(group, mcpTools = [], options = {}) {
   const normalizedGroup = String(group || "").trim();

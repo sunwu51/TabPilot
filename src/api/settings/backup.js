@@ -1,5 +1,6 @@
 /* global chrome */
 import { normalizeStoredModelConfig } from "../llm/core/modelProfiles";
+import { normalizeSubagentTemplates, SUBAGENT_TEMPLATES_STORAGE_KEY } from "../agent/subagentTemplates";
 import {
   ensureSettingsMigrated,
   migrateModelProfilesV2,
@@ -18,7 +19,7 @@ export const SETTINGS_BACKUP_KEYS = [
   "hideCopyButton",
   "dangerousToolSkipApproval",
   "postdogToolsEnabled",
-  "pageAgentToolsEnabled"
+  SUBAGENT_TEMPLATES_STORAGE_KEY,
 ];
 
 const LLM_CONFIG_KEYS = [
@@ -110,7 +111,9 @@ function normalizeSettingsPatch(source) {
   addBooleanPatch(patch, source, "hideCopyButton");
   addBooleanPatch(patch, source, "dangerousToolSkipApproval");
   addBooleanPatch(patch, source, "postdogToolsEnabled");
-  addBooleanPatch(patch, source, "pageAgentToolsEnabled");
+  if (Object.prototype.hasOwnProperty.call(source, SUBAGENT_TEMPLATES_STORAGE_KEY)) {
+    patch[SUBAGENT_TEMPLATES_STORAGE_KEY] = normalizeSubagentTemplates(source[SUBAGENT_TEMPLATES_STORAGE_KEY]);
+  }
 
   return patch;
 }

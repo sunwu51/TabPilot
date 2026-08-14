@@ -34,6 +34,7 @@ import {
   loadSession,
   loadSessionImageStore,
   hydrateSessionMessages,
+  persistSessionImageDataUrls,
   loadSessionMeta,
   loadSessionQueuedMessages,
   loadLastActiveSessionId,
@@ -176,6 +177,8 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
+import { buildSubagentStepTitle, runSubagent } from "./panel/api/subagentRuntime";
+import { findSubagentTemplateByToolName, filterSubagentMcpTools, normalizeSubagentTemplates } from "../../api/agent/subagentTemplates";
 import { SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import { useI18n, useLocalizedDom } from "../../i18n";
@@ -206,19 +209,46 @@ const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
+const STREAMING_BUBBLE_MIN_CHARS = 200;
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
 const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
 
-export function isParallelImageToolCall(toolCall) {
-  return toolCall?.name === "image_gen" || toolCall?.name === "image_edit";
+export function isParallelizableToolCall(toolCall) {
+  return toolCall?.name === "image_gen" || toolCall?.name === "image_edit" || toolCall?.name === "create_subagent";
+}
+
+export function finalizeInterruptedToolMessages(messages) {
+  if (!Array.isArray(messages)) return messages;
+  let changed = false;
+  const next = messages.map(message => {
+    if (!message || message._pending !== true) return message;
+    changed = true;
+    const finalized = {
+      ...message,
+      _pending: false,
+      content: JSON.stringify({ error: "Interrupted", interrupted: true })
+    };
+    if (Array.isArray(message._subagentRuns)) {
+      finalized._subagentRuns = message._subagentRuns.map(step => (
+        step?.status === "running" ? { ...step, status: "error", error: "Interrupted" } : step
+      ));
+    }
+    if (Array.isArray(message._codeToolCalls)) {
+      finalized._codeToolCalls = message._codeToolCalls.map(call => (
+        call?.status === "running" ? { ...call, status: "failed" } : call
+      ));
+    }
+    return finalized;
+  });
+  return changed ? next : messages;
 }
 
 export function buildToolExecutionBatches(toolCalls = []) {
   const batches = [];
   for (const toolCall of Array.isArray(toolCalls) ? toolCalls : []) {
-    if (!isParallelImageToolCall(toolCall)) {
+    if (!isParallelizableToolCall(toolCall)) {
       batches.push({ parallel: false, toolCalls: [toolCall] });
       continue;
     }
@@ -2058,6 +2088,15 @@ export default function AgentPanel() {
       runId: runtime.runId + 1,
       pendingApproval: null
     });
+
+    // A stopped run never calls applyToolResult for its in-flight tools, so
+    // finalize any pending placeholders now; otherwise they stay "running" forever.
+    const currentMessages = getSessionMessages(targetSessionId);
+    const finalizedMessages = finalizeInterruptedToolMessages(currentMessages);
+    if (finalizedMessages !== currentMessages) {
+      setSessionMessages(targetSessionId, finalizedMessages);
+      void autoSave(targetSessionId, finalizedMessages);
+    }
   }
 
   function isSessionAwaitingApproval(targetSessionId) {
@@ -2555,15 +2594,14 @@ export default function AgentPanel() {
       `- If the user asks about open tabs, browser context, which page they are on, or any page-related question where the target tab is unclear, first use exec to call tools.tab_list({}) and/or tools.tab_get_active({}) to refresh context.\n` +
       `- For built-in tab groups, windows, page interaction, downloads, history, automation, scheduling, images, or Postdog capabilities, use exec and discover unfamiliar built-ins through tools.listDomains/listTools/describeTool.\n` +
       `- In exec code, never write unbounded loops such as while (true) or for (;;), and avoid recursion unless its termination is clearly bounded, because synchronous infinite execution cannot be interrupted.\n` +
-      `- For page interaction, inspect the DOM before clicking, filling, styling, or locating an element. Use highlighting when it would help the user visually locate the element.\n` +
-      (config.pageAgentToolsEnabled !== false ? `- Choose page-operation tools by task shape: for single-step, precise, and locatable reading/clicking/filling, prefer tab_extract or dom_*; for a simple operation that is best expressed in JavaScript, use eval_js; for complex multi-step tasks on a page with unknown structure, prefer page_agent_execute. Page Agent is a single-page execution engine: it cannot navigate or continue after navigation, operate across tabs, or continue in a newly opened tab. For navigation or cross-tab workflows, use tab_* tools to select the new target tab and start a separate operation. Page Agent is the fallback for complex page workflows, not the fallback for eval_js.\n` : "") +
+      `- For page interaction, use tab_snapshot first and pass its @snapshotId#ref selector to DOM tools for clicking, filling, styling, or locating an element. Refresh the snapshot after navigation or stale_snapshot. Use highlighting when it would help the user visually locate the element.\n` +
       `- tab_list returns the currently open tabs with id, url, title, and capturedAt timing fields.\n` +
       `- group_list and group_get return tab group snapshots with their tabs and capturedAt timing fields.\n` +
       `- tab_get_active returns the active tab in the current extension/side-panel window with capturedAt timing fields.\n` +
       `- window_list and window_get_current return window snapshots with capturedAt timing fields.\n` +
       `- Use the capturedAt timing fields to judge whether tab or window information may be stale. If needed, refresh it again.\n` +
       `- If you need actual page content, use exec to call tools.tab_extract(...).\n` +
-      `- If a built-in page scripting tool such as tab_extract, dom_query, dom_click, dom_set_value, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tools.tab_focus(...) in exec to switch to and reactivate the tab, then retry the original tool.\n` +
+      `- If a built-in page scripting tool such as tab_extract, tab_snapshot, dom_query, dom_click, dom_hover, dom_focus, dom_set_value, dom_select_option, dom_check, dom_wait, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tools.tab_focus(...) in exec to switch to and reactivate the tab, then retry the original tool.\n` +
       `Long-term memory rules:
 ` +
       `- Some connected MCP servers may provide long-term memory capabilities, such as searching/recalling memories, returning a user profile summary, saving memories, or forgetting outdated memories. Use the MCP server summaries and discovery functions in exec to identify them.
@@ -2656,7 +2694,7 @@ export default function AgentPanel() {
 
   async function getLLMConfig() {
     await ensureSettingsMigrated();
-    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled, pageAgentToolsEnabled } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled, subagentTemplates } = await chrome.storage.local.get({
       llmConfig: {
         activeLlmModelId: "",
         llmModels: [],
@@ -2671,7 +2709,7 @@ export default function AgentPanel() {
       },
       betaFeaturesEnabled: false,
       postdogToolsEnabled: false,
-      pageAgentToolsEnabled: true
+      subagentTemplates: []
     });
     const syncedConfig = syncActiveModelFields(llmConfig);
     setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
@@ -2687,7 +2725,7 @@ export default function AgentPanel() {
       imageToolsEnabled: isImageApiConfigured(syncedConfig),
       enableBetaFeatures: betaFeaturesEnabled === true,
       postdogToolsEnabled: postdogToolsEnabled === true,
-      pageAgentToolsEnabled: pageAgentToolsEnabled !== false
+      subagentTemplates: normalizeSubagentTemplates(subagentTemplates)
     };
   }
 
@@ -2695,8 +2733,7 @@ export default function AgentPanel() {
     return {
       supportsImageInput: config.supportsImageInput === true,
       imageToolsEnabled: config.imageToolsEnabled === true,
-      postdogToolsEnabled: config.postdogToolsEnabled === true,
-      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false
+      postdogToolsEnabled: config.postdogToolsEnabled === true
     };
   }
 
@@ -3131,6 +3168,12 @@ export default function AgentPanel() {
         if (!isCurrentRun(targetSessionId, runId)) return;
         const next = buildStreamingToolArgsState(event);
         if (!next) return;
+        if (next.preview.length < STREAMING_BUBBLE_MIN_CHARS) {
+          streamedToolArgs = null;
+          sessionStreamingToolArgsRef.current.delete(targetSessionId);
+          if (activeSessionIdRef.current === targetSessionId) setStreamingToolArgs(null);
+          return;
+        }
         streamedToolArgs = next;
         sessionStreamingToolArgsRef.current.set(targetSessionId, streamedToolArgs);
         if (activeSessionIdRef.current === targetSessionId) {
@@ -3295,14 +3338,20 @@ export default function AgentPanel() {
                 supportsImageInput: config.supportsImageInput === true,
                 imageToolsEnabled: config.imageToolsEnabled === true,
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
-                pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
                 mcpTools: combinedMcpTools,
-                transformToolResult: ({ result: nestedResult }) => (
-                  replaceBase64ImageDataUrlsWithRefs(
+                transformToolResult: async ({ result: nestedResult }) => {
+                  const transformed = replaceBase64ImageDataUrlsWithRefs(
                     nestedResult,
                     dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
-                  )
-                ),
+                  );
+                  if (Array.isArray(transformed.images) && transformed.images.length > 0) {
+                    await persistSessionImageDataUrls(
+                      targetSessionId,
+                      transformed.images.map(image => ({ ref: image.ref, dataUrl: image.dataUrl }))
+                    );
+                  }
+                  return transformed;
+                },
                 onToolCall: updateExecToolCard,
                 invokeTool: async (name, args) => {
                   if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
@@ -3311,6 +3360,127 @@ export default function AgentPanel() {
                 }
               });
               tc._codeToolCalls = codeToolCalls.filter(Boolean);
+            } else if (tc.name === "create_subagent" || tc.name.startsWith("subagent_")) {
+              const template = findSubagentTemplateByToolName(config.subagentTemplates, tc.name);
+              const templateRunArgs = template
+                ? { ...resolvedArgs, name: `${template.templateName} · ${resolvedArgs.name || "run"}` }
+                : resolvedArgs;
+              const templateMcpTools = template ? filterSubagentMcpTools(combinedMcpTools, template.allowedMcpServers) : combinedMcpTools;
+              const updateSubagentCard = (steps, streamedMessage, streamedToolArgs) => {
+                const currentMsgs = getSessionMessages(targetSessionId);
+                const updatedMsgs = currentMsgs.map(currentMessage => (
+                  currentMessage._pending && currentMessage.tool_call_id === tc.id
+                    ? {
+                        ...currentMessage,
+                        _subagentRuns: steps.map(step => ({ ...step })),
+                        ...(typeof streamedMessage === "string" ? { _subagentMessage: streamedMessage } : {}),
+                        ...(streamedToolArgs ? { _subagentToolArgs: streamedToolArgs } : { _subagentToolArgs: undefined })
+                      }
+                    : currentMessage
+                ));
+                setSessionMessages(targetSessionId, updatedMsgs);
+              };
+              const subagentResult = await runSubagent(templateRunArgs, {
+                config,
+                sessionId: targetSessionId,
+                subagentId: tc.id || `subagent_${Date.now()}`,
+                mcpTools: templateMcpTools,
+                templatePrompt: template?.systemPrompt || "",
+                allowedBuiltinDomains: template?.allowedBuiltinDomains || [],
+                restrictBuiltinDomains: !!template,
+                supportsImageInput: config.supportsImageInput === true,
+                supportsToolImageInput: config.supportsToolImageInput === true,
+                imageToolsEnabled: config.imageToolsEnabled === true,
+                postdogToolsEnabled: config.postdogToolsEnabled === true,
+                omitThinkingFromRequests: config.omitThinkingFromRequests === true,
+                nativeWebSearch: config.nativeWebSearch === true,
+                transformToolResult: ({ result: nestedResult }) => (
+                  replaceBase64ImageDataUrlsWithRefs(
+                    nestedResult,
+                    dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
+                  )
+                ),
+                onStep: (_, steps) => updateSubagentCard(steps),
+                onMessage: message => {
+                  if (String(message || "").length < STREAMING_BUBBLE_MIN_CHARS) return;
+                  const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                  updateSubagentCard(pending?._subagentRuns || [], message, pending?._subagentToolArgs);
+                },
+                onToolArgsDelta: event => {
+                  const next = buildStreamingToolArgsState(event);
+                  if (!next || next.name !== "exec") return;
+                  if (next.preview.length < STREAMING_BUBBLE_MIN_CHARS) {
+                    const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                    updateSubagentCard(pending?._subagentRuns || [], pending?._subagentMessage, null);
+                    return;
+                  }
+                  const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                  updateSubagentCard(pending?._subagentRuns || [], pending?._subagentMessage, next);
+                },
+                onToolArgsDone: () => {
+                  const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                  updateSubagentCard(pending?._subagentRuns || [], pending?._subagentMessage, null);
+                },
+                isCancelled: () => !isCurrentRun(targetSessionId, runId),
+                invokeTool: async (name, args) => {
+                  if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
+                  const nestedArgs = resolveToolImageRefs(targetSessionId, args || {});
+                  if (name === "exec") {
+                    const nestedCalls = [];
+                    const execResult = await executeCodeRuntime(nestedArgs, {
+                      supportsImageInput: config.supportsImageInput === true,
+                      imageToolsEnabled: config.imageToolsEnabled === true,
+                      postdogToolsEnabled: config.postdogToolsEnabled === true,
+                      allowedBuiltinDomains: template?.allowedBuiltinDomains || [],
+                      restrictBuiltinDomains: !!template,
+                      mcpTools: templateMcpTools,
+                      transformToolResult: async ({ result: codeResult }) => {
+                        const transformed = replaceBase64ImageDataUrlsWithRefs(
+                          codeResult,
+                          dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
+                        );
+                        if (Array.isArray(transformed.images) && transformed.images.length > 0) {
+                          await persistSessionImageDataUrls(
+                            targetSessionId,
+                            transformed.images.map(image => ({ ref: image.ref, dataUrl: image.dataUrl }))
+                          );
+                        }
+                        return transformed;
+                      },
+                      onToolCall: event => {
+                        if (event?.type !== "finish") return;
+                        const nestedName = String(event.name || "tool");
+                        nestedCalls.push({
+                          name: nestedName,
+                          title: buildSubagentStepTitle({ name: nestedName, args: event.args }),
+                          summary: String(event.resultSummary || ""),
+                          status: event.status === "failed" ? "error" : (event.status || "completed"),
+                          error: event.error,
+                          durationMs: Number(event.durationMs) || 0
+                        });
+                      },
+                      invokeTool: async (nestedName, nestedNestedArgs) => {
+                        if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
+                        const resolved = resolveToolImageRefs(targetSessionId, nestedNestedArgs || {});
+                        return await executeToolWithApproval({ name: nestedName, args: resolved }, resolved);
+                      }
+                    });
+                    if (nestedCalls.length > 0) execResult._subagentNestedCalls = nestedCalls;
+                    return execResult;
+                  }
+                  return await executeToolWithApproval({ name, args: nestedArgs }, nestedArgs);
+                }
+              });
+              tc._subagentRuns = subagentResult.steps || [];
+              result = {
+                success: subagentResult.success,
+                answer: subagentResult.answer,
+                error: subagentResult.error,
+                code: subagentResult.code,
+                toolCallCount: subagentResult.toolCallCount,
+                durationMs: subagentResult.durationMs,
+                subagentTemplateName: template?.templateName
+              };
             } else {
               result = await executeToolWithApproval(tc, resolvedArgs);
             }
@@ -3323,7 +3493,9 @@ export default function AgentPanel() {
               args: resolvedArgs,
               result,
               durationMs,
-              codeToolCalls: tc.name === "exec" ? tc._codeToolCalls : undefined
+              codeToolCalls: tc.name === "exec" ? tc._codeToolCalls : undefined,
+                subagentRuns: (tc.name === "create_subagent" || tc.name.startsWith("subagent_")) ? tc._subagentRuns : undefined,
+                subagentToolArgs: (tc.name === "create_subagent" || tc.name.startsWith("subagent_")) ? tc._subagentToolArgs : undefined
             };
           };
 
@@ -3396,7 +3568,7 @@ export default function AgentPanel() {
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
       postdogToolsEnabled: config.postdogToolsEnabled === true,
-      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
+      subagentTemplates: config.subagentTemplates || [],
       imageToolsEnabled: config.imageToolsEnabled === true,
       useToolSelection: true,
       useCodeMode: true,

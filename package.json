@@ -1,15 +1,14 @@
 {
   "name": "tabpilot",
   "private": true,
-  "version": "1.5.6.9",
+  "version": "1.5.6.10",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:nanollm-converter && vite build",
+    "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:csp-page": "node scripts/csp-test-server.mjs",
-    "build:nanollm-converter": "node scripts/build-nanollm-converter.mjs",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

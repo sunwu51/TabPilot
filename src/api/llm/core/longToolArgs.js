@@ -1,4 +1,5 @@
 export const LONG_TOOL_ARGUMENT_FIELDS = {
+  exec: ["code"],
   stash_in_browser: ["info"],
   html_playground: ["html", "css", "js"],
   download: ["content"]

@@ -56,10 +56,7 @@ import {
     MCP_OAUTH_ALARM_PREFIX,
     refreshMcpServerToken
 } from "./api/mcp/oauth";
-import { API_TYPES } from "./api/llm/core/config";
-import { resolveLlmRequestUrl } from "./api/llm/core/endpoint";
-import { buildLlmAuthHeaders, resolveActiveLlmConfig } from "./api/llm/core/modelProfiles";
-import { chatRequestToProvider, providerResponseToChat } from "./vendor/nanollm-protocol-converter";
+import { buildLlmAuthHeaders } from "./api/llm/core/modelProfiles";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -71,59 +68,6 @@ const SCHEDULE_FIRE_ALARM_PREFIX = "schedule-fire:";
 const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
 const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const PASSWORD_PLACEHOLDER = "1A2b3!4399";
-
-async function handlePageAgentFetch(request = {}) {
-    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
-    const profile = resolveActiveLlmConfig(llmConfig);
-    let body;
-    try {
-        body = JSON.parse(String(request.body || ""));
-    } catch {
-        return { success: false, error: "Page Agent request body is not valid JSON" };
-    }
-    const provider = profile.apiType;
-    if (![API_TYPES.OPENAI_CHAT_COMPLETIONS, API_TYPES.OPENAI_RESPONSES, API_TYPES.ANTHROPIC].includes(provider)) {
-        return { success: false, error: `Unsupported Page Agent LLM API type: ${provider}` };
-    }
-    const expectedChatUrl = `${resolveLlmRequestUrl(provider, profile.baseUrl)
-        .replace(/\/(chat\/completions|responses|messages)\/?$/i, "")}/chat/completions`;
-    if (request.method !== "POST" || request.url !== expectedChatUrl) {
-        return { success: false, error: "Page Agent request URL is not the expected Chat Completions compatibility endpoint" };
-    }
-
-    body.model = profile.model;
-    const requestBody = provider === API_TYPES.OPENAI_CHAT_COMPLETIONS
-        ? body
-        : chatRequestToProvider(body, provider);
-    requestBody.model = profile.model;
-    requestBody.stream = false;
-    const endpoint = resolveLlmRequestUrl(provider, profile.baseUrl);
-    const headers = provider === API_TYPES.ANTHROPIC
-        ? {
-            "Content-Type": "application/json",
-            ...buildLlmAuthHeaders(profile, "x-api-key"),
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true"
-        }
-        : { "Content-Type": "application/json", ...buildLlmAuthHeaders(profile) };
-    const response = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody)
-    });
-    const upstreamBody = await response.text();
-    let responseBody = upstreamBody;
-    if (response.ok && provider !== API_TYPES.OPENAI_CHAT_COMPLETIONS) {
-        responseBody = JSON.stringify(providerResponseToChat(JSON.parse(upstreamBody), provider));
-    }
-    return {
-        success: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries()),
-        body: responseBody
-    };
-}
 
 function removeLegacyGithubSyncData() {
     void chrome.alarms?.clear("github-sync");
@@ -945,12 +889,6 @@ async function handlePostdogManagerMessage(action, payload = {}) {
  * communicates with the auto-injected content script (no host_permissions needed).
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg?.type === "page_agent_fetch" && sender?.tab?.id != null) {
-        handlePageAgentFetch(msg.request)
-            .then(sendResponse)
-            .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
-        return true;
-    }
     if (msg?.type === "mcp_oauth" && (msg.action === "authorize" || msg.action === "refresh")) {
         const operation = msg.action === "refresh"
             ? refreshMcpServerToken(msg.serverUrl)

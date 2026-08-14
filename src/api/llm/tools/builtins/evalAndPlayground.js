@@ -4,8 +4,8 @@ import { deflateStringToQueryParam } from "../../../../utils/playgroundCodec";
 
 const SVAL_RUNTIME_FILE = "vendor/sval.min.js";
 
-export async function _execEvalJs({ jsScript }) {
-  const resolved = await _resolveControllableTab(undefined, "run code on");
+export async function _execEvalJs({ tabId, jsScript }) {
+  const resolved = await _resolveControllableTab(tabId, "run code on");
   if (resolved.error) return { error: resolved.error };
 
   // Sval's sandBox:false keeps the interpreted code in the page's main

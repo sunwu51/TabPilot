@@ -127,7 +127,7 @@ export async function _execTabList({ maxSize = -1, briefUrl = false } = {}) {
   };
 }
 export async function _execTabExtract({ tabId }) {
-  const resolved = await _resolveControllableTab(tabId, "read");
+  const resolved = await _waitForReadableTab(tabId);
   if (resolved.error) return { error: resolved.error };
   try {
     const { extractTextLimit = 8000 } = await chrome.storage.local.get({ extractTextLimit: 8000 });
@@ -170,6 +170,42 @@ export async function _execTabExtract({ tabId }) {
     };
   }
 }
+
+async function _waitForReadableTab(tabId, timeoutMs = 10000) {
+  let resolvedTabId = tabId;
+  if (resolvedTabId == null) {
+    const activeTab = await _getActiveTabInCurrentExtensionWindow();
+    if (!activeTab?.id) return { error: "No active tab found" };
+    resolvedTabId = activeTab.id;
+  }
+
+  let currentTab;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    try {
+      currentTab = await chrome.tabs.get(resolvedTabId);
+    } catch (error) {
+      return { error: error?.message || "Tab not found" };
+    }
+
+    const url = currentTab.url || currentTab.pendingUrl || "";
+    if (/^https?:\/\//i.test(url)) {
+      if (currentTab.status !== "loading") return { tab: currentTab };
+    } else if (currentTab.url && !/^https?:\/\//i.test(currentTab.url)) {
+      return { error: `Cannot read this page (${currentTab.url.split("://")[0] || "unknown"} protocol)` };
+    }
+
+    await _sleepMs(100);
+  }
+
+  const url = currentTab?.url || currentTab?.pendingUrl || "";
+  if (!/^https?:\/\//i.test(url)) {
+    return { error: `Cannot read this page (${url.split("://")[0] || "unknown"} protocol)` };
+  }
+  return { error: "Timed out waiting for the page to finish loading", hint: "Retry tab_extract after the page has loaded." };
+}
 export async function _execTabScroll({ tabId, deltaY, pageFraction, position, behavior }) {
   const resolved = await _resolveControllableTab(tabId, "scroll");
   if (resolved.error) return { error: resolved.error };
@@ -186,16 +222,46 @@ export async function _execTabOpen({ url, active }) {
   const shouldFocus = active !== false; // default true
   const tab = await chrome.tabs.create({ url, active: shouldFocus });
   if (shouldFocus) await chrome.windows.update(tab.windowId, { focused: true });
+
+  let loadedTab = tab;
+  if (/^https?:\/\//i.test(url) && tab.id != null) {
+    const waited = await _waitForReadableTab(tab.id, 9000);
+    if (waited.error) {
+      if (waited.error === "Timed out waiting for the page to finish loading") {
+        return {
+          success: true,
+          active: shouldFocus,
+          status: "loading",
+          tabId: tab.id,
+          url: tab.pendingUrl || tab.url || url,
+          title: tab.title || "",
+          windowId: tab.windowId,
+          groupId: _normalizeGroupId(tab.groupId),
+          splitViewId: _normalizeSplitViewId(tab.splitViewId),
+          ..._buildLastAccessed(tab.lastAccessed)
+        };
+      }
+      return {
+        error: waited.error,
+        hint: waited.hint || "The tab was created, but the page did not become readable in time.",
+        tabId: tab.id,
+        url: tab.pendingUrl || tab.url || url
+      };
+    }
+    loadedTab = waited.tab;
+  }
+
   return {
     success: true,
     active: shouldFocus,
-    tabId: tab.id,
-    url: tab.pendingUrl || tab.url || url,
-    title: tab.title || "",
-    windowId: tab.windowId,
-    groupId: _normalizeGroupId(tab.groupId),
-    splitViewId: _normalizeSplitViewId(tab.splitViewId),
-    ..._buildLastAccessed(tab.lastAccessed)
+    status: loadedTab.status || "complete",
+    tabId: loadedTab.id,
+    url: loadedTab.url || loadedTab.pendingUrl || url,
+    title: loadedTab.title || "",
+    windowId: loadedTab.windowId,
+    groupId: _normalizeGroupId(loadedTab.groupId),
+    splitViewId: _normalizeSplitViewId(loadedTab.splitViewId),
+    ..._buildLastAccessed(loadedTab.lastAccessed)
   };
 }
 export async function _execTabFocus({ tabId }) {
@@ -223,6 +289,38 @@ export async function _execTabFocus({ tabId }) {
     movedToCurrentWindow,
     ..._buildLastAccessed(tab.lastAccessed)
   };
+}
+
+async function _execTabNavigation(tabId, action) {
+  const resolved = await _resolveControllableTab(tabId, "navigate");
+  if (resolved.error) return { error: resolved.error };
+  if (action === "reload") await chrome.tabs.reload(resolved.tab.id);
+  else if (action === "back") await chrome.tabs.goBack(resolved.tab.id);
+  else await chrome.tabs.goForward(resolved.tab.id);
+  return { success: true, action, tabId: resolved.tab.id, windowId: resolved.tab.windowId, previousUrl: resolved.tab.url };
+}
+
+export async function _execTabReload({ tabId }) { return _execTabNavigation(tabId, "reload"); }
+export async function _execTabBack({ tabId }) { return _execTabNavigation(tabId, "back"); }
+export async function _execTabForward({ tabId }) { return _execTabNavigation(tabId, "forward"); }
+
+export async function _execTabWait({ tabId, url, match = "contains", timeoutMs = 5000, pollIntervalMs = 100 }) {
+  const resolved = await _resolveControllableTab(tabId, "wait for");
+  if (resolved.error) return { error: resolved.error };
+  if (!url) return { error: "Please provide a URL pattern" };
+  const limit = Math.min(10000, Math.max(0, Number(timeoutMs) || 5000));
+  const interval = Math.min(1000, Math.max(50, Number(pollIntervalMs) || 100));
+  const startedAt = Date.now();
+  const deadline = startedAt + limit;
+  let currentUrl = resolved.tab.url || resolved.tab.pendingUrl || "";
+  while (Date.now() <= deadline) {
+    const tab = await chrome.tabs.get(resolved.tab.id);
+    currentUrl = tab.url || tab.pendingUrl || "";
+    const matches = match === "exact" ? currentUrl === url : currentUrl.includes(url);
+    if (matches) return { success: true, action: "wait_url", match, url: currentUrl, elapsedMs: Date.now() - startedAt, tabId: tab.id, windowId: tab.windowId };
+    await _sleepMs(interval);
+  }
+  return { error: `Timed out waiting for URL: ${url}`, match, timeoutMs: limit, url: currentUrl };
 }
 export async function _execTabClose({ tabIds }) {
   const ids = Array.isArray(tabIds) ? tabIds : [tabIds];

@@ -212,6 +212,38 @@ export async function loadSessionImageStore(id) {
   return result[key] && typeof result[key] === "object" ? result[key] : {};
 }
 
+/**
+ * Persist image base64 payloads into the session image store immediately, at
+ * the moment a tool produces them. This decouples image storage from the tool
+ * result message that happens to display them, so nested execution (e.g. a
+ * sub-agent) can store images without bubbling them into its returned result.
+ * @param {string} id - session ID
+ * @param {Array<{ref?: string, dataUrl?: string}>} entries
+ * @returns {Promise<string[]>} persisted refs (deduplicated, validated)
+ */
+export async function persistSessionImageDataUrls(id, entries = []) {
+  const normalizedId = String(id || "").trim();
+  const normalizedEntries = (Array.isArray(entries) ? entries : [])
+    .map(entry => ({ ref: normalizeImageStoreKey(entry?.ref), dataUrl: String(entry?.dataUrl || "") }))
+    .filter(entry => entry.ref && isBase64DataUrl(entry.dataUrl));
+  if (!normalizedId || normalizedEntries.length === 0) return [];
+
+  const key = getSessionImageStoreKey(normalizedId);
+  const result = await chrome.storage.local.get({ [key]: {} });
+  const imageStore = result[key] && typeof result[key] === "object" ? result[key] : {};
+  let changed = false;
+  const refs = [];
+  for (const entry of normalizedEntries) {
+    if (imageStore[entry.ref] !== entry.dataUrl) {
+      imageStore[entry.ref] = entry.dataUrl;
+      changed = true;
+    }
+    refs.push(entry.ref);
+  }
+  if (changed) await chrome.storage.local.set({ [key]: imageStore });
+  return refs;
+}
+
 export async function recordSessionImageUpload(id, ref, upload = {}) {
   const normalizedRef = normalizeImageStoreKey(ref);
   const uploadedUrl = String(upload?.url || "").trim();
@@ -462,6 +494,14 @@ function collectReferencedImageStoreKeys(messages) {
     if (typeof value === "string") {
       if (value.startsWith(SESSION_IMAGE_STORE_REF_PREFIX)) {
         addKey(value.slice(SESSION_IMAGE_STORE_REF_PREFIX.length));
+      }
+      // Also recognize runtime deRef placeholders embedded in text (e.g. the
+      // markdown image syntax a sub-agent echoes in its answer), so images
+      // persisted at the hook are not swept as orphans.
+      const deRefPattern = /[|]deRef:(img_[A-Za-z0-9_-]+)[|]/g;
+      let match;
+      while ((match = deRefPattern.exec(value)) !== null) {
+        addKey(match[1]);
       }
       return;
     }

@@ -89,7 +89,7 @@ describe("llm tool definitions", () => {
     });
     const names = tools.map(tool => tool.name);
 
-    expect(names).toEqual(["exec", "wait", "plan_create_for_session", "plan_update_for_session", "request_user_input"]);
+    expect(names).toEqual(["exec", "wait", "plan_create_for_session", "plan_update_for_session", "request_user_input", "create_subagent"]);
     const execDescription = tools.find(tool => tool.name === "exec")?.description;
     expect(execDescription).toContain("while (true)");
     expect(execDescription).toContain("for (;;)");
@@ -168,11 +168,6 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
   });
 
-  it("exposes Page Agent by default and hides it when explicitly disabled", () => {
-    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).toContain("page_agent_execute");
-    expect(namesFor(API_TYPES.OPENAI_RESPONSES, { pageAgentToolsEnabled: false })).not.toContain("page_agent_execute");
-  });
-
   it("exposes Postdog tools for saved API request workflows when enabled", () => {
     const names = namesFor(API_TYPES.OPENAI_RESPONSES, { postdogToolsEnabled: true });
 
@@ -193,6 +188,23 @@ describe("llm tool definitions", () => {
     expect(evalJs.description).toContain("main JavaScript world");
     expect(evalJs.description).toContain("chrome.scripting");
     expect(evalJs.description).toContain("XMLHttpRequest");
+    expect(evalJs.description).toContain("network requests and responses");
+    expect(evalJs.parameters.properties.tabId).toBeDefined();
+  });
+
+  it("exposes snapshot selectors through the existing selector parameter", () => {
+    const tools = getTools(API_TYPES.OPENAI_RESPONSES);
+    const snapshot = tools.find(tool => tool.name === "tab_snapshot");
+    const click = tools.find(tool => tool.name === "dom_click");
+
+    expect(snapshot.parameters.properties).toHaveProperty("tabId");
+    expect(snapshot.parameters.properties).toHaveProperty("maxTextLength");
+    expect(snapshot.parameters.properties).toHaveProperty("maxSnapshotChars");
+    expect(snapshot.description).toContain("@snapshotId#ref");
+    expect(click.parameters.properties).toHaveProperty("selector");
+    expect(click.parameters.properties.selector.description).toContain("@snapshotId#ref");
+    expect(click.parameters.properties).not.toHaveProperty("snapshotId");
+    expect(click.parameters.properties).not.toHaveProperty("ref");
   });
 
   it("describes image_model_id as a configured image profile selector", () => {
@@ -214,7 +226,11 @@ describe("llm tool definitions", () => {
     expect(names).toContain("tool_list_group");
     expect(names).toContain("tool_enable");
     expect(names).toContain("tab_extract");
+    expect(names).toContain("tab_snapshot");
     expect(names).toContain("dom_query");
+    expect(names).toContain("dom_hover");
+    expect(names).toContain("dom_focus");
+    expect(names).toContain("dom_select_option");
     expect(names).not.toContain("download_search");
   });
 
@@ -263,5 +279,34 @@ describe("llm tool definitions", () => {
       useToolSelection: true,
       activeToolNames: ["mcp_github_search_issues"]
     }).map(tool => tool.name)).toContain("mcp_github_search_issues");
+  });
+
+  it("exposes create_subagent as an always-available core tool", () => {
+    expect(BUILTIN_TOOL_NAMES).toContain("create_subagent");
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES, { useToolSelection: true })).toContain("create_subagent");
+    const tool = getTools(API_TYPES.OPENAI_RESPONSES).find(item => item.name === "create_subagent");
+    expect(tool.parameters.required).toEqual(["name", "task"]);
+    expect(tool.description).toContain("single-layer");
+  });
+
+  it("excludes requested tool names from the built-in list", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, { excludeToolNames: ["create_subagent", "tab_open"] });
+
+    expect(names).not.toContain("create_subagent");
+    expect(names).not.toContain("tab_open");
+    expect(names).toContain("tab_list");
+  });
+
+  it("keeps create_subagent out of the code runtime tool surface", () => {
+    expect(getCodeRuntimeToolDefinitions().map(tool => tool.name)).not.toContain("create_subagent");
+  });
+
+  it("limits the sub-agent to exec/wait in code mode when host-context tools are excluded", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, {
+      useCodeMode: true,
+      excludeToolNames: ["create_subagent", "plan_create_for_session", "plan_update_for_session", "request_user_input"]
+    });
+
+    expect(names).toEqual(["exec", "wait"]);
   });
 });

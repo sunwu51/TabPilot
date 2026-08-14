@@ -29,7 +29,7 @@ vi.mock("./McpConfig", () => ({ default: () => null }));
 vi.mock("./UserProfilePanel", () => ({ default: () => null }));
 vi.mock("./SkillsConfig", () => ({ default: () => null }));
 
-import AgentPanel, { buildImageModelSystemPrompt, buildToolExecutionBatches, runToolExecutionBatches } from "./AgentPanel";
+import AgentPanel, { buildImageModelSystemPrompt, buildToolExecutionBatches, finalizeInterruptedToolMessages, runToolExecutionBatches } from "./AgentPanel";
 import { getChromeStorageSnapshot, resetChromeMock } from "../../../test/setup";
 
 describe("AgentPanel initial session restore", () => {
@@ -75,6 +75,30 @@ describe("AgentPanel initial session restore", () => {
     expect(prompt).not.toContain("chat_completions");
     expect(prompt).not.toContain("token");
     expect(prompt).not.toContain("api.openai.com");
+  });
+
+  it("finalizes pending tool messages as interrupted", () => {
+    const messages = [
+      { role: "user", content: "hi" },
+      {
+        role: "tool",
+        tool_call_id: "c1",
+        tool_name: "create_subagent",
+        content: null,
+        _pending: true,
+        _subagentRuns: [{ name: "tab_list", status: "running" }, { name: "tab_open", status: "completed" }]
+      },
+      { role: "tool", tool_call_id: "c2", tool_name: "tab_list", content: "{}" }
+    ];
+
+    const result = finalizeInterruptedToolMessages(messages);
+
+    expect(result[0]).toEqual(messages[0]);
+    expect(result[1]._pending).toBe(false);
+    expect(result[1].content).toContain("Interrupted");
+    expect(result[1]._subagentRuns[0].status).toBe("error");
+    expect(result[1]._subagentRuns[1].status).toBe("completed");
+    expect(result[2]).toEqual(messages[2]);
   });
 
   it("batches only consecutive image tools for parallel execution", () => {

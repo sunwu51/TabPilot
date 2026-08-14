@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import ChatMessage, { EditableChatImage } from "./ChatMessage";
+import { useI18n } from "../../i18n";
 
 hljs.registerLanguage("javascript", javascript);
 
@@ -215,6 +216,7 @@ function ToolMessageSequence({
 
 /* eslint-disable react/prop-types */
 function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
   const result = summarizeToolResultMessage(item.resultMessage);
@@ -222,16 +224,25 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
   const isError = result.isError;
   const name = item.name || result.toolName || "tool";
   const isExec = name === "exec";
+  const isSubagent = name === "create_subagent" || name.startsWith("subagent_");
   const codeToolCalls = item.resultMessage?._codeToolCalls || [];
+  const subagentRuns = item.resultMessage?._subagentRuns || [];
+  const subagentName = item.resultMessage?._subagentTemplateName || (typeof item.input?.name === "string" ? item.input.name.trim() : "");
+  const subagentMessage = item.resultMessage?._subagentMessage || "";
+  const subagentToolArgs = item.resultMessage?._subagentToolArgs;
   const inputDetail = isExec ? "" : formatToolInputDetail(item.input);
   const inputDisplay = formatToolDisplayValue(item.input);
   const label = isExec
     ? formatExecToolLabel(codeToolCalls)
-    : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
+    : isSubagent
+      ? formatSubagentLabel(subagentRuns, t, subagentName)
+      : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
   const durationMs = item.resultMessage?.durationMs;
   const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
   const icon = hasResult ? (isError ? "❌" : "✅") : "⏳";
-  const pendingHint = !hasResult && isImageToolName(name) ? "图片生成中..." : "";
+  const pendingHint = !hasResult
+    ? (isSubagent ? t("subagentRunning") : (isImageToolName(name) ? "图片生成中..." : ""))
+    : "";
 
   return (
     <div className={`tool-result-msg ${isError ? "tool-result-error" : ""}`}>
@@ -246,6 +257,15 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
         <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}</span>
       </div>
       {pendingHint && <div className="tool-result-pending-hint loading-dots">{pendingHint}</div>}
+      {isSubagent && subagentMessage && (
+        <div className="subagent-message-bubble">{subagentMessage}</div>
+      )}
+      {isSubagent && subagentToolArgs?.name === "exec" && (
+        <div className="subagent-message-bubble subagent-code-bubble">
+          <div className="subagent-code-bubble-title">正在生成 exec JavaScript</div>
+          <pre>{subagentToolArgs.preview}</pre>
+        </div>
+      )}
       {expanded && result.displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
           <EditableChatImage
@@ -261,13 +281,29 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
       )}
       {expanded && (
         <>
-          <div className="tool-merged-section-label">调用参数</div>
+          <div className="tool-merged-section-label">{t("toolArgsSection")}</div>
           {isExec
             ? <HighlightedExecCode code={item.input?.code} />
             : <pre className={buildToolContentClassName(inputDisplay.isJson)}>{inputDisplay.text}</pre>}
+          {isSubagent && subagentRuns.length > 0 && (
+            <>
+              <div className="tool-merged-section-label">{t("subagentRunsSection")}</div>
+              <div className="subagent-runs">
+                {subagentRuns.map((run, index) => (
+                  <div key={run?.id || `subagent-run-${index}`} className={`subagent-run subagent-run-${run?.status || "running"}`}>
+                    <span className="subagent-run-status">{run?.status === "error" ? "❌" : run?.status === "running" ? "⏳" : "✅"}</span>
+                    <span className="subagent-run-title">{run?.title || run?.name || "tool"}</span>
+                    {run?.status === "error" && (run?.error || run?.summary)
+                      ? <span className="subagent-run-summary">{String(run.error || run.summary)}</span>
+                      : null}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
           {hasResult && (
             <>
-              <div className="tool-merged-section-label">执行结果</div>
+              <div className="tool-merged-section-label">{t("toolResultSection")}</div>
               <pre className={buildToolContentClassName(result.isJson)}>{result.displayContent}</pre>
             </>
           )}
@@ -759,6 +795,15 @@ function HighlightedExecCode({ code }) {
       <code className="hljs language-javascript" dangerouslySetInnerHTML={{ __html: highlighted }} />
     </pre>
   );
+}
+
+function formatSubagentLabel(runs, t, name = "") {
+  const prefix = name || "subagent";
+  if (!Array.isArray(runs) || runs.length === 0) return prefix;
+  const finished = runs.filter(run => run?.status === "completed" || run?.status === "error").length;
+  const failed = runs.filter(run => run?.status === "error").length;
+  const stepsLabel = t("subagentSteps");
+  return `${prefix} · ${finished}/${runs.length} ${stepsLabel}${failed > 0 ? ` · ${failed} ${t("subagentFailed")}` : ""}`;
 }
 
 function formatExecToolLabel(toolCalls) {
