@@ -217,6 +217,32 @@ export function isParallelizableToolCall(toolCall) {
   return toolCall?.name === "image_gen" || toolCall?.name === "image_edit" || toolCall?.name === "create_subagent";
 }
 
+export function finalizeInterruptedToolMessages(messages) {
+  if (!Array.isArray(messages)) return messages;
+  let changed = false;
+  const next = messages.map(message => {
+    if (!message || message._pending !== true) return message;
+    changed = true;
+    const finalized = {
+      ...message,
+      _pending: false,
+      content: JSON.stringify({ error: "Interrupted", interrupted: true })
+    };
+    if (Array.isArray(message._subagentRuns)) {
+      finalized._subagentRuns = message._subagentRuns.map(step => (
+        step?.status === "running" ? { ...step, status: "error", error: "Interrupted" } : step
+      ));
+    }
+    if (Array.isArray(message._codeToolCalls)) {
+      finalized._codeToolCalls = message._codeToolCalls.map(call => (
+        call?.status === "running" ? { ...call, status: "failed" } : call
+      ));
+    }
+    return finalized;
+  });
+  return changed ? next : messages;
+}
+
 export function buildToolExecutionBatches(toolCalls = []) {
   const batches = [];
   for (const toolCall of Array.isArray(toolCalls) ? toolCalls : []) {
@@ -2060,6 +2086,15 @@ export default function AgentPanel() {
       runId: runtime.runId + 1,
       pendingApproval: null
     });
+
+    // A stopped run never calls applyToolResult for its in-flight tools, so
+    // finalize any pending placeholders now; otherwise they stay "running" forever.
+    const currentMessages = getSessionMessages(targetSessionId);
+    const finalizedMessages = finalizeInterruptedToolMessages(currentMessages);
+    if (finalizedMessages !== currentMessages) {
+      setSessionMessages(targetSessionId, finalizedMessages);
+      void autoSave(targetSessionId, finalizedMessages);
+    }
   }
 
   function isSessionAwaitingApproval(targetSessionId) {
