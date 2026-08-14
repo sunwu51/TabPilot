@@ -198,23 +198,28 @@ export async function runSubagent(
   };
 
   const webSearchStepById = new Map();
-  const handleNativeWebSearch = (event) => {
-    if (!event || !event.id) return;
-    const labels = buildWebSearchActionLabels(event.action || {});
+  const upsertWebSearchStep = (id, action, status) => {
+    if (!id) return;
+    const labels = buildWebSearchActionLabels(action || {});
     const title = labels[0] || "web_search";
-    const status = event.status === "in_progress" ? "running" : "completed";
-    const existingIndex = webSearchStepById.get(event.id);
+    const normalizedStatus = status === "in_progress" ? "running" : "completed";
+    const existingIndex = webSearchStepById.get(id);
     if (existingIndex != null) {
       const existingStep = steps[existingIndex];
       if (existingStep) {
-        existingStep.status = status;
+        if (title !== "web_search") existingStep.title = title;
+        existingStep.status = normalizedStatus;
         emitSteps();
       }
       return;
     }
-    webSearchStepById.set(event.id, steps.length);
-    steps.push({ name: "web_search", title, summary: "", status, durationMs: 0 });
+    webSearchStepById.set(id, steps.length);
+    steps.push({ name: "web_search", title, summary: "", status: normalizedStatus, durationMs: 0 });
     emitSteps();
+  };
+  const handleNativeWebSearch = (event) => {
+    if (!event || !event.id) return;
+    upsertWebSearchStep(event.id, event.action, event.status);
   };
 
   try {
@@ -255,6 +260,14 @@ export async function runSubagent(
         return { success: false, error: error?.message || String(error), code: "SUBAGENT_LLM_ERROR", steps, durationMs: Date.now() - startedAt };
       } finally {
         activeAbort = null;
+      }
+
+      // Reconcile web search step titles from the final message, whose action
+      // is authoritative (the per-event action may arrive empty).
+      if (Array.isArray(msg?.web_searches)) {
+        for (const search of msg.web_searches) {
+          if (search?.id) upsertWebSearchStep(search.id, search.action, "completed");
+        }
       }
 
       if (!Array.isArray(msg?.toolCalls) || msg.toolCalls.length === 0) {

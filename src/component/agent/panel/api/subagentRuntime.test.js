@@ -195,9 +195,9 @@ describe("subagentRuntime", () => {
     expect(result.error).toBe("network down");
   });
 
-  it("records native web search as a visible step", async () => {
+  it("records native web search as a visible step and fills in the query when it arrives", async () => {
     streamChatMock.mockImplementationOnce((config, messages, callbacks) => {
-      callbacks.onNativeWebSearch?.({ id: "ws_1", status: "in_progress", action: { type: "search", query: "openai" } });
+      callbacks.onNativeWebSearch?.({ id: "ws_1", status: "in_progress", action: {} });
       callbacks.onNativeWebSearch?.({ id: "ws_1", status: "completed", action: { type: "search", query: "openai" } });
       callbacks.onDone({ content: "searched" });
       return () => {};
@@ -214,5 +214,25 @@ describe("subagentRuntime", () => {
     expect(result.steps[0].name).toBe("web_search");
     expect(result.steps[0].title).toBe("search: openai");
     expect(result.steps[0].status).toBe("completed");
+  });
+
+  it("reconciles web search titles from the final message's web_searches", async () => {
+    streamChatMock.mockImplementationOnce((config, messages, callbacks) => {
+      callbacks.onNativeWebSearch?.({ id: "ws_1", status: "completed", action: {} });
+      callbacks.onDone({
+        content: "searched",
+        web_searches: [{ id: "ws_1", type: "web_search_call", status: "completed", action: { type: "search", query: "reconciled query" } }]
+      });
+      return () => {};
+    });
+
+    const result = await runSubagent(
+      { task: "search the web" },
+      { config: { apiType: "openai", model: "test-model" }, invokeTool: vi.fn() }
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.steps).toHaveLength(1);
+    expect(result.steps[0].title).toBe("search: reconciled query");
   });
 });
