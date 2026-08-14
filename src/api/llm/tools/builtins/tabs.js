@@ -127,7 +127,7 @@ export async function _execTabList({ maxSize = -1, briefUrl = false } = {}) {
   };
 }
 export async function _execTabExtract({ tabId }) {
-  const resolved = await _resolveControllableTab(tabId, "read");
+  const resolved = await _waitForReadableTab(tabId);
   if (resolved.error) return { error: resolved.error };
   try {
     const { extractTextLimit = 8000 } = await chrome.storage.local.get({ extractTextLimit: 8000 });
@@ -170,6 +170,42 @@ export async function _execTabExtract({ tabId }) {
     };
   }
 }
+
+async function _waitForReadableTab(tabId, timeoutMs = 10000) {
+  let resolvedTabId = tabId;
+  if (resolvedTabId == null) {
+    const activeTab = await _getActiveTabInCurrentExtensionWindow();
+    if (!activeTab?.id) return { error: "No active tab found" };
+    resolvedTabId = activeTab.id;
+  }
+
+  let currentTab;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    try {
+      currentTab = await chrome.tabs.get(resolvedTabId);
+    } catch (error) {
+      return { error: error?.message || "Tab not found" };
+    }
+
+    const url = currentTab.url || currentTab.pendingUrl || "";
+    if (/^https?:\/\//i.test(url)) {
+      if (currentTab.status !== "loading") return { tab: currentTab };
+    } else if (currentTab.url && !/^https?:\/\//i.test(currentTab.url)) {
+      return { error: `Cannot read this page (${currentTab.url.split("://")[0] || "unknown"} protocol)` };
+    }
+
+    await _sleepMs(100);
+  }
+
+  const url = currentTab?.url || currentTab?.pendingUrl || "";
+  if (!/^https?:\/\//i.test(url)) {
+    return { error: `Cannot read this page (${url.split("://")[0] || "unknown"} protocol)` };
+  }
+  return { error: "Timed out waiting for the page to finish loading", hint: "Retry tab_extract after the page has loaded." };
+}
 export async function _execTabScroll({ tabId, deltaY, pageFraction, position, behavior }) {
   const resolved = await _resolveControllableTab(tabId, "scroll");
   if (resolved.error) return { error: resolved.error };
@@ -186,16 +222,31 @@ export async function _execTabOpen({ url, active }) {
   const shouldFocus = active !== false; // default true
   const tab = await chrome.tabs.create({ url, active: shouldFocus });
   if (shouldFocus) await chrome.windows.update(tab.windowId, { focused: true });
+
+  let loadedTab = tab;
+  if (/^https?:\/\//i.test(url) && tab.id != null) {
+    const waited = await _waitForReadableTab(tab.id, 15000);
+    if (waited.error) {
+      return {
+        error: waited.error,
+        hint: waited.hint || "The tab was created, but the page did not become readable in time.",
+        tabId: tab.id,
+        url: tab.pendingUrl || tab.url || url
+      };
+    }
+    loadedTab = waited.tab;
+  }
+
   return {
     success: true,
     active: shouldFocus,
-    tabId: tab.id,
-    url: tab.pendingUrl || tab.url || url,
-    title: tab.title || "",
-    windowId: tab.windowId,
-    groupId: _normalizeGroupId(tab.groupId),
-    splitViewId: _normalizeSplitViewId(tab.splitViewId),
-    ..._buildLastAccessed(tab.lastAccessed)
+    tabId: loadedTab.id,
+    url: loadedTab.url || loadedTab.pendingUrl || url,
+    title: loadedTab.title || "",
+    windowId: loadedTab.windowId,
+    groupId: _normalizeGroupId(loadedTab.groupId),
+    splitViewId: _normalizeSplitViewId(loadedTab.splitViewId),
+    ..._buildLastAccessed(loadedTab.lastAccessed)
   };
 }
 export async function _execTabFocus({ tabId }) {
