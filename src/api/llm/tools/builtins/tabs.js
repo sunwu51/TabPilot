@@ -225,8 +225,22 @@ export async function _execTabOpen({ url, active }) {
 
   let loadedTab = tab;
   if (/^https?:\/\//i.test(url) && tab.id != null) {
-    const waited = await _waitForReadableTab(tab.id, 15000);
+    const waited = await _waitForReadableTab(tab.id, 9000);
     if (waited.error) {
+      if (waited.error === "Timed out waiting for the page to finish loading") {
+        return {
+          success: true,
+          active: shouldFocus,
+          status: "loading",
+          tabId: tab.id,
+          url: tab.pendingUrl || tab.url || url,
+          title: tab.title || "",
+          windowId: tab.windowId,
+          groupId: _normalizeGroupId(tab.groupId),
+          splitViewId: _normalizeSplitViewId(tab.splitViewId),
+          ..._buildLastAccessed(tab.lastAccessed)
+        };
+      }
       return {
         error: waited.error,
         hint: waited.hint || "The tab was created, but the page did not become readable in time.",
@@ -240,6 +254,7 @@ export async function _execTabOpen({ url, active }) {
   return {
     success: true,
     active: shouldFocus,
+    status: loadedTab.status || "complete",
     tabId: loadedTab.id,
     url: loadedTab.url || loadedTab.pendingUrl || url,
     title: loadedTab.title || "",

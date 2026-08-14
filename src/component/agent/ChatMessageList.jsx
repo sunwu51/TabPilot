@@ -224,15 +224,18 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
   const isError = result.isError;
   const name = item.name || result.toolName || "tool";
   const isExec = name === "exec";
-  const isSubagent = name === "create_subagent";
+  const isSubagent = name === "create_subagent" || name.startsWith("subagent_");
   const codeToolCalls = item.resultMessage?._codeToolCalls || [];
   const subagentRuns = item.resultMessage?._subagentRuns || [];
+  const subagentName = item.resultMessage?._subagentTemplateName || (typeof item.input?.name === "string" ? item.input.name.trim() : "");
+  const subagentMessage = item.resultMessage?._subagentMessage || "";
+  const subagentToolArgs = item.resultMessage?._subagentToolArgs;
   const inputDetail = isExec ? "" : formatToolInputDetail(item.input);
   const inputDisplay = formatToolDisplayValue(item.input);
   const label = isExec
     ? formatExecToolLabel(codeToolCalls)
     : isSubagent
-      ? formatSubagentLabel(subagentRuns, t)
+      ? formatSubagentLabel(subagentRuns, t, subagentName)
       : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
   const durationMs = item.resultMessage?.durationMs;
   const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
@@ -254,6 +257,15 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
         <span className="tool-result-label">{icon} <span className="tool-duration">{durationSuffix}</span>{label}</span>
       </div>
       {pendingHint && <div className="tool-result-pending-hint loading-dots">{pendingHint}</div>}
+      {isSubagent && subagentMessage && (
+        <div className="subagent-message-bubble">{subagentMessage}</div>
+      )}
+      {isSubagent && subagentToolArgs?.name === "exec" && (
+        <div className="subagent-message-bubble subagent-code-bubble">
+          <div className="subagent-code-bubble-title">正在生成 exec JavaScript</div>
+          <pre>{subagentToolArgs.preview}</pre>
+        </div>
+      )}
       {expanded && result.displayImageUrl && (
         <div className="tool-result-content" style={{ paddingTop: "8px", paddingBottom: "8px" }}>
           <EditableChatImage
@@ -785,8 +797,8 @@ function HighlightedExecCode({ code }) {
   );
 }
 
-function formatSubagentLabel(runs, t) {
-  const prefix = "subagent";
+function formatSubagentLabel(runs, t, name = "") {
+  const prefix = name || "subagent";
   if (!Array.isArray(runs) || runs.length === 0) return prefix;
   const finished = runs.filter(run => run?.status === "completed" || run?.status === "error").length;
   const failed = runs.filter(run => run?.status === "error").length;

@@ -1,6 +1,7 @@
 import { DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS } from "../core/constants";
 import { API_TYPES, normalizeApiType } from "../core/config";
 import { buildMcpRuntimePrompt } from "./mcpRuntime";
+import { buildSubagentTemplateTools } from "../../agent/subagentTemplates";
 
 const DOM_LOCATOR_PROPERTIES = {
   tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
@@ -67,6 +68,8 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
 ]);
 
 export const BUILTIN_TOOL_GROUPS = {
+  tabs: "Browser tab operations",
+  page: "Page content inspection and interaction",
   groups: "Browser tab group operations",
   windows: "Browser window operations",
   history: "Browsing history search",
@@ -202,6 +205,10 @@ const CREATE_SUBAGENT_TOOL = {
   schema: {
     type: "object",
     properties: {
+      name: {
+        type: "string",
+        description: "Short human-readable name for this sub-agent, shown in the tool title."
+      },
       task: {
         type: "string",
         description: "Self-contained objective for the sub-agent. Include all required context, constraints, and the expected output format."
@@ -211,7 +218,7 @@ const CREATE_SUBAGENT_TOOL = {
         description: "Optional maximum number of tool-calling rounds for the sub-agent. Defaults to 50, maximum 50."
       }
     },
-    required: ["task"]
+    required: ["name", "task"]
   }
 };
 
@@ -265,10 +272,6 @@ export function isImageToolName(toolName) {
 
 export function isPostdogToolName(toolName) {
   return String(toolName || "").trim().startsWith("postdog_");
-}
-
-export function isPageAgentToolName(toolName) {
-  return String(toolName || "").trim() === "page_agent_execute";
 }
 
 // ==================== Tool Definitions ====================
@@ -1179,7 +1182,7 @@ export const BUILTIN_TOOL_NAMES = TOOLS.map(t => t.name);
 export function getBuiltinToolGroup(toolName) {
   const name = String(toolName || "").trim();
   if (name.startsWith("tab_")) return "tabs";
-  if (name.startsWith("dom_") || name === "eval_js" || name === "page_agent_execute") return "page";
+  if (name.startsWith("dom_") || name === "eval_js") return "page";
   if (name.startsWith("group_")) return "groups";
   if (name.startsWith("window_")) return "windows";
   if (name.startsWith("history_")) return "history";
@@ -1270,11 +1273,10 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.enableBetaFeatures=true] - Whether to enable beta-only provider behavior.
  * @param {boolean} [options.imageToolsEnabled=false] - Whether configured Image API tools should be exposed.
  * @param {boolean} [options.postdogToolsEnabled=false] - Whether Postdog tools should be exposed.
- * @param {boolean} [options.pageAgentToolsEnabled=true] - Whether Page Agent should be exposed.
  * @param {boolean} [options.useCodeMode=false] - Expose exec/wait instead of individual built-in tools.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, pageAgentToolsEnabled = true, useToolSelection = false, useCodeMode = false, activeToolNames = [], excludeToolNames = [] } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, subagentTemplates = [], useToolSelection = false, useCodeMode = false, activeToolNames = [], excludeToolNames = [] } = {}) {
   void enableBetaFeatures;
   const activeNames = new Set(Array.isArray(activeToolNames) ? activeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
   const excludedNames = new Set(Array.isArray(excludeToolNames) ? excludeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
@@ -1293,12 +1295,13 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
   const builtInTools = includeBuiltins
     ? (useCodeMode ? CODE_MODE_TOOLS : TOOLS).filter(tool => {
       if (excludedNames.has(tool.name)) return false;
-      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled })) return false;
+      if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled })) return false;
       if (!useCodeMode && useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
       return true;
     })
     : [];
-  const allTools = [...builtInTools, ...externalTools].map(tool => {
+  const templateTools = useCodeMode ? buildSubagentTemplateTools(subagentTemplates) : [];
+  const allTools = [...builtInTools, ...externalTools, ...templateTools].map(tool => {
     if (tool.name === "exec" && useCodeMode) {
       return {
         ...tool,
@@ -1363,16 +1366,20 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 export function getCodeRuntimeToolDefinitions(options = {}) {
   return TOOLS
     .filter(tool => !CODE_RUNTIME_EXCLUDED_TOOL_NAMES.has(tool.name))
+    .filter(tool => {
+      const domains = Array.isArray(options.allowedBuiltinDomains) ? options.allowedBuiltinDomains : [];
+      return options.restrictBuiltinDomains !== true || domains.includes(getBuiltinToolGroup(tool.name));
+    })
     .filter(tool => isBuiltinToolAvailable(tool, options));
 }
 
-function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled }) {
+function isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled }) {
   if (!supportsImageInput && tool.name === "tab_screenshot") return false;
   if (imageToolsEnabled !== true && isImageToolName(tool.name)) return false;
   if (postdogToolsEnabled !== true && isPostdogToolName(tool.name)) return false;
-  if (pageAgentToolsEnabled === false && isPageAgentToolName(tool.name)) return false;
   return true;
 }
+
 
 export function listToolGroup(group, mcpTools = [], options = {}) {
   const normalizedGroup = String(group || "").trim();

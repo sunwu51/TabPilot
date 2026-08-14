@@ -75,7 +75,6 @@ import {
 } from "./builtins/stash";
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
-import { initializePageAgent } from "./builtins/pageAgent";
 import {
   _execPostdogGetHistoryRun,
   _execPostdogGetRequest,
@@ -147,8 +146,6 @@ export function getBuiltinToolTimeoutSeconds(name) {
   if (name === "dom_wait" || name === "tab_wait") return 12;
   return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
 }
-
-export { initializePageAgent };
 
 const BUILTIN_TOOL_HANDLERS = {
   tab_list: (args) => _execTabList(args),

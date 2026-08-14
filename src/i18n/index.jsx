@@ -159,7 +159,6 @@ const UI_TEXT = {
   "使用浏览器内置语音合成；不同系统和浏览器可用音色不同。": "Uses browser speech synthesis; available voices vary by system and browser.",
   "危险工具无需审批（危险）": "Skip approval for dangerous tools (unsafe)",
   "开启 Postdog 工具": "Enable Postdog tools",
-  "开启 Page Agent 工具": "Enable Page Agent tools",
   "复用 Tab": "Reuse tabs",
   "清空域名复用记忆": "Clear remembered domain reuse choices",
   "开启 Beta 功能": "Enable beta features",

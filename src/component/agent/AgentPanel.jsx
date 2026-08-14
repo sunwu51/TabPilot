@@ -178,6 +178,7 @@ import {
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
 import { buildSubagentStepTitle, runSubagent } from "./panel/api/subagentRuntime";
+import { findSubagentTemplateByToolName, filterSubagentMcpTools, normalizeSubagentTemplates } from "../../api/agent/subagentTemplates";
 import { SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import { useI18n, useLocalizedDom } from "../../i18n";
@@ -208,6 +209,7 @@ const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
 const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
+const STREAMING_BUBBLE_MIN_CHARS = 200;
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
@@ -2692,7 +2694,7 @@ export default function AgentPanel() {
 
   async function getLLMConfig() {
     await ensureSettingsMigrated();
-    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled, pageAgentToolsEnabled } = await chrome.storage.local.get({
+    const { llmConfig, betaFeaturesEnabled, postdogToolsEnabled, subagentTemplates } = await chrome.storage.local.get({
       llmConfig: {
         activeLlmModelId: "",
         llmModels: [],
@@ -2707,7 +2709,7 @@ export default function AgentPanel() {
       },
       betaFeaturesEnabled: false,
       postdogToolsEnabled: false,
-      pageAgentToolsEnabled: true
+      subagentTemplates: []
     });
     const syncedConfig = syncActiveModelFields(llmConfig);
     setLlmConfigInfo(buildLlmConfigInfo(syncedConfig));
@@ -2723,7 +2725,7 @@ export default function AgentPanel() {
       imageToolsEnabled: isImageApiConfigured(syncedConfig),
       enableBetaFeatures: betaFeaturesEnabled === true,
       postdogToolsEnabled: postdogToolsEnabled === true,
-      pageAgentToolsEnabled: pageAgentToolsEnabled !== false
+      subagentTemplates: normalizeSubagentTemplates(subagentTemplates)
     };
   }
 
@@ -2731,8 +2733,7 @@ export default function AgentPanel() {
     return {
       supportsImageInput: config.supportsImageInput === true,
       imageToolsEnabled: config.imageToolsEnabled === true,
-      postdogToolsEnabled: config.postdogToolsEnabled === true,
-      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false
+      postdogToolsEnabled: config.postdogToolsEnabled === true
     };
   }
 
@@ -3167,6 +3168,12 @@ export default function AgentPanel() {
         if (!isCurrentRun(targetSessionId, runId)) return;
         const next = buildStreamingToolArgsState(event);
         if (!next) return;
+        if (next.preview.length < STREAMING_BUBBLE_MIN_CHARS) {
+          streamedToolArgs = null;
+          sessionStreamingToolArgsRef.current.delete(targetSessionId);
+          if (activeSessionIdRef.current === targetSessionId) setStreamingToolArgs(null);
+          return;
+        }
         streamedToolArgs = next;
         sessionStreamingToolArgsRef.current.set(targetSessionId, streamedToolArgs);
         if (activeSessionIdRef.current === targetSessionId) {
@@ -3331,7 +3338,6 @@ export default function AgentPanel() {
                 supportsImageInput: config.supportsImageInput === true,
                 imageToolsEnabled: config.imageToolsEnabled === true,
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
-                pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
                 mcpTools: combinedMcpTools,
                 transformToolResult: async ({ result: nestedResult }) => {
                   const transformed = replaceBase64ImageDataUrlsWithRefs(
@@ -3354,24 +3360,38 @@ export default function AgentPanel() {
                 }
               });
               tc._codeToolCalls = codeToolCalls.filter(Boolean);
-            } else if (tc.name === "create_subagent") {
-              const updateSubagentCard = steps => {
+            } else if (tc.name === "create_subagent" || tc.name.startsWith("subagent_")) {
+              const template = findSubagentTemplateByToolName(config.subagentTemplates, tc.name);
+              const templateRunArgs = template
+                ? { ...resolvedArgs, name: `${template.templateName} · ${resolvedArgs.name || "run"}` }
+                : resolvedArgs;
+              const templateMcpTools = template ? filterSubagentMcpTools(combinedMcpTools, template.allowedMcpServers) : combinedMcpTools;
+              const updateSubagentCard = (steps, streamedMessage, streamedToolArgs) => {
                 const currentMsgs = getSessionMessages(targetSessionId);
-                const updatedMsgs = currentMsgs.map(message => (
-                  message._pending && message.tool_call_id === tc.id
-                    ? { ...message, _subagentRuns: steps.map(step => ({ ...step })) }
-                    : message
+                const updatedMsgs = currentMsgs.map(currentMessage => (
+                  currentMessage._pending && currentMessage.tool_call_id === tc.id
+                    ? {
+                        ...currentMessage,
+                        _subagentRuns: steps.map(step => ({ ...step })),
+                        ...(typeof streamedMessage === "string" ? { _subagentMessage: streamedMessage } : {}),
+                        ...(streamedToolArgs ? { _subagentToolArgs: streamedToolArgs } : { _subagentToolArgs: undefined })
+                      }
+                    : currentMessage
                 ));
                 setSessionMessages(targetSessionId, updatedMsgs);
               };
-              const subagentResult = await runSubagent(resolvedArgs, {
+              const subagentResult = await runSubagent(templateRunArgs, {
                 config,
-                mcpTools: combinedMcpTools,
+                sessionId: targetSessionId,
+                subagentId: tc.id || `subagent_${Date.now()}`,
+                mcpTools: templateMcpTools,
+                templatePrompt: template?.systemPrompt || "",
+                allowedBuiltinDomains: template?.allowedBuiltinDomains || [],
+                restrictBuiltinDomains: !!template,
                 supportsImageInput: config.supportsImageInput === true,
                 supportsToolImageInput: config.supportsToolImageInput === true,
                 imageToolsEnabled: config.imageToolsEnabled === true,
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
-                pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
                 omitThinkingFromRequests: config.omitThinkingFromRequests === true,
                 nativeWebSearch: config.nativeWebSearch === true,
                 transformToolResult: ({ result: nestedResult }) => (
@@ -3381,6 +3401,26 @@ export default function AgentPanel() {
                   )
                 ),
                 onStep: (_, steps) => updateSubagentCard(steps),
+                onMessage: message => {
+                  if (String(message || "").length < STREAMING_BUBBLE_MIN_CHARS) return;
+                  const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                  updateSubagentCard(pending?._subagentRuns || [], message, pending?._subagentToolArgs);
+                },
+                onToolArgsDelta: event => {
+                  const next = buildStreamingToolArgsState(event);
+                  if (!next || next.name !== "exec") return;
+                  if (next.preview.length < STREAMING_BUBBLE_MIN_CHARS) {
+                    const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                    updateSubagentCard(pending?._subagentRuns || [], pending?._subagentMessage, null);
+                    return;
+                  }
+                  const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                  updateSubagentCard(pending?._subagentRuns || [], pending?._subagentMessage, next);
+                },
+                onToolArgsDone: () => {
+                  const pending = getSessionMessages(targetSessionId).find(item => item._pending && item.tool_call_id === tc.id);
+                  updateSubagentCard(pending?._subagentRuns || [], pending?._subagentMessage, null);
+                },
                 isCancelled: () => !isCurrentRun(targetSessionId, runId),
                 invokeTool: async (name, args) => {
                   if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
@@ -3391,8 +3431,9 @@ export default function AgentPanel() {
                       supportsImageInput: config.supportsImageInput === true,
                       imageToolsEnabled: config.imageToolsEnabled === true,
                       postdogToolsEnabled: config.postdogToolsEnabled === true,
-                      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
-                      mcpTools: combinedMcpTools,
+                      allowedBuiltinDomains: template?.allowedBuiltinDomains || [],
+                      restrictBuiltinDomains: !!template,
+                      mcpTools: templateMcpTools,
                       transformToolResult: async ({ result: codeResult }) => {
                         const transformed = replaceBase64ImageDataUrlsWithRefs(
                           codeResult,
@@ -3437,7 +3478,8 @@ export default function AgentPanel() {
                 error: subagentResult.error,
                 code: subagentResult.code,
                 toolCallCount: subagentResult.toolCallCount,
-                durationMs: subagentResult.durationMs
+                durationMs: subagentResult.durationMs,
+                subagentTemplateName: template?.templateName
               };
             } else {
               result = await executeToolWithApproval(tc, resolvedArgs);
@@ -3452,7 +3494,8 @@ export default function AgentPanel() {
               result,
               durationMs,
               codeToolCalls: tc.name === "exec" ? tc._codeToolCalls : undefined,
-              subagentRuns: tc.name === "create_subagent" ? tc._subagentRuns : undefined
+                subagentRuns: (tc.name === "create_subagent" || tc.name.startsWith("subagent_")) ? tc._subagentRuns : undefined,
+                subagentToolArgs: (tc.name === "create_subagent" || tc.name.startsWith("subagent_")) ? tc._subagentToolArgs : undefined
             };
           };
 
@@ -3525,7 +3568,7 @@ export default function AgentPanel() {
       omitThinkingFromRequests: config.omitThinkingFromRequests === true,
       enableBetaFeatures: config.enableBetaFeatures !== false,
       postdogToolsEnabled: config.postdogToolsEnabled === true,
-      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
+      subagentTemplates: config.subagentTemplates || [],
       imageToolsEnabled: config.imageToolsEnabled === true,
       useToolSelection: true,
       useCodeMode: true,

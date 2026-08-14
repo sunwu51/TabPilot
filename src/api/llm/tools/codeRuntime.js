@@ -79,7 +79,8 @@ export async function executeCodeRuntime({ code } = {}, {
   supportsImageInput = false,
   imageToolsEnabled = false,
   postdogToolsEnabled = false,
-  pageAgentToolsEnabled = true
+  allowedBuiltinDomains = [],
+  restrictBuiltinDomains = false,
 } = {}) {
   const source = String(code || "");
   if (!source.trim()) return { status: "failed", error: { code: "INVALID_CODE", message: "code is required" }, logs: [] };
@@ -90,7 +91,7 @@ export async function executeCodeRuntime({ code } = {}, {
     return { status: "failed", error: { code: "RUNTIME_UNAVAILABLE", message: "Built-in tool runtime is unavailable" }, logs: [] };
   }
 
-  const definitions = getCodeRuntimeToolDefinitions({ supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled });
+  const definitions = getCodeRuntimeToolDefinitions({ supportsImageInput, imageToolsEnabled, postdogToolsEnabled, allowedBuiltinDomains, restrictBuiltinDomains });
   const definitionsByName = new Map(definitions.map(tool => [tool.name, tool]));
   const mcpServers = groupMcpToolsByServer(mcpTools);
   const logs = [];

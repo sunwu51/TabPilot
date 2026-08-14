@@ -168,11 +168,6 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("postdog_save_environment");
   });
 
-  it("does not expose Page Agent", () => {
-    expect(namesFor(API_TYPES.OPENAI_RESPONSES)).not.toContain("page_agent_execute");
-    expect(namesFor(API_TYPES.OPENAI_RESPONSES, { pageAgentToolsEnabled: false })).not.toContain("page_agent_execute");
-  });
-
   it("exposes Postdog tools for saved API request workflows when enabled", () => {
     const names = namesFor(API_TYPES.OPENAI_RESPONSES, { postdogToolsEnabled: true });
 
@@ -290,7 +285,7 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("create_subagent");
     expect(namesFor(API_TYPES.OPENAI_RESPONSES, { useToolSelection: true })).toContain("create_subagent");
     const tool = getTools(API_TYPES.OPENAI_RESPONSES).find(item => item.name === "create_subagent");
-    expect(tool.parameters.required).toEqual(["task"]);
+    expect(tool.parameters.required).toEqual(["name", "task"]);
     expect(tool.description).toContain("single-layer");
   });
 

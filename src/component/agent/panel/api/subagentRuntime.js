@@ -24,7 +24,7 @@ const SUBAGENT_EXCLUDED_TOOL_NAMES = [
 ];
 
 const MAX_STEP_SUMMARY_CHARS = 200;
-const MAX_STEP_TITLE_DETAIL_CHARS = 40;
+const MAX_STEP_TITLE_DETAIL_CHARS = 160;
 const MAX_STEPS = SUBAGENT_MAX_ITERATIONS;
 
 const SUBAGENT_SYSTEM_PROMPT = [
@@ -118,6 +118,9 @@ function streamSubagentTurn(config, fullMessages, mcpTools, options = {}, onNati
       settled = true;
       rejectPromise(error);
     },
+    onText: options.onText,
+    onToolArgsDelta: options.onToolArgsDelta,
+    onToolArgsDone: options.onToolArgsDone,
     onNativeWebSearch
   }, mcpTools, options);
   return {
@@ -146,10 +149,18 @@ export async function runSubagent(
   { task, maxIterations } = {},
   {
     config,
+    sessionId = "",
+    subagentId = "",
+    templatePrompt = "",
+    allowedBuiltinDomains = [],
+    restrictBuiltinDomains = false,
     mcpTools = [],
     invokeTool,
     transformToolResult,
     onStep,
+    onMessage,
+    onToolArgsDelta,
+    onToolArgsDone,
     isCancelled = () => false,
     timeoutMs = SUBAGENT_TOOL_TIMEOUT_SECONDS * 1000,
     excludeToolNames = SUBAGENT_EXCLUDED_TOOL_NAMES,
@@ -157,7 +168,6 @@ export async function runSubagent(
     supportsToolImageInput = false,
     imageToolsEnabled = false,
     postdogToolsEnabled = false,
-    pageAgentToolsEnabled = true,
     useCodeMode = true,
     omitThinkingFromRequests = false,
     nativeWebSearch = false
@@ -173,6 +183,9 @@ export async function runSubagent(
   }
 
   const iterationLimit = normalizeIterationLimit(maxIterations);
+  const cacheSessionId = [String(sessionId || "").trim(), String(subagentId || "").trim()]
+    .filter(Boolean)
+    .join(":");
   const deadline = startedAt + Math.max(1, Number(timeoutMs) || SUBAGENT_TOOL_TIMEOUT_SECONDS * 1000);
   const steps = [];
   const history = [{ role: "user", content: normalizedTask }];
@@ -235,15 +248,29 @@ export async function runSubagent(
       }
 
       const apiMessages = buildApiMessages(config.apiType, history, buildOptions());
-      const fullMessages = [{ role: "system", content: SUBAGENT_SYSTEM_PROMPT }, ...apiMessages];
+      const systemPrompt = templatePrompt.trim()
+        ? `${SUBAGENT_SYSTEM_PROMPT}\n\nTemplate instructions:\n${templatePrompt.trim()}`
+        : SUBAGENT_SYSTEM_PROMPT;
+      const fullMessages = [{ role: "system", content: systemPrompt }, ...apiMessages];
 
+      let streamedText = "";
+      // Text can arrive on any turn; the latest turn is the useful progress
+      // signal while tools are running, and the final turn becomes the answer.
       const turn = streamSubagentTurn(config, fullMessages, mcpTools, {
         excludeToolNames,
         supportsImageInput,
         imageToolsEnabled,
         postdogToolsEnabled,
-        pageAgentToolsEnabled,
-        useCodeMode
+        useCodeMode,
+        allowedBuiltinDomains,
+        restrictBuiltinDomains,
+        ...(cacheSessionId ? { sessionId: cacheSessionId } : {}),
+        onText: chunk => {
+          streamedText += String(chunk || "");
+          onMessage?.(streamedText);
+        },
+        onToolArgsDelta,
+        onToolArgsDone
       }, handleNativeWebSearch);
       activeAbort = turn.abort;
       let msg;
@@ -271,6 +298,7 @@ export async function runSubagent(
       }
 
       if (!Array.isArray(msg?.toolCalls) || msg.toolCalls.length === 0) {
+        onMessage?.(extractAnswerText(msg));
         return {
           success: true,
           answer: extractAnswerText(msg),

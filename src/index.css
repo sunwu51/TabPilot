@@ -299,6 +299,45 @@ html, body, #root {
   background: #fafafa;
 }
 
+.dialog-dialog .settings-subagent-template-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.dialog-dialog .settings-subagent-template-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.dialog-dialog .settings-form-label {
+  color: #6b7280;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.dialog-dialog .settings-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+}
+
+.dialog-dialog .settings-checkbox-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.25rem 0.5rem;
+}
+
 .dialog-dialog .settings-hidden-file-input {
   display: none;
 }

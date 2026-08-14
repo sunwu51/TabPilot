@@ -118,18 +118,44 @@
 }
 
 .subagent-run-title {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
   font-weight: 600;
   color: #374151;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 260px;
 }
 
 .subagent-run-summary {
   color: #6b7280;
   word-break: break-word;
+}
+
+.subagent-message-bubble {
+  margin: 8px 0 4px 22px;
+  padding: 8px 10px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.subagent-code-bubble-title {
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.subagent-code-bubble pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .subagent-run-error {

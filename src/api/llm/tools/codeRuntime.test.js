@@ -15,15 +15,14 @@ describe("code runtime", () => {
     expect(definitions.filter(tool => !getBuiltinToolOutputSchema(tool.name))).toEqual([]);
   });
 
-  it("does not expose Page Agent to exec discovery", async () => {
+  it("exposes the available page tools to exec discovery", async () => {
     const enabled = await executeCodeRuntime({ code: "return await tools.listTools('page');" }, { invokeTool: vi.fn() });
     const disabled = await executeCodeRuntime({ code: "return await tools.listTools('page');" }, {
-      invokeTool: vi.fn(),
-      pageAgentToolsEnabled: false
+      invokeTool: vi.fn()
     });
 
-    expect(enabled.value.map(tool => tool.name)).not.toContain("page_agent_execute");
-    expect(disabled.value.map(tool => tool.name)).not.toContain("page_agent_execute");
+    expect(enabled.value.map(tool => tool.name)).toContain("dom_query");
+    expect(disabled.value.map(tool => tool.name)).toContain("dom_query");
   });
 
   it("documents core tool schemas and discovery request and result examples for exec", () => {
