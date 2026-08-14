@@ -16,6 +16,7 @@ const CODE_RUNTIME_EXCLUDED_TOOL_NAMES = new Set([
   "plan_create_for_session",
   "plan_update_for_session",
   "request_user_input",
+  "create_subagent",
   "sleep"
 ]);
 const TOOL_SELECTION_CORE_NAMES = new Set([
@@ -61,7 +62,8 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "stash_in_browser",
   "unstash_in_browser",
   "list_stashes_in_browser",
-  "remove_stash_in_browser"
+  "remove_stash_in_browser",
+  "create_subagent"
 ]);
 
 export const BUILTIN_TOOL_GROUPS = {
@@ -189,6 +191,30 @@ const USER_INPUT_TOOLS = [{
   }
 }];
 
+const CREATE_SUBAGENT_TOOL = {
+  name: "create_subagent",
+  description:
+    "Create a single-layer sub-agent to autonomously complete an independent task and return a concise summary. " +
+    "The sub-agent runs its own tool-calling loop with the same tools you have, except it cannot create further sub-agents. " +
+    "Use this to parallelize independent research, comparisons, or multi-step work. " +
+    "Give the sub-agent a self-contained task with all necessary context, because it does not see the current conversation. " +
+    "When several independent pieces of work are needed, issue multiple create_subagent calls in a single response; they run in parallel and each returns its own summary.",
+  schema: {
+    type: "object",
+    properties: {
+      task: {
+        type: "string",
+        description: "Self-contained objective for the sub-agent. Include all required context, constraints, and the expected output format."
+      },
+      maxIterations: {
+        type: "number",
+        description: "Optional maximum number of tool-calling rounds for the sub-agent. Defaults to 50, maximum 50."
+      }
+    },
+    required: ["task"]
+  }
+};
+
 const CODE_MODE_TOOLS = [
   {
     name: "exec",
@@ -229,7 +255,8 @@ const CODE_MODE_TOOLS = [
     }
   },
   ...PLAN_TOOLS,
-  ...USER_INPUT_TOOLS
+  ...USER_INPUT_TOOLS,
+  CREATE_SUBAGENT_TOOL
 ];
 
 export function isImageToolName(toolName) {
@@ -1142,7 +1169,8 @@ export const TOOLS = [
       },
       required: ["seconds"]
     }
-  }
+  },
+  CREATE_SUBAGENT_TOOL
 ];
 
 export const BUILTIN_TOOL_COUNT = TOOLS.length;
@@ -1246,13 +1274,16 @@ export function findMcpToolByCallName(mcpRegistry = [], requestedName) {
  * @param {boolean} [options.useCodeMode=false] - Expose exec/wait instead of individual built-in tools.
  * @returns {Array} formatted tool definitions
  */
-export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, pageAgentToolsEnabled = true, useToolSelection = false, useCodeMode = false, activeToolNames = [] } = {}) {
+export function getTools(apiType, mcpTools = [], { includeBuiltins = true, supportsImageInput = false, enableBetaFeatures = true, imageToolsEnabled = false, postdogToolsEnabled = false, pageAgentToolsEnabled = true, useToolSelection = false, useCodeMode = false, activeToolNames = [], excludeToolNames = [] } = {}) {
   void enableBetaFeatures;
   const activeNames = new Set(Array.isArray(activeToolNames) ? activeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
+  const excludedNames = new Set(Array.isArray(excludeToolNames) ? excludeToolNames.map(name => String(name || "").trim()).filter(Boolean) : []);
   // Convert MCP tools to our internal format
   const externalTools = (useCodeMode ? [] : mcpTools).filter(t => {
+    const callName = t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name);
+    if (excludedNames.has(callName)) return false;
     if (!useToolSelection || t?._lazyLoad !== true) return true;
-    return activeNames.has(t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name));
+    return activeNames.has(callName);
   }).map(t => ({
     name: t._toolCallName || buildMcpToolCallName(t._serverName || "server", t.name),
     description: `[MCP] ${t.description || t.name}`,
@@ -1261,6 +1292,7 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 
   const builtInTools = includeBuiltins
     ? (useCodeMode ? CODE_MODE_TOOLS : TOOLS).filter(tool => {
+      if (excludedNames.has(tool.name)) return false;
       if (!isBuiltinToolAvailable(tool, { supportsImageInput, imageToolsEnabled, postdogToolsEnabled, pageAgentToolsEnabled })) return false;
       if (!useCodeMode && useToolSelection && !TOOL_SELECTION_CORE_NAMES.has(tool.name) && !activeNames.has(tool.name)) return false;
       return true;

@@ -185,4 +185,35 @@ describe("ChatMessageList", () => {
     fireEvent.click(title.closest(".tool-result-header"));
     expect(screen.getByText(/"message": "tabs is not iterable"/)).toBeTruthy();
   });
+
+  it("shows sub-agent run summaries inside an expanded create_subagent card", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ id: "call_sub", function: { name: "create_subagent", arguments: JSON.stringify({ task: "research X" }) } }]
+          },
+          {
+            role: "tool",
+            tool_call_id: "call_sub",
+            tool_name: "create_subagent",
+            content: JSON.stringify({ success: true, answer: "done" }),
+            _subagentRuns: [
+              { name: "tab_list", title: "tab_list()", summary: "{\"count\":3}", status: "completed", durationMs: 10 },
+              { name: "tab_extract", title: "tab_extract(tabId=3)", summary: "error: boom", status: "error", durationMs: 5 }
+            ]
+          }
+        ]}
+      />
+    );
+
+    const title = screen.getByText(/创建子agent · 1\/2 步/);
+    fireEvent.click(title.closest(".tool-result-header"));
+    expect(screen.getByText("子 agent 执行记录")).toBeTruthy();
+    expect(screen.getByText("tab_list()")).toBeTruthy();
+    expect(screen.getByText("tab_extract(tabId=3)")).toBeTruthy();
+    expect(screen.getByText("error: boom")).toBeTruthy();
+  });
 });

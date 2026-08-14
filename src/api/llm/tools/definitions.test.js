@@ -89,7 +89,7 @@ describe("llm tool definitions", () => {
     });
     const names = tools.map(tool => tool.name);
 
-    expect(names).toEqual(["exec", "wait", "plan_create_for_session", "plan_update_for_session", "request_user_input"]);
+    expect(names).toEqual(["exec", "wait", "plan_create_for_session", "plan_update_for_session", "request_user_input", "create_subagent"]);
     const execDescription = tools.find(tool => tool.name === "exec")?.description;
     expect(execDescription).toContain("while (true)");
     expect(execDescription).toContain("for (;;)");
@@ -284,5 +284,34 @@ describe("llm tool definitions", () => {
       useToolSelection: true,
       activeToolNames: ["mcp_github_search_issues"]
     }).map(tool => tool.name)).toContain("mcp_github_search_issues");
+  });
+
+  it("exposes create_subagent as an always-available core tool", () => {
+    expect(BUILTIN_TOOL_NAMES).toContain("create_subagent");
+    expect(namesFor(API_TYPES.OPENAI_RESPONSES, { useToolSelection: true })).toContain("create_subagent");
+    const tool = getTools(API_TYPES.OPENAI_RESPONSES).find(item => item.name === "create_subagent");
+    expect(tool.parameters.required).toEqual(["task"]);
+    expect(tool.description).toContain("single-layer");
+  });
+
+  it("excludes requested tool names from the built-in list", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, { excludeToolNames: ["create_subagent", "tab_open"] });
+
+    expect(names).not.toContain("create_subagent");
+    expect(names).not.toContain("tab_open");
+    expect(names).toContain("tab_list");
+  });
+
+  it("keeps create_subagent out of the code runtime tool surface", () => {
+    expect(getCodeRuntimeToolDefinitions().map(tool => tool.name)).not.toContain("create_subagent");
+  });
+
+  it("limits the sub-agent to exec/wait in code mode when host-context tools are excluded", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES, {
+      useCodeMode: true,
+      excludeToolNames: ["create_subagent", "plan_create_for_session", "plan_update_for_session", "request_user_input"]
+    });
+
+    expect(names).toEqual(["exec", "wait"]);
   });
 });

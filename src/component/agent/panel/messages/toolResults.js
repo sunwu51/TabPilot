@@ -69,6 +69,7 @@ export function buildDisplayToolResultMessage(toolResult, targetSessionId, regis
     displayImageMediaType: parsedImage?.mediaType,
     durationMs: typeof toolResult.durationMs === "number" ? toolResult.durationMs : undefined,
     _codeToolCalls: Array.isArray(toolResult.codeToolCalls) ? toolResult.codeToolCalls : undefined,
+    _subagentRuns: Array.isArray(toolResult.subagentRuns) ? toolResult.subagentRuns : undefined,
   };
   if (imageRefs.length > 0) {
     message.imageRefs = imageRefs;

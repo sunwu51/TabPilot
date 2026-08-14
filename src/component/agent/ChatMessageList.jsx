@@ -222,16 +222,22 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
   const isError = result.isError;
   const name = item.name || result.toolName || "tool";
   const isExec = name === "exec";
+  const isSubagent = name === "create_subagent";
   const codeToolCalls = item.resultMessage?._codeToolCalls || [];
+  const subagentRuns = item.resultMessage?._subagentRuns || [];
   const inputDetail = isExec ? "" : formatToolInputDetail(item.input);
   const inputDisplay = formatToolDisplayValue(item.input);
   const label = isExec
     ? formatExecToolLabel(codeToolCalls)
-    : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
+    : isSubagent
+      ? formatSubagentLabel(subagentRuns)
+      : `${name}${inputDetail ? `(${inputDetail})` : ""}`;
   const durationMs = item.resultMessage?.durationMs;
   const durationSuffix = typeof durationMs === "number" ? `${durationMs}ms ` : "";
   const icon = hasResult ? (isError ? "❌" : "✅") : "⏳";
-  const pendingHint = !hasResult && isImageToolName(name) ? "图片生成中..." : "";
+  const pendingHint = !hasResult
+    ? (isSubagent ? "子agent执行中..." : (isImageToolName(name) ? "图片生成中..." : ""))
+    : "";
 
   return (
     <div className={`tool-result-msg ${isError ? "tool-result-error" : ""}`}>
@@ -265,6 +271,20 @@ function MergedToolCallBlock({ item, sessionId = "", imageRefNavigator }) {
           {isExec
             ? <HighlightedExecCode code={item.input?.code} />
             : <pre className={buildToolContentClassName(inputDisplay.isJson)}>{inputDisplay.text}</pre>}
+          {isSubagent && subagentRuns.length > 0 && (
+            <>
+              <div className="tool-merged-section-label">子 agent 执行记录</div>
+              <div className="subagent-runs">
+                {subagentRuns.map((run, index) => (
+                  <div key={run?.id || `subagent-run-${index}`} className={`subagent-run subagent-run-${run?.status || "running"}`}>
+                    <span className="subagent-run-status">{run?.status === "error" ? "❌" : run?.status === "running" ? "⏳" : "✅"}</span>
+                    <span className="subagent-run-title">{run?.title || run?.name || "tool"}</span>
+                    {run?.summary ? <span className="subagent-run-summary">{run.summary}</span> : null}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
           {hasResult && (
             <>
               <div className="tool-merged-section-label">执行结果</div>
@@ -759,6 +779,13 @@ function HighlightedExecCode({ code }) {
       <code className="hljs language-javascript" dangerouslySetInnerHTML={{ __html: highlighted }} />
     </pre>
   );
+}
+
+function formatSubagentLabel(runs) {
+  const prefix = "创建子agent";
+  if (!Array.isArray(runs) || runs.length === 0) return prefix;
+  const completed = runs.filter(run => run?.status === "completed").length;
+  return `${prefix} · ${completed}/${runs.length} 步`;
 }
 
 function formatExecToolLabel(toolCalls) {

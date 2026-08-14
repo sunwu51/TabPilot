@@ -5,7 +5,27 @@ import { findMcpRuntimeTool, groupMcpToolsByServer } from "./mcpRuntime";
 
 const MAX_CODE_CHARS = 20000;
 const MAX_LOG_ENTRIES = 100;
+const MAX_RUNTIME_CALL_SUMMARY_CHARS = 200;
 const JS_IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function truncateRuntimeSummary(text) {
+  const normalized = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= MAX_RUNTIME_CALL_SUMMARY_CHARS) return normalized;
+  return normalized.slice(0, MAX_RUNTIME_CALL_SUMMARY_CHARS - 1).trimEnd() + "…";
+}
+
+function summarizeRuntimeCallResult(result) {
+  if (result && typeof result === "object" && typeof result.error === "string" && result.error) {
+    return "error: " + truncateRuntimeSummary(result.error);
+  }
+  if (result == null) return "";
+  if (typeof result !== "object") return truncateRuntimeSummary(result);
+  try {
+    return truncateRuntimeSummary(JSON.stringify(result));
+  } catch (_e) {
+    return truncateRuntimeSummary(String(result));
+  }
+}
 
 const RUNTIME_GROUP_DESCRIPTIONS = {
   tabs: "Inspect and manage browser tabs",
@@ -119,11 +139,20 @@ export async function executeCodeRuntime({ code } = {}, {
         ? transformed.value
         : rawResult;
       appendImages(transformed?.images);
-      Object.assign(callRecord, { status: result?.error ? "failed" : "completed", durationMs: Date.now() - callStartedAt });
+      Object.assign(callRecord, {
+        status: result?.error ? "failed" : "completed",
+        durationMs: Date.now() - callStartedAt,
+        resultSummary: summarizeRuntimeCallResult(result)
+      });
       emitToolCall({ type: "finish", index: callIndex, ...callRecord });
       return result;
     } catch (error) {
-      Object.assign(callRecord, { status: "failed", durationMs: Date.now() - callStartedAt, error: error?.message || String(error) });
+      Object.assign(callRecord, {
+        status: "failed",
+        durationMs: Date.now() - callStartedAt,
+        error: error?.message || String(error),
+        resultSummary: "error: " + truncateRuntimeSummary(error?.message || String(error))
+      });
       emitToolCall({ type: "finish", index: callIndex, ...callRecord });
       throw error;
     }
@@ -153,14 +182,19 @@ export async function executeCodeRuntime({ code } = {}, {
     emitToolCall({ type: "start", index: callIndex, ...callRecord });
     try {
       const result = await operation();
-      Object.assign(callRecord, { status: "completed", durationMs: Date.now() - callStartedAt });
+      Object.assign(callRecord, {
+        status: "completed",
+        durationMs: Date.now() - callStartedAt,
+        resultSummary: summarizeRuntimeCallResult(result)
+      });
       emitToolCall({ type: "finish", index: callIndex, ...callRecord });
       return result;
     } catch (error) {
       Object.assign(callRecord, {
         status: "failed",
         durationMs: Date.now() - callStartedAt,
-        error: error?.message || String(error)
+        error: error?.message || String(error),
+        resultSummary: "error: " + truncateRuntimeSummary(error?.message || String(error))
       });
       emitToolCall({ type: "finish", index: callIndex, ...callRecord });
       throw error;

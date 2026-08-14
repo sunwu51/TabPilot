@@ -34,6 +34,7 @@ import {
   loadSession,
   loadSessionImageStore,
   hydrateSessionMessages,
+  persistSessionImageDataUrls,
   loadSessionMeta,
   loadSessionQueuedMessages,
   loadLastActiveSessionId,
@@ -176,6 +177,7 @@ import {
   buildUserMessageContent
 } from "./panel/messages/userMessage";
 import { buildApiMessages, buildPlatformSystemPrompt } from "./panel/api/buildApiMessages";
+import { buildSubagentStepTitle, runSubagent } from "./panel/api/subagentRuntime";
 import { SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
 import { useI18n, useLocalizedDom } from "../../i18n";
@@ -211,14 +213,14 @@ const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
 const SESSION_SWITCH_PERF_LABEL = "[AgentPanel session switch]";
 
-export function isParallelImageToolCall(toolCall) {
-  return toolCall?.name === "image_gen" || toolCall?.name === "image_edit";
+export function isParallelizableToolCall(toolCall) {
+  return toolCall?.name === "image_gen" || toolCall?.name === "image_edit" || toolCall?.name === "create_subagent";
 }
 
 export function buildToolExecutionBatches(toolCalls = []) {
   const batches = [];
   for (const toolCall of Array.isArray(toolCalls) ? toolCalls : []) {
-    if (!isParallelImageToolCall(toolCall)) {
+    if (!isParallelizableToolCall(toolCall)) {
       batches.push({ parallel: false, toolCalls: [toolCall] });
       continue;
     }
@@ -3296,12 +3298,19 @@ export default function AgentPanel() {
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
                 pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
                 mcpTools: combinedMcpTools,
-                transformToolResult: ({ result: nestedResult }) => (
-                  replaceBase64ImageDataUrlsWithRefs(
+                transformToolResult: async ({ result: nestedResult }) => {
+                  const transformed = replaceBase64ImageDataUrlsWithRefs(
                     nestedResult,
                     dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
-                  )
-                ),
+                  );
+                  if (Array.isArray(transformed.images) && transformed.images.length > 0) {
+                    await persistSessionImageDataUrls(
+                      targetSessionId,
+                      transformed.images.map(image => ({ ref: image.ref, dataUrl: image.dataUrl }))
+                    );
+                  }
+                  return transformed;
+                },
                 onToolCall: updateExecToolCard,
                 invokeTool: async (name, args) => {
                   if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
@@ -3310,6 +3319,91 @@ export default function AgentPanel() {
                 }
               });
               tc._codeToolCalls = codeToolCalls.filter(Boolean);
+            } else if (tc.name === "create_subagent") {
+              const updateSubagentCard = steps => {
+                const currentMsgs = getSessionMessages(targetSessionId);
+                const updatedMsgs = currentMsgs.map(message => (
+                  message._pending && message.tool_call_id === tc.id
+                    ? { ...message, _subagentRuns: steps.map(step => ({ ...step })) }
+                    : message
+                ));
+                setSessionMessages(targetSessionId, updatedMsgs);
+              };
+              const subagentResult = await runSubagent(resolvedArgs, {
+                config,
+                mcpTools: combinedMcpTools,
+                supportsImageInput: config.supportsImageInput === true,
+                supportsToolImageInput: config.supportsToolImageInput === true,
+                imageToolsEnabled: config.imageToolsEnabled === true,
+                postdogToolsEnabled: config.postdogToolsEnabled === true,
+                pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
+                omitThinkingFromRequests: config.omitThinkingFromRequests === true,
+                nativeWebSearch: config.nativeWebSearch === true,
+                transformToolResult: ({ result: nestedResult }) => (
+                  replaceBase64ImageDataUrlsWithRefs(
+                    nestedResult,
+                    dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
+                  )
+                ),
+                onStep: (_, steps) => updateSubagentCard(steps),
+                isCancelled: () => !isCurrentRun(targetSessionId, runId),
+                invokeTool: async (name, args) => {
+                  if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
+                  const nestedArgs = resolveToolImageRefs(targetSessionId, args || {});
+                  if (name === "exec") {
+                    const nestedCalls = [];
+                    const execResult = await executeCodeRuntime(nestedArgs, {
+                      supportsImageInput: config.supportsImageInput === true,
+                      imageToolsEnabled: config.imageToolsEnabled === true,
+                      postdogToolsEnabled: config.postdogToolsEnabled === true,
+                      pageAgentToolsEnabled: config.pageAgentToolsEnabled !== false,
+                      mcpTools: combinedMcpTools,
+                      transformToolResult: async ({ result: codeResult }) => {
+                        const transformed = replaceBase64ImageDataUrlsWithRefs(
+                          codeResult,
+                          dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl)
+                        );
+                        if (Array.isArray(transformed.images) && transformed.images.length > 0) {
+                          await persistSessionImageDataUrls(
+                            targetSessionId,
+                            transformed.images.map(image => ({ ref: image.ref, dataUrl: image.dataUrl }))
+                          );
+                        }
+                        return transformed;
+                      },
+                      onToolCall: event => {
+                        if (event?.type !== "finish") return;
+                        const nestedName = String(event.name || "tool");
+                        nestedCalls.push({
+                          name: nestedName,
+                          title: buildSubagentStepTitle({ name: nestedName, args: event.args }),
+                          summary: String(event.resultSummary || ""),
+                          status: event.status === "failed" ? "error" : (event.status || "completed"),
+                          error: event.error,
+                          durationMs: Number(event.durationMs) || 0
+                        });
+                      },
+                      invokeTool: async (nestedName, nestedNestedArgs) => {
+                        if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
+                        const resolved = resolveToolImageRefs(targetSessionId, nestedNestedArgs || {});
+                        return await executeToolWithApproval({ name: nestedName, args: resolved }, resolved);
+                      }
+                    });
+                    if (nestedCalls.length > 0) execResult._subagentNestedCalls = nestedCalls;
+                    return execResult;
+                  }
+                  return await executeToolWithApproval({ name, args: nestedArgs }, nestedArgs);
+                }
+              });
+              tc._subagentRuns = subagentResult.steps || [];
+              result = {
+                success: subagentResult.success,
+                answer: subagentResult.answer,
+                error: subagentResult.error,
+                code: subagentResult.code,
+                toolCallCount: subagentResult.toolCallCount,
+                durationMs: subagentResult.durationMs
+              };
             } else {
               result = await executeToolWithApproval(tc, resolvedArgs);
             }
@@ -3322,7 +3416,8 @@ export default function AgentPanel() {
               args: resolvedArgs,
               result,
               durationMs,
-              codeToolCalls: tc.name === "exec" ? tc._codeToolCalls : undefined
+              codeToolCalls: tc.name === "exec" ? tc._codeToolCalls : undefined,
+              subagentRuns: tc.name === "create_subagent" ? tc._subagentRuns : undefined
             };
           };
 

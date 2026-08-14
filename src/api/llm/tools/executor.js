@@ -236,5 +236,9 @@ const BUILTIN_TOOL_HANDLERS = {
 
   get_current_time: () => _execGetCurrentTime(),
   sleep: (args) => _execSleep(args),
-  wait: (args) => _execSleep(args)
+  wait: (args) => _execSleep(args),
+  // create_subagent is a host-context tool executed inline by the assistant
+  // panel (it needs the LLM config and session). This defensive handler only
+  // fires for out-of-panel contexts such as the service-worker scheduler.
+  create_subagent: () => ({ error: "create_subagent can only run inside the assistant panel", code: "SUBAGENT_HOST_ONLY" })
 };
