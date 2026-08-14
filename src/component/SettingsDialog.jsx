@@ -293,7 +293,7 @@ function SettingsDialogBody() {
   }
 
   async function handleConfirm() {
-    if (hasPendingModelDraft()) {
+    if (hasPendingSettingsDraft()) {
       const shouldDiscardDraft = window.confirm(buildPendingModelDraftMessage());
       if (!shouldDiscardDraft) return;
     }
@@ -344,8 +344,8 @@ function SettingsDialogBody() {
     }
   }
 
-  function hasPendingModelDraft() {
-    return hasPendingLlmModelDraft() || hasPendingImageModelDraft();
+  function hasPendingSettingsDraft() {
+    return hasPendingLlmModelDraft() || hasPendingImageModelDraft() || subagentTemplateFormOpen;
   }
 
   function hasPendingLlmModelDraft() {
@@ -358,9 +358,10 @@ function SettingsDialogBody() {
 
   function buildPendingModelDraftMessage() {
     const draftNames = [];
-    if (hasPendingLlmModelDraft()) draftNames.push("LLM 模型");
-    if (hasPendingImageModelDraft()) draftNames.push("图片模型");
-    return `有未保存的${draftNames.join("和")}草稿，确认要放弃这些草稿并保存其它设置吗？`;
+    if (hasPendingLlmModelDraft()) draftNames.push(t("pendingLlmModelDraft"));
+    if (hasPendingImageModelDraft()) draftNames.push(t("pendingImageModelDraft"));
+    if (subagentTemplateFormOpen) draftNames.push(t("pendingSubagentTemplateDraft"));
+    return t("confirmDiscardSettingsDrafts", { names: draftNames.join(locale === "zh" ? "和" : ", ") });
   }
 
   function currentSupabaseConfig() {
@@ -645,7 +646,7 @@ function SettingsDialogBody() {
     setSubagentTemplateFormOpen(true);
   }
 
-  function saveSubagentTemplateDraft() {
+  async function saveSubagentTemplateDraft() {
     const templateName = String(subagentTemplateDraft.templateName || "").trim();
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(templateName)) {
       toast.error("Template name must start with an English letter and contain only English letters, numbers, or underscores.");
@@ -657,17 +658,25 @@ function SettingsDialogBody() {
     }
     const normalized = normalizeSubagentTemplates([{ ...subagentTemplateDraft, id: editingSubagentTemplateId || subagentTemplateDraft.templateName }])[0];
     if (!normalized?.templateName) {
-      toast.error("请填写模板名称");
+      toast.error(t("subagentTemplateNameRequired"));
       return;
     }
     if (!normalized.description) {
-      toast.error("请填写模板介绍");
+      toast.error(t("subagentTemplateDescriptionRequired"));
       return;
     }
-    setSubagentTemplates(current => editingSubagentTemplateId
-      ? current.map(item => item.id === editingSubagentTemplateId ? normalized : item)
-      : [...current, normalized]
+    const nextTemplates = normalizeSubagentTemplates(editingSubagentTemplateId
+      ? subagentTemplates.map(item => item.id === editingSubagentTemplateId ? normalized : item)
+      : [...subagentTemplates, normalized]
     );
+    try {
+      await chrome.storage.local.set({ [SUBAGENT_TEMPLATES_STORAGE_KEY]: nextTemplates });
+      setSubagentTemplates(nextTemplates);
+      toast.success(t("subagentTemplateSaved"));
+    } catch (error) {
+      toast.error(t("subagentTemplateSaveFailed", { message: error?.message || String(error) }));
+      return;
+    }
     setSubagentTemplateFormOpen(false);
     setEditingSubagentTemplateId("");
   }
@@ -1156,40 +1165,40 @@ function SettingsDialogBody() {
         </div>
 
         <div className="settings-card">
-          <div className="settings-card-title">子 Agent 模板</div>
+          <div className="settings-card-title">{t("subagentTemplates")}</div>
           <div className="settings-subagent-template-list">
-            {subagentTemplates.length === 0 ? <span className="settings-model-empty">暂无模板</span> : subagentTemplates.map(template => (
+            {subagentTemplates.length === 0 ? <span className="settings-model-empty">{t("subagentNoTemplates")}</span> : subagentTemplates.map(template => (
               <div key={template.id} className="settings-subagent-template-row">
                 <div>
                   <strong>{template.templateName}</strong>
                   <div className="settings-api-url-hint">{template.description}</div>
                 </div>
                 <div className="settings-subagent-template-actions">
-                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => openEditSubagentTemplateForm(template)}>编辑</Button>
-                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => removeSubagentTemplate(template.id)}>删除</Button>
+                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => openEditSubagentTemplateForm(template)}>{t("subagentEditTemplate")}</Button>
+                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => removeSubagentTemplate(template.id)}>{t("subagentDeleteTemplate")}</Button>
                 </div>
               </div>
             ))}
           </div>
           <Button className="settings-model-add-toggle bg-[var(--w-indigo)]" onPress={subagentTemplateFormOpen ? () => setSubagentTemplateFormOpen(false) : openNewSubagentTemplateForm}>
-            {subagentTemplateFormOpen ? "收起模板表单" : "添加模板"}
+            {subagentTemplateFormOpen ? t("subagentHideTemplateForm") : t("subagentAddTemplate")}
           </Button>
           {subagentTemplateFormOpen && (
             <div className="settings-model-form">
-              <Input label="Template name" labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.templateName} onChange={value => setSubagentTemplateDraft(current => ({ ...current, templateName: value }))} placeholder="research_assistant" />
-              <Input label="Description" labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder="Research and cross-check information from multiple sources." />
-              <label className="settings-form-label" htmlFor="subagent-template-prompt">Instructions</label>
-              <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder="Prefer search tools and cite your sources." />
-              <div className="settings-form-label">Allowed built-in tool domains</div>
+              <Input label={t("subagentTemplateName")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.templateName} onChange={value => setSubagentTemplateDraft(current => ({ ...current, templateName: value }))} placeholder={t("subagentTemplateNamePlaceholder")} />
+              <Input label={t("subagentTemplateDescription")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder={t("subagentTemplateDescriptionPlaceholder")} />
+              <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
+              <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
+              <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
               <div className="settings-checkbox-grid">
                 {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
               </div>
-              <div className="settings-form-label">Allowed MCP servers</div>
+              <div className="settings-form-label">{t("subagentAllowedMcpServers")}</div>
               <div className="settings-checkbox-grid">
-                {mcpServerOptions.length === 0 ? <span className="settings-api-url-hint">暂无已连接的 MCP Server</span> : mcpServerOptions.map(server => <Checkbox key={server} isSelected={subagentTemplateDraft.allowedMcpServers.includes(server)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedMcpServers: selected ? [...current.allowedMcpServers, server] : current.allowedMcpServers.filter(item => item !== server) }))}><span className="text-sm">{server}</span></Checkbox>)}
+                {mcpServerOptions.length === 0 ? <span className="settings-api-url-hint">{t("subagentNoConnectedMcpServers")}</span> : mcpServerOptions.map(server => <Checkbox key={server} isSelected={subagentTemplateDraft.allowedMcpServers.includes(server)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedMcpServers: selected ? [...current.allowedMcpServers, server] : current.allowedMcpServers.filter(item => item !== server) }))}><span className="text-sm">{server}</span></Checkbox>)}
               </div>
-              <Checkbox isSelected={subagentTemplateDraft.enabled} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, enabled: selected }))}><span className="text-sm">Enable template</span></Checkbox>
-              <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={saveSubagentTemplateDraft}>{editingSubagentTemplateId ? "Save" : "Add"}</Button>
+              <Checkbox isSelected={subagentTemplateDraft.enabled} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, enabled: selected }))}><span className="text-sm">{t("subagentEnableTemplate")}</span></Checkbox>
+              <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={saveSubagentTemplateDraft}>{editingSubagentTemplateId ? t("subagentSaveTemplate") : t("subagentSubmitTemplate")}</Button>
             </div>
           )}
         </div>
