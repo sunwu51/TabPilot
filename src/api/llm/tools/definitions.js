@@ -58,6 +58,10 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "get_current_time",
   "sleep",
   "html_playground",
+  "vfs_read_file",
+  "vfs_write_file",
+  "vfs_edit_file",
+  "webide_project",
   "image_gen",
   "image_edit",
   "stash_in_browser",
@@ -74,7 +78,8 @@ export const BUILTIN_TOOL_GROUPS = {
   windows: "Browser window operations",
   history: "Browsing history search",
   downloads: "Download management",
-  automation: "Macros, stashes, and HTML playgrounds",
+  automation: "Browser macros and recorded automation",
+  storage: "Browser VFS files, stashes, and temporary HTML playgrounds",
   schedule: "Scheduled tasks and reminders",
   images: "Image generation and editing",
   postdog: "HTTP request management"
@@ -230,6 +235,7 @@ const CODE_MODE_TOOLS = [
       "Built-in tools are asynchronous functions on the global `tools` object, for example `const state = await tools.tab_list({}); return state;`. " +
       CODE_MODE_CORE_TOOL_SCHEMAS +
       CODE_MODE_TAB_OUTPUT_GUIDE +
+      "For a temporary HTML page, visual report, diagram, or UI preview that the user can inspect, use `html_playground` from the `storage` domain: call `await tools.describeTool('storage', 'html_playground')` for its schema, then `await tools.html_playground(args)`. Always pass readable multi-line HTML, CSS, and JavaScript with normal indentation; never minify or collapse playground source into one line. For a multi-file React or Vanilla JavaScript application with npm dependencies and a live esm.sh TSX preview, discover and call `webide_project` in the same storage domain, then edit its returned VFS paths with the VFS tools. " +
       "Use `await tools.listDomains()` to discover built-in and MCP domains, `await tools.listTools(domain)` to list a domain, and `await tools.describeTool(domain, name)` for full schemas. Results include `source`, `domain`, and an exact `call` example. If an MCP server and built-in domain share a name, pass `{ source: 'mcp', domain }` or `{ source: 'builtin', domain }` to disambiguate. " +
       CODE_MODE_DISCOVERY_EXAMPLES +
       "Built-in tools are called as `await tools.tool_name(args)`; MCP tools are normally called as `await tools.mcp.server_name.tool_name(args)`. Use bracket notation only when an MCP tool name is not a valid JavaScript identifier. Treat a non-null MCP outputSchema as server-declared; when it is null, inspect the actual result instead of guessing fields. " +
@@ -280,7 +286,7 @@ export const TOOLS = [
 
   {
     name: "tool_list_group",
-    description: "List the available tools in one capability group. Use this before calling a tool that is not currently available. Built-in group names are English identifiers such as groups, downloads, and automation. Lazy MCP servers are also available by their configured server names.",
+    description: "List the available tools in one capability group. Use this before calling a tool that is not currently available. Built-in group names are English identifiers such as groups, downloads, automation, and storage. Lazy MCP servers are also available by their configured server names.",
     schema: {
       type: "object",
       properties: {
@@ -847,7 +853,7 @@ export const TOOLS = [
   },
   {
     name: "stash_in_browser",
-    description: "Stash information in browser local storage with an optional expiration time. A stash is like a personal memory vault — use it to remember facts, user preferences, context, or notes that should persist across conversations. Stashes are stored per-extension and shared across all tabs. Not related to browser history or browsing records.",
+    description: "Stash information in the browser virtual filesystem with an optional expiration time. A stash is like a personal memory vault — use it to remember facts, user preferences, context, or notes that should persist across conversations. Stashes are stored per-extension and shared across all tabs. Not related to browser history or browsing records.",
     schema: {
       type: "object",
       properties: {
@@ -871,7 +877,7 @@ export const TOOLS = [
   },
   {
     name: "list_stashes_in_browser",
-    description: "List all stash titles currently stored in browser local storage. Expired stashes are automatically filtered out. Use this to discover what stashes exist before retrieving them.",
+    description: "List all stash titles currently stored in the browser virtual filesystem. Expired stashes are automatically filtered out. Use this to discover what stashes exist before retrieving them.",
     schema: {
       type: "object",
       properties: {},
@@ -1099,14 +1105,73 @@ export const TOOLS = [
   },
   {
     name: "html_playground",
-    description: "Generate and open a standalone HTML playground page for previewing HTML/CSS/JS. Use this when the user asks to open, preview, display, share, or generate a playground/page/demo/report, including simple pages that do not explicitly mention HTML. This is also suitable for generating visual reports; when drawing charts, you can import Chart.js from a CDN in the HTML and render line charts, bar charts, pie charts, and other data visualizations. If the chart is simple enough, native inline SVG is also acceptable. Do not use this tool to render very large text-only content.",
+    description: "Create and open a storage-backed HTML/CSS/JS playground, or reopen one by playgroundId. Write HTML, CSS, and JavaScript as readable multi-line source with normal indentation; never minify or collapse generated code into one line, because users inspect it in the expanded editors. New projects expire after 24 hours by default and may specify expireAt. The result returns a stable playgroundId, expireAt, and a files array containing absolute VFS paths for index.html, style.css, and script.js. Pass any returned files path unchanged to vfs_read_file, vfs_edit_file, or vfs_write_file. Prefer vfs_edit_file for targeted changes and vfs_write_file only when replacing the complete file. Pass playgroundId without html/css/js to reopen an existing project.",
     schema: {
       type: "object",
       properties: {
-        html: { type: "string", description: "HTML body/source to render. It may directly include inline CSS in <style> tags and JavaScript in <script> tags if desired." },
-        css: { type: "string", description: "Additional CSS injected into a <style> tag in the generated preview document." },
-        js: { type: "string", description: "Additional JavaScript injected into a <script> tag in the generated preview document." },
-        expanded: { type: "boolean", description: "Whether the HTML/CSS/JS editor inputs should be expanded initially. Defaults to false, meaning the inputs start collapsed and the iframe preview fills the page." }
+        playgroundId: { type: "string", description: "Existing project ID to reopen. Omit this when creating a new playground." },
+        html: { type: "string", description: "Initial index.html body/source. Use readable multi-line markup with normal indentation, not minified single-line code. It may include inline <style> or <script> tags when appropriate." },
+        css: { type: "string", description: "Initial style.css source. Format rules and declarations across readable indented lines; do not minify." },
+        js: { type: "string", description: "Initial script.js source. Use readable multi-line JavaScript with normal indentation; do not minify." },
+        expireAt: { type: "number", description: "Optional absolute expiration time in Unix milliseconds for a new project. Defaults to 24 hours after creation. Use -1 for no automatic expiration." },
+        expanded: { type: "boolean", description: "Whether the HTML/CSS/JS editor inputs should be expanded initially. Defaults to false." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "vfs_read_file",
+    description: "Read a UTF-8 text file from the browser virtual filesystem. Optionally pass a 1-based inclusive startLine and endLine; when omitted, the complete file is returned. The result contains startLine, endLine, content, total lineCount, and revision. Pass that exact range, content, and revision to vfs_edit_file for a targeted replacement.",
+    schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute VFS path to read, such as /playgrounds/pg_123/style.css or /notes/today.md." },
+        startLine: { type: "number", description: "Optional 1-based first line. Omit to start at line 1." },
+        endLine: { type: "number", description: "Optional 1-based inclusive last line. Omit to read through the end of the file." }
+      },
+      required: ["path"]
+    }
+  },
+  {
+    name: "vfs_write_file",
+    description: "Create or completely replace a UTF-8 text file in the browser virtual filesystem. When writing source code, preserve readable multi-line formatting and normal indentation; never minify it into one line. This always writes the full file content; use vfs_edit_file for targeted line changes. Files are permanent by default. Set expireAt to a Unix millisecond timestamp for automatic VFS cleanup, or -1 for permanent storage. When omitted for an existing file, its current expiration is preserved. Use expectedRevision 0 to create only when absent, or the current revision to reject stale overwrites.",
+    schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute VFS path to create or update." },
+        content: { type: "string", description: "Complete replacement content for the file." },
+        expireAt: { type: "number", description: "Optional Unix millisecond expiration timestamp, or -1 for permanent storage. Existing expiration is preserved when omitted." },
+        expectedRevision: { type: "number", description: "Optional current file revision. Use 0 to require a new file. A mismatch fails with ESTALE." }
+      },
+      required: ["path", "content"]
+    }
+  },
+  {
+    name: "vfs_edit_file",
+    description: "Atomically replace one continuous 1-based inclusive line range in a VFS text file. First call vfs_read_file, then pass its startLine, endLine, content as originalContent, and revision as expectedRevision. originalContent and newContent may contain multiple lines. When editing source code, keep newContent readable, multi-line, and normally indented; do not minify it. The edit fails without writing if either the revision or original content changed. Use vfs_write_file when replacing the complete file.",
+    schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute VFS path returned by html_playground or otherwise known to exist." },
+        startLine: { type: "number", description: "1-based first line of the range returned by vfs_read_file." },
+        endLine: { type: "number", description: "1-based inclusive last line of the range returned by vfs_read_file." },
+        originalContent: { type: "string", description: "Exact current content of the selected range, including newlines." },
+        newContent: { type: "string", description: "Replacement content for the selected range. May contain any number of lines; an empty string deletes the range." },
+        expectedRevision: { type: "number", description: "Revision returned by vfs_read_file. A mismatch fails with ESTALE." }
+      },
+      required: ["path", "startLine", "endLine", "originalContent", "newContent", "expectedRevision"]
+    }
+  },
+  {
+    name: "webide_project",
+    description: "Create and open a multi-file browser WebIDE project, or reopen one by projectId. Use template react for React JSX applications or vanilla for plain JavaScript applications. The project is stored in VFS, transformed through esm.sh in a sandbox, and rendered as a live native-ESM preview. npm dependencies must be declared with exact versions in package.json and are resolved through esm.sh. The result returns absolute VFS file paths; use vfs_read_file, vfs_edit_file, and vfs_write_file to modify or add readable multi-line project files. New projects expire after 24 hours by default.",
+    schema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "Existing WebIDE project ID to reopen. Omit when creating a project." },
+        template: { type: "string", enum: ["vanilla", "react"], description: "Initial project template. Defaults to vanilla." },
+        name: { type: "string", description: "Optional project and preview title." },
+        expireAt: { type: "number", description: "Optional Unix millisecond expiration timestamp. Defaults to 24 hours after creation; use -1 for permanent storage." }
       },
       required: []
     }
@@ -1190,7 +1255,8 @@ export function getBuiltinToolGroup(toolName) {
   if (name.startsWith("postdog_")) return "postdog";
   if (IMAGE_TOOL_NAMES.has(name)) return "images";
   if (name === "schedule_tool" || name === "list_scheduled" || name === "cancel_scheduled" || name === "clear_completed_scheduled" || name === "get_current_time" || name === "sleep") return "schedule";
-  if (name.includes("macro") || name.includes("stash") || name === "html_playground") return "automation";
+  if (name === "html_playground" || name === "webide_project" || name.startsWith("vfs_") || name.includes("stash")) return "storage";
+  if (name.includes("macro")) return "automation";
   return "automation";
 }
 

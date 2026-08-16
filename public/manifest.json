@@ -36,7 +36,8 @@
   },
   "sandbox": {
     "pages": [
-      "playground.html"
+      "playground.html",
+      "webide.html"
     ]
   },
   "content_security_policy": {

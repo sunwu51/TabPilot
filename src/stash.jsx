@@ -1,4 +1,3 @@
-/* global chrome */
 /* eslint-disable react-refresh/only-export-components */
 /* eslint-disable react/prop-types */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -8,7 +7,12 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import { installWarnFilter } from "./warnFilter";
-import { STASH_STORAGE_KEY } from "./api/llm";
+import {
+  loadStashMapFromVfs,
+  removeStashRecordFromVfs,
+  saveStashRecordToVfs,
+  watchStashVfs
+} from "./utils/stashVfs";
 import "./index.css";
 import "./stash.css";
 import "highlight.js/styles/github.css";
@@ -40,21 +44,14 @@ function StashPage() {
     void loadStashes();
   }, []);
 
-  useEffect(() => {
-    const handleStorageChange = (changes, areaName) => {
-      if (areaName !== "local" || !changes[STASH_STORAGE_KEY]) return;
-      setStashMap(normalizeStashMap(changes[STASH_STORAGE_KEY].newValue || {}));
-    };
-
-    chrome.storage.onChanged.addListener(handleStorageChange);
-    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
-  }, []);
+  useEffect(() => watchStashVfs(() => {
+    void loadStashes();
+  }), []);
 
   async function loadStashes() {
     setLoading(true);
     try {
-      const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
-      setStashMap(normalizeStashMap(result[STASH_STORAGE_KEY] || {}));
+      setStashMap(normalizeStashMap(await loadStashMapFromVfs()));
     } finally {
       setLoading(false);
     }
@@ -84,11 +81,8 @@ function StashPage() {
     if (!deleteTarget?.title) return;
     setDeleting(true);
     try {
-      const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
-      const next = { ...(result[STASH_STORAGE_KEY] || {}) };
-      delete next[deleteTarget.title];
-      await chrome.storage.local.set({ [STASH_STORAGE_KEY]: next });
-      setStashMap(normalizeStashMap(next));
+      await removeStashRecordFromVfs(deleteTarget.title);
+      await loadStashes();
       if (draft.originalTitle === deleteTarget.title) cancelEdit();
       setDeleteTarget(null);
     } finally {
@@ -139,22 +133,19 @@ function StashPage() {
       return;
     }
 
-    const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
-    const next = { ...(result[STASH_STORAGE_KEY] || {}) };
     const now = Date.now();
-    const existing = draft.originalTitle ? next[draft.originalTitle] : null;
-    if (draft.originalTitle && draft.originalTitle !== title) {
-      delete next[draft.originalTitle];
-    }
-    next[title] = {
+    const existing = draft.originalTitle ? stashMap[draft.originalTitle] : null;
+    await saveStashRecordToVfs({
+      title,
       info: draft.info,
       expireAt,
       createdAt: Number(existing?.createdAt) || Number(existing?.updatedAt) || now,
       updatedAt: now
-    };
-
-    await chrome.storage.local.set({ [STASH_STORAGE_KEY]: next });
-    setStashMap(normalizeStashMap(next));
+    });
+    if (draft.originalTitle && draft.originalTitle !== title) {
+      await removeStashRecordFromVfs(draft.originalTitle);
+    }
+    await loadStashes();
     setSelectedTitle(title);
     cancelEdit();
   }
@@ -186,18 +177,16 @@ function StashPage() {
         window.alert("没有可导入的 stash");
         return;
       }
-      const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
-      const next = { ...(result[STASH_STORAGE_KEY] || {}) };
       for (const item of imported) {
-        next[item.title] = {
+        await saveStashRecordToVfs({
+          title: item.title,
           info: item.info,
           expireAt: item.expireAt,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt
-        };
+        });
       }
-      await chrome.storage.local.set({ [STASH_STORAGE_KEY]: next });
-      setStashMap(normalizeStashMap(next));
+      await loadStashes();
       setSelectedTitle(imported[0].title);
       setImportText("");
       setShowImport(false);

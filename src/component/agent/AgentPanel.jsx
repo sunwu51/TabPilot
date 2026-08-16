@@ -69,6 +69,7 @@ import {
 } from "../../api/agent/skills";
 import ChatMessageList from "./ChatMessageList";
 import { AssistantTextBubble, AssistantThinkingBubble } from "./ChatMessage";
+import { hasVisibleText } from "./textVisibility";
 import McpConfig from "./McpConfig";
 import UserProfilePanel from "./UserProfilePanel";
 import SkillsConfig from "./SkillsConfig";
@@ -2592,7 +2593,7 @@ export default function AgentPanel() {
       `Important rules:\n` +
       `- Do not assume you already know the current browser state. Tabs and windows can change at any time.\n` +
       `- If the user asks about open tabs, browser context, which page they are on, or any page-related question where the target tab is unclear, first use exec to call tools.tab_list({}) and/or tools.tab_get_active({}) to refresh context.\n` +
-      `- For built-in tab groups, windows, page interaction, downloads, history, automation, scheduling, images, or Postdog capabilities, use exec and discover unfamiliar built-ins through tools.listDomains/listTools/describeTool.\n` +
+      `- For built-in tab groups, windows, page interaction, downloads, history, automation, storage, scheduling, images, or Postdog capabilities, use exec and discover unfamiliar built-ins through tools.listDomains/listTools/describeTool. The storage domain contains html_playground for temporary HTML pages and visual reports, webide_project for multi-file React or Vanilla JavaScript applications with npm dependencies, plus VFS and stash tools. Whenever writing playground or WebIDE source files, use readable multi-line HTML, CSS, and JavaScript with normal indentation; never minify or collapse source into one line.\n` +
       `- In exec code, never write unbounded loops such as while (true) or for (;;), and avoid recursion unless its termination is clearly bounded, because synchronous infinite execution cannot be interrupted.\n` +
       `- For page interaction, use tab_snapshot first and pass its @snapshotId#ref selector to DOM tools for clicking, filling, styling, or locating an element. Refresh the snapshot after navigation or stale_snapshot. Use highlighting when it would help the user visually locate the element.\n` +
       `- tab_list returns the currently open tabs with id, url, title, and capturedAt timing fields.\n` +
@@ -4682,10 +4683,10 @@ export default function AgentPanel() {
               {streamingContent !== null && streamingWebSearches && streamingWebSearches.length > 0 && (
                 <NativeWebSearchBubble actions={streamingWebSearches} />
               )}
-              {streamingThinking !== null && streamingThinking.length > 0 && (
+              {hasVisibleText(streamingThinking) && (
                 <AssistantThinkingBubble text={streamingThinking} />
               )}
-              {streamingContent !== null && streamingContent.length > 0 && (
+              {hasVisibleText(streamingContent) && (
                 <AssistantTextBubble
                   text={streamingContent}
                   imageEditingEnabled={imageEditingEnabled}

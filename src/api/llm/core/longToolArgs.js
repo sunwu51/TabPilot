@@ -2,6 +2,8 @@ export const LONG_TOOL_ARGUMENT_FIELDS = {
   exec: ["code"],
   stash_in_browser: ["info"],
   html_playground: ["html", "css", "js"],
+  vfs_write_file: ["content"],
+  vfs_edit_file: ["originalContent", "newContent"],
   download: ["content"]
 };
 

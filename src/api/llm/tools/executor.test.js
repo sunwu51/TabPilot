@@ -545,7 +545,7 @@ describe("built-in tool execution", () => {
     });
   });
 
-  it("opens html_playground with encoded query payloads", async () => {
+  it("creates a storage-backed html_playground project", async () => {
     const result = await executeTool("html_playground", {
       html: "<h1>Hello</h1>",
       css: "h1{color:red}",
@@ -554,23 +554,116 @@ describe("built-in tool execution", () => {
     });
 
     expect(chrome.tabs.create).toHaveBeenCalledWith({
-      url: expect.stringContaining("chrome-extension://test-extension/playground.html?"),
+      url: expect.stringContaining("chrome-extension://test-extension/playground-host.html?"),
       active: true
     });
     const createdUrl = new URL(chrome.tabs.create.mock.calls.at(-1)[0].url);
-    expect(createdUrl.searchParams.get("html")).toBeTruthy();
-    expect(createdUrl.searchParams.get("css")).toBeTruthy();
-    expect(createdUrl.searchParams.get("js")).toBeTruthy();
+    expect(createdUrl.searchParams.get("id")).toBe(result.playgroundId);
     expect(createdUrl.searchParams.get("expanded")).toBe("1");
-    expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
+    expect(result).toMatchObject({
+      success: true,
+      playgroundId: expect.stringMatching(/^pg_/),
+      files: [
+        `/playgrounds/${result.playgroundId}/index.html`,
+        `/playgrounds/${result.playgroundId}/style.css`,
+        `/playgrounds/${result.playgroundId}/script.js`
+      ],
+      revision: 1,
+      expireAt: expect.any(Number),
+      tabId: 1,
+      expanded: true
+    });
+  });
+
+  it("reads and incrementally edits playground files through the generic VFS tools", async () => {
+    const created = await executeTool("html_playground", { css: "one\ntwo\nthree" });
+    const path = `/playgrounds/${created.playgroundId}/style.css`;
+    await expect(executeTool("vfs_read_file", {
+      path,
+      startLine: 2,
+      endLine: 2
+    })).resolves.toMatchObject({
+      content: "two",
+      startLine: 2,
+      endLine: 2,
+      lineCount: 3,
+      revision: 1
+    });
+
+    await expect(executeTool("vfs_edit_file", {
+      path,
+      startLine: 2,
+      endLine: 2,
+      expectedRevision: 1,
+      originalContent: "two",
+      newContent: "changed\ninserted"
+    })).resolves.toMatchObject({ success: true, startLine: 2, endLine: 2, lineCount: 4, revision: 2 });
+
+    await expect(executeTool("vfs_read_file", {
+      path
+    })).resolves.toMatchObject({ content: "one\nchanged\ninserted\nthree", lineCount: 4, revision: 2 });
+  });
+
+  it("creates a multi-file React WebIDE project", async () => {
+    const result = await executeTool("webide_project", { template: "react", name: "Tool WebIDE" });
+
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: expect.stringContaining("chrome-extension://test-extension/webide-host.html?"),
+      active: true
+    });
+    expect(result).toMatchObject({
+      success: true,
+      projectId: expect.stringMatching(/^ide_/),
+      template: "react",
+      rootPath: expect.stringMatching(/^\/webide\/ide_/),
+      entry: "src/main.jsx",
+      files: expect.arrayContaining([
+        expect.stringMatching(/\/index\.html$/),
+        expect.stringMatching(/\/src\/App\.jsx$/),
+        expect.stringMatching(/\/src\/main\.jsx$/)
+      ]),
+      expireAt: expect.any(Number),
+      tabId: 1
+    });
+  });
+
+  it("creates arbitrary text files through the generic VFS write tool", async () => {
+    await expect(executeTool("vfs_write_file", {
+      path: "/notes/report.md",
+      content: "# Report",
+      expectedRevision: 0
+    })).resolves.toMatchObject({ success: true, path: "/notes/report.md", revision: 1 });
+
+    await expect(executeTool("vfs_read_file", { path: "/notes/report.md" }))
+      .resolves.toMatchObject({
+        success: true,
+        content: "# Report",
+        startLine: 1,
+        endLine: 1,
+        lineCount: 1,
+        revision: 1
+      });
+  });
+
+  it("rejects VFS line edits when original content does not match", async () => {
+    await executeTool("vfs_write_file", { path: "/notes/conflict.md", content: "first\nsecond", expectedRevision: 0 });
+
+    await expect(executeTool("vfs_edit_file", {
+      path: "/notes/conflict.md",
+      startLine: 1,
+      endLine: 2,
+      expectedRevision: 1,
+      originalContent: "first\nstale",
+      newContent: "changed"
+    })).resolves.toMatchObject({ error: expect.stringContaining("Lines 1-2 content does not match") });
   });
 
   it("opens hello world playground from settings helper", async () => {
     const result = await openHelloWorldPlayground();
 
     const createdUrl = new URL(chrome.tabs.create.mock.calls.at(-1)[0].url);
-    expect(createdUrl.pathname).toBe("/playground.html");
-    expect(createdUrl.searchParams.get("html")).toBeTruthy();
+    expect(createdUrl.pathname).toBe("/playground-host.html");
+    expect(createdUrl.searchParams.get("id")).toBe(result.playgroundId);
     expect(createdUrl.searchParams.get("expanded")).toBe("1");
     expect(result).toMatchObject({ success: true, tabId: 1, expanded: true });
   });

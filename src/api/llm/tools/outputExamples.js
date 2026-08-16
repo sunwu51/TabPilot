@@ -75,7 +75,11 @@ export const BUILTIN_TOOL_OUTPUT_EXAMPLES = {
   postdog_list_environments: { environments: [{ id: "env_1", name: "Development", active: true }] },
   postdog_save_environment: { environment: { id: "env_1", name: "Development", variables: { baseUrl: "https://api.example.com" } } },
   postdog_set_active_environment: { activeEnvironment: { id: "env_1", name: "Development", active: true } },
-  html_playground: { success: true, url: "playground.html#data=...", expanded: false },
+  html_playground: { success: true, playgroundId: "pg_example", files: ["/playgrounds/pg_example/index.html", "/playgrounds/pg_example/style.css", "/playgrounds/pg_example/script.js"], revision: 1, expireAt: Date.now() + 86400000, tabId: tab.id, url: "playground-host.html?id=pg_example", expanded: false },
+  vfs_read_file: { success: true, path: "/playgrounds/pg_example/style.css", content: "color: red;", startLine: 4, endLine: 4, lineCount: 12, revision: 1 },
+  vfs_write_file: { success: true, path: "/notes/report.md", size: 8, lineCount: 1, expireAt: -1, revision: 1 },
+  vfs_edit_file: { success: true, path: "/playgrounds/pg_example/style.css", startLine: 4, endLine: 5, lineCount: 12, revision: 2 },
+  webide_project: { success: true, projectId: "ide_example", template: "react", rootPath: "/webide/ide_example", entry: "src/main.jsx", files: ["/webide/ide_example/index.html", "/webide/ide_example/package.json", "/webide/ide_example/src/App.jsx", "/webide/ide_example/src/main.jsx", "/webide/ide_example/src/styles.css"], expireAt: Date.now() + 86400000, tabId: tab.id, url: "webide-host.html?id=ide_example" },
   image_gen: { success: true, endpoint: "generations", model: "gpt-image", prompt: "Example prompt", imageCount: 1, images: [{ dataUrl: "|deRef:img_1|", outputFormat: "png" }], dataUrl: "|deRef:img_1|", outputFormat: "png" },
   image_edit: { success: true, endpoint: "edits", model: "gpt-image", prompt: "Edit the image", imageCount: 1, inputImageCount: 1, images: [{ dataUrl: "|deRef:img_2|", outputFormat: "png" }], dataUrl: "|deRef:img_2|", outputFormat: "png" }
 };

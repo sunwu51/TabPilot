@@ -14,29 +14,44 @@ const exportButton = document.createElement("button");
 const controlBar = document.createElement("div");
 const root = document.getElementById("root");
 const PUBLIC_PLAYGROUND_BASE_URL = "https://sunwu51.github.io/HtmlPlaygroud/";
+const editorGutters = new Map();
 
 let expanded = parseExpanded(params.get("expanded"));
+const embedded = params.get("embedded") === "1" && window.parent !== window;
+const bridgeNonce = embedded ? (params.get("bridge") || "") : "";
+let playgroundId = "";
+let nextOperationId = 1;
 
 htmlInput.id = "html-input";
+htmlInput.className = "editor-input";
 htmlInput.placeholder = "HTML";
 htmlInput.spellcheck = false;
+htmlInput.wrap = "off";
 htmlInput.value = inflateStringFromQueryParam(params.get("html") || "");
 
 cssInput.id = "css-input";
+cssInput.className = "editor-input";
 cssInput.placeholder = "CSS";
 cssInput.spellcheck = false;
+cssInput.wrap = "off";
 cssInput.value = inflateStringFromQueryParam(params.get("css") || "");
 
 jsInput.id = "js-input";
+jsInput.className = "editor-input";
 jsInput.placeholder = "JS";
 jsInput.spellcheck = false;
+jsInput.wrap = "off";
 jsInput.value = inflateStringFromQueryParam(params.get("js") || "");
 
 iframe.id = "preview";
 iframe.setAttribute("sandbox", "allow-downloads allow-forms allow-modals allow-popups allow-presentation allow-scripts");
 
 editorPanel.className = "editor-panel";
-editorPanel.append(htmlInput, cssInput, jsInput);
+editorPanel.append(
+  createEditorColumn(htmlInput, "HTML"),
+  createEditorColumn(cssInput, "CSS"),
+  createEditorColumn(jsInput, "JS")
+);
 
 toggleButton.id = "toggle-editors";
 toggleButton.type = "button";
@@ -60,6 +75,30 @@ root.append(editorPanel, controlBar, iframe);
 function parseExpanded(value) {
   if (value == null || value === "") return false;
   return /^(1|true|yes|expanded)$/i.test(String(value));
+}
+
+function createEditorColumn(input, label) {
+  const column = document.createElement("div");
+  const gutter = document.createElement("div");
+  column.className = "editor-column";
+  gutter.className = "editor-gutter";
+  gutter.setAttribute("aria-hidden", "true");
+  input.setAttribute("aria-label", label);
+  editorGutters.set(input, gutter);
+  column.append(gutter, input);
+  updateEditorGutter(input);
+  input.addEventListener("scroll", () => {
+    gutter.scrollTop = input.scrollTop;
+  });
+  return column;
+}
+
+function updateEditorGutter(input) {
+  const gutter = editorGutters.get(input);
+  if (!gutter) return;
+  const lineCount = input.value === "" ? 1 : input.value.split("\n").length;
+  gutter.textContent = Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
+  gutter.scrollTop = input.scrollTop;
 }
 
 function buildDocument() {
@@ -165,7 +204,50 @@ function flashExportButton(text) {
   }, 1200);
 }
 
-function handleInput() {
+function handleInput(event) {
+  updateEditorGutter(event.target);
+  refreshPreview();
+  if (!embedded || !playgroundId) return;
+
+  const fileByInputId = {
+    "html-input": "index.html",
+    "css-input": "style.css",
+    "js-input": "script.js"
+  };
+  const file = fileByInputId[event?.target?.id];
+  if (!file) return;
+  window.parent.postMessage({
+    type: "playground:write",
+    bridgeNonce,
+    playgroundId,
+    operationId: nextOperationId++,
+    file,
+    content: event.target.value
+  }, "*");
+}
+
+function handleHostMessage(event) {
+  if (
+    !embedded ||
+    event.source !== window.parent ||
+    event.data?.type !== "playground:load" ||
+    event.data.bridgeNonce !== bridgeNonce
+  ) return;
+
+  const files = event.data.files || {};
+  const preserveFiles = new Set(Array.isArray(event.data.preserveFiles) ? event.data.preserveFiles : []);
+  const inputsByFile = {
+    "index.html": htmlInput,
+    "style.css": cssInput,
+    "script.js": jsInput
+  };
+  playgroundId = String(event.data.playgroundId || "");
+  Object.entries(inputsByFile).forEach(([file, input]) => {
+    if (!preserveFiles.has(file)) {
+      input.value = String(files[file] || "");
+      updateEditorGutter(input);
+    }
+  });
   refreshPreview();
 }
 
@@ -182,6 +264,10 @@ exportButton.addEventListener("click", downloadHtml);
 shareButton.addEventListener("click", () => {
   void copyShareUrl();
 });
+window.addEventListener("message", handleHostMessage);
 
 applyExpandedState();
 refreshPreview();
+if (embedded) {
+  window.parent.postMessage({ type: "playground:ready", bridgeNonce }, "*");
+}
