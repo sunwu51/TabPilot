@@ -55,7 +55,10 @@ describe("llm tool definitions", () => {
     const tool = getTools(API_TYPES.OPENAI_RESPONSES).find(item => item.name === "webide_project");
     expect(tool.parameters.properties.template.enum).toEqual(["vanilla", "react"]);
     expect(tool.description).toContain("transformed through esm.sh");
-    expect(tool.description).toContain("esm.sh");
+    expect(tool.description).toContain("no npm install or package scripts run");
+    expect(tool.description).toContain("Remote package CSS imports");
+    expect(tool.description).toContain("peer-dependent component libraries");
+    expect(tool.description).toContain("import { Button } from \"antd\"");
     expect(BUILTIN_TOOL_NAMES).toContain("webide_project");
   });
 

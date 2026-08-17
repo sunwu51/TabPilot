@@ -44,9 +44,12 @@ export function buildPackageImportMap(dependencies = {}) {
   const imports = {};
   for (const [name, version] of Object.entries(dependencies)) {
     if (!name || !version) continue;
-    const target = `https://esm.sh/${name}@${version}`;
+    const isReactRuntime = name === "react" || name === "react-dom";
+    const target = isReactRuntime
+      ? `https://esm.sh/${name}@${version}`
+      : `https://esm.sh/${name}@${version}?bundle&external=react,react-dom`;
     imports[name] = target;
-    imports[`${name}/`] = `${target}/`;
+    imports[`${name}/`] = `https://esm.sh/${name}@${version}/`;
   }
   return imports;
 }

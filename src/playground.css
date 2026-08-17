@@ -50,45 +50,32 @@ body:not(.is-expanded) .editor-panel {
   border-right: 0;
 }
 
-.editor-gutter {
-  width: 42px;
-  height: 100%;
-  flex: 0 0 42px;
-  box-sizing: border-box;
-  overflow: hidden;
-  padding: 12px 8px 12px 4px;
-  border-right: 1px solid #1e293b;
-  color: #64748b;
-  background: #111827;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  text-align: right;
-  white-space: pre;
-  user-select: none;
-}
-
 .editor-input {
   width: auto;
   height: 100%;
   min-width: 0;
   flex: 1 1 auto;
   box-sizing: border-box;
-  padding: 12px;
+  padding: 0;
   border: 0;
   outline: none;
-  overflow: auto;
-  resize: none;
+  overflow: hidden;
   background: #0f172a;
   color: #e5e7eb;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 14px;
   line-height: 1.5;
-  white-space: pre;
 }
 
-.editor-input::placeholder {
-  color: #94a3b8;
+.editor-input .cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+
+.editor-input .cm-scroller {
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.55;
 }
 
 .control-bar {

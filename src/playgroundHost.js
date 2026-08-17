@@ -15,9 +15,10 @@ const bridgeNonce = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.r
 const frame = document.getElementById("playground-frame");
 const errorPanel = document.getElementById("playground-error");
 const pendingWrites = new Map();
+const queuedWrites = new Map();
 let project = null;
 let frameReady = false;
-let saveQueue = Promise.resolve();
+let saveRunning = false;
 let reloadQueue = Promise.resolve();
 
 function showError(message) {
@@ -60,6 +61,29 @@ async function initialize() {
   }
 }
 
+async function drainWrites() {
+  if (saveRunning) return;
+  saveRunning = true;
+  try {
+    while (queuedWrites.size > 0) {
+      const [file, write] = queuedWrites.entries().next().value;
+      queuedWrites.delete(file);
+      try {
+        await replacePlaygroundFile(playgroundId, file, write.content);
+        if (pendingWrites.get(file) === write.operationId) pendingWrites.delete(file);
+        project = await getPlaygroundProject(playgroundId);
+        postProject();
+      } catch (error) {
+        if (pendingWrites.get(file) === write.operationId) pendingWrites.delete(file);
+        showError(error?.message || String(error));
+      }
+    }
+  } finally {
+    saveRunning = false;
+    if (queuedWrites.size > 0) void drainWrites();
+  }
+}
+
 window.addEventListener("message", event => {
   if (event.source !== frame.contentWindow || !event.data || typeof event.data !== "object") return;
   if (event.data.bridgeNonce !== bridgeNonce) return;
@@ -79,15 +103,8 @@ window.addEventListener("message", event => {
   const content = event.data.content;
   const operationId = event.data.operationId;
   pendingWrites.set(file, operationId);
-  saveQueue = saveQueue.then(async () => {
-    await replacePlaygroundFile(playgroundId, file, content);
-    if (pendingWrites.get(file) === operationId) pendingWrites.delete(file);
-    project = await getPlaygroundProject(playgroundId);
-    postProject();
-  }).catch(error => {
-    if (pendingWrites.get(file) === operationId) pendingWrites.delete(file);
-    showError(error?.message || String(error));
-  });
+  queuedWrites.set(file, { content, operationId });
+  void drainWrites();
 });
 
 void initialize();

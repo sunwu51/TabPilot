@@ -10,7 +10,7 @@ describe("webIdeRuntime", () => {
     expect(buildPackageImportMap({ react: "18.3.1", "@scope/ui": "2.0.0" })).toEqual({
       react: "https://esm.sh/react@18.3.1",
       "react/": "https://esm.sh/react@18.3.1/",
-      "@scope/ui": "https://esm.sh/@scope/ui@2.0.0",
+      "@scope/ui": "https://esm.sh/@scope/ui@2.0.0?bundle&external=react,react-dom",
       "@scope/ui/": "https://esm.sh/@scope/ui@2.0.0/"
     });
   });

@@ -1,4 +1,12 @@
 import { buildWebIdeModules, normalizeWebIdePath } from "./utils/webIdeRuntime";
+import { javascript } from "@codemirror/lang-javascript";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { json } from "@codemirror/lang-json";
+import { EditorState, Compartment } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
+import { oneDark } from "@codemirror/theme-one-dark";
 import "./webIde.css";
 
 const params = new URL(location.href).searchParams;
@@ -14,6 +22,7 @@ const pendingOperations = new Map();
 let operationId = 1;
 let buildTimer = null;
 let saveTimer = null;
+const BUILD_IDLE_DELAY_MS = 900;
 
 const shell = element("div", "webide-shell");
 const toolbar = element("header", "webide-toolbar");
@@ -32,11 +41,13 @@ addFileButton.setAttribute("aria-label", "Create file");
 const fileList = element("div", "webide-file-list");
 const editorPane = element("section", "webide-editor-pane");
 const tabs = element("div", "webide-tabs");
-const editor = document.createElement("textarea");
-editor.className = "webide-editor";
-editor.wrap = "off";
-editor.spellcheck = false;
+const editor = element("div", "webide-editor");
 editor.setAttribute("aria-label", "Project file editor");
+const languageCompartment = new Compartment();
+const editableCompartment = new Compartment();
+let editorView = null;
+let suppressEditorChanges = false;
+let compositionActive = false;
 const errors = element("div", "webide-errors");
 errors.hidden = true;
 const previewPane = element("section", "webide-preview-pane");
@@ -68,6 +79,57 @@ function element(tag, className, text) {
 
 function normalizePath(path) {
   return normalizeWebIdePath(path);
+}
+
+function languageForPath(path) {
+  const extension = path.split(".").pop()?.toLowerCase();
+  if (extension === "jsx") return javascript({ jsx: true });
+  if (extension === "tsx") return javascript({ jsx: true, typescript: true });
+  if (extension === "js" || extension === "mjs" || extension === "cjs") return javascript({ jsx: true });
+  if (extension === "ts") return javascript({ typescript: true });
+  if (extension === "css") return css();
+  if (extension === "json") return json();
+  if (extension === "html" || extension === "htm") return html();
+  return [];
+}
+
+function createEditor() {
+  editorView = new EditorView({
+    state: EditorState.create({
+      doc: "",
+      extensions: [
+        oneDark,
+        lineNumbers(),
+        highlightSpecialChars(),
+        highlightActiveLine(),
+        highlightActiveLineGutter(),
+        drawSelection(),
+        history(),
+        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        EditorState.tabSize.of(2),
+        languageCompartment.of([]),
+        editableCompartment.of(EditorView.editable.of(false)),
+        EditorView.updateListener.of(update => {
+          if (!update.docChanged || suppressEditorChanges || !activePath) return;
+          files[activePath] = update.state.doc.toString();
+          dirtyPaths.add(activePath);
+          if (compositionActive || update.view.composing) return;
+          scheduleSave();
+          scheduleBuild();
+        })
+      ]
+    }),
+    parent: editor
+  });
+  editor.addEventListener("compositionstart", () => {
+    compositionActive = true;
+  });
+  editor.addEventListener("compositionend", () => {
+    compositionActive = false;
+    if (!activePath) return;
+    scheduleSave();
+    scheduleBuild();
+  });
 }
 
 function parsePackageJson() {
@@ -119,7 +181,7 @@ async function buildProject() {
 
 function scheduleBuild() {
   clearTimeout(buildTimer);
-  buildTimer = setTimeout(() => void buildProject(), 350);
+  buildTimer = setTimeout(() => void buildProject(), BUILD_IDLE_DELAY_MS);
 }
 
 function scheduleSave() {
@@ -140,10 +202,21 @@ function scheduleSave() {
 
 function setActiveFile(path) {
   if (!Object.prototype.hasOwnProperty.call(files, path)) return;
+  if (!editorView) createEditor();
+  const shouldUpdateEditor = activePath !== path || editorView.state.doc.toString() !== files[path];
   activePath = path;
   if (!openPaths.includes(path)) openPaths.push(path);
-  editor.value = files[path];
-  editor.disabled = false;
+  if (shouldUpdateEditor) {
+    suppressEditorChanges = true;
+    editorView.dispatch({
+      changes: { from: 0, to: editorView.state.doc.length, insert: files[path] },
+      effects: [
+        languageCompartment.reconfigure(languageForPath(path)),
+        editableCompartment.reconfigure(EditorView.editable.of(true))
+      ]
+    });
+    suppressEditorChanges = false;
+  }
   fileStatus.textContent = path;
   renderFiles();
   renderTabs();
@@ -185,14 +258,6 @@ function loadProject(nextProject) {
   scheduleBuild();
 }
 
-editor.addEventListener("input", () => {
-  if (!activePath) return;
-  files[activePath] = editor.value;
-  dirtyPaths.add(activePath);
-  scheduleSave();
-  scheduleBuild();
-});
-
 buildButton.addEventListener("click", () => void buildProject());
 addFileButton.addEventListener("click", () => {
   const path = normalizePath(prompt("New project-relative file path", "src/component.js") || "");
@@ -216,6 +281,5 @@ window.addEventListener("message", event => {
   }
 });
 
-editor.disabled = true;
 if (embedded) window.parent.postMessage({ type: "webide:ready", nonce }, "*");
 else statusText.textContent = "Open through webide-host.html with a project id";

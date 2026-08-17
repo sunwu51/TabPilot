@@ -1,11 +1,15 @@
 import { deflateStringToQueryParam, inflateStringFromQueryParam } from "./utils/playgroundCodec";
+import { javascript } from "@codemirror/lang-javascript";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { EditorState } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
+import { oneDark } from "@codemirror/theme-one-dark";
 import "./playground.css";
 
 const params = new URL(window.location.href).searchParams;
 
-const htmlInput = document.createElement("textarea");
-const cssInput = document.createElement("textarea");
-const jsInput = document.createElement("textarea");
 const iframe = document.createElement("iframe");
 const editorPanel = document.createElement("div");
 const toggleButton = document.createElement("button");
@@ -14,7 +18,6 @@ const exportButton = document.createElement("button");
 const controlBar = document.createElement("div");
 const root = document.getElementById("root");
 const PUBLIC_PLAYGROUND_BASE_URL = "https://sunwu51.github.io/HtmlPlaygroud/";
-const editorGutters = new Map();
 
 let expanded = parseExpanded(params.get("expanded"));
 const embedded = params.get("embedded") === "1" && window.parent !== window;
@@ -22,26 +25,9 @@ const bridgeNonce = embedded ? (params.get("bridge") || "") : "";
 let playgroundId = "";
 let nextOperationId = 1;
 
-htmlInput.id = "html-input";
-htmlInput.className = "editor-input";
-htmlInput.placeholder = "HTML";
-htmlInput.spellcheck = false;
-htmlInput.wrap = "off";
-htmlInput.value = inflateStringFromQueryParam(params.get("html") || "");
-
-cssInput.id = "css-input";
-cssInput.className = "editor-input";
-cssInput.placeholder = "CSS";
-cssInput.spellcheck = false;
-cssInput.wrap = "off";
-cssInput.value = inflateStringFromQueryParam(params.get("css") || "");
-
-jsInput.id = "js-input";
-jsInput.className = "editor-input";
-jsInput.placeholder = "JS";
-jsInput.spellcheck = false;
-jsInput.wrap = "off";
-jsInput.value = inflateStringFromQueryParam(params.get("js") || "");
+const htmlInput = createCodeEditor("html-input", "HTML", inflateStringFromQueryParam(params.get("html") || ""), html());
+const cssInput = createCodeEditor("css-input", "CSS", inflateStringFromQueryParam(params.get("css") || ""), css());
+const jsInput = createCodeEditor("js-input", "JS", inflateStringFromQueryParam(params.get("js") || ""), javascript({ jsx: true }));
 
 iframe.id = "preview";
 iframe.setAttribute("sandbox", "allow-downloads allow-forms allow-modals allow-popups allow-presentation allow-scripts");
@@ -77,28 +63,55 @@ function parseExpanded(value) {
   return /^(1|true|yes|expanded)$/i.test(String(value));
 }
 
+function createCodeEditor(id, label, value, language) {
+  const host = document.createElement("div");
+  host.id = id;
+  host.className = "editor-input";
+  host.setAttribute("aria-label", label);
+  const input = { id, host, view: null, suppressChanges: false };
+  input.view = new EditorView({
+    state: EditorState.create({
+      doc: value,
+      extensions: [
+        oneDark,
+        lineNumbers(),
+        highlightSpecialChars(),
+        highlightActiveLine(),
+        highlightActiveLineGutter(),
+        drawSelection(),
+        history(),
+        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        EditorState.tabSize.of(2),
+        EditorView.updateListener.of(update => {
+          if (update.docChanged && !input.suppressChanges) handleInput(input);
+        }),
+        language
+      ]
+    }),
+    parent: host
+  });
+  return input;
+}
+
 function createEditorColumn(input, label) {
   const column = document.createElement("div");
-  const gutter = document.createElement("div");
   column.className = "editor-column";
-  gutter.className = "editor-gutter";
-  gutter.setAttribute("aria-hidden", "true");
-  input.setAttribute("aria-label", label);
-  editorGutters.set(input, gutter);
-  column.append(gutter, input);
-  updateEditorGutter(input);
-  input.addEventListener("scroll", () => {
-    gutter.scrollTop = input.scrollTop;
-  });
+  input.host.setAttribute("aria-label", label);
+  column.append(input.host);
   return column;
 }
 
-function updateEditorGutter(input) {
-  const gutter = editorGutters.get(input);
-  if (!gutter) return;
-  const lineCount = input.value === "" ? 1 : input.value.split("\n").length;
-  gutter.textContent = Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
-  gutter.scrollTop = input.scrollTop;
+function valueOf(input) {
+  return input.view.state.doc.toString();
+}
+
+function setEditorValue(input, value) {
+  const next = String(value);
+  const current = valueOf(input);
+  if (current === next) return;
+  input.suppressChanges = true;
+  input.view.dispatch({ changes: { from: 0, to: input.view.state.doc.length, insert: next } });
+  input.suppressChanges = false;
 }
 
 function buildDocument() {
@@ -108,13 +121,13 @@ function buildDocument() {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-${cssInput.value}
+${valueOf(cssInput)}
 </style>
 </head>
 <body>
-${htmlInput.value}
+${valueOf(htmlInput)}
 <script>
-${jsInput.value}
+${valueOf(jsInput)}
 </script>
 </body>
 </html>`;
@@ -152,9 +165,9 @@ function downloadHtml() {
 
 function serializeQueryString({ forceCollapsed = false } = {}) {
   const next = new URLSearchParams();
-  next.set("html", deflateStringToQueryParam(htmlInput.value));
-  next.set("css", deflateStringToQueryParam(cssInput.value));
-  next.set("js", deflateStringToQueryParam(jsInput.value));
+  next.set("html", deflateStringToQueryParam(valueOf(htmlInput)));
+  next.set("css", deflateStringToQueryParam(valueOf(cssInput)));
+  next.set("js", deflateStringToQueryParam(valueOf(jsInput)));
   next.set("expanded", forceCollapsed ? "0" : (expanded ? "1" : "0"));
   return `?${next.toString()}`;
 }
@@ -204,8 +217,7 @@ function flashExportButton(text) {
   }, 1200);
 }
 
-function handleInput(event) {
-  updateEditorGutter(event.target);
+function handleInput(input) {
   refreshPreview();
   if (!embedded || !playgroundId) return;
 
@@ -214,7 +226,7 @@ function handleInput(event) {
     "css-input": "style.css",
     "js-input": "script.js"
   };
-  const file = fileByInputId[event?.target?.id];
+  const file = fileByInputId[input.id];
   if (!file) return;
   window.parent.postMessage({
     type: "playground:write",
@@ -222,7 +234,7 @@ function handleInput(event) {
     playgroundId,
     operationId: nextOperationId++,
     file,
-    content: event.target.value
+    content: valueOf(input)
   }, "*");
 }
 
@@ -244,16 +256,11 @@ function handleHostMessage(event) {
   playgroundId = String(event.data.playgroundId || "");
   Object.entries(inputsByFile).forEach(([file, input]) => {
     if (!preserveFiles.has(file)) {
-      input.value = String(files[file] || "");
-      updateEditorGutter(input);
+      setEditorValue(input, String(files[file] || ""));
     }
   });
   refreshPreview();
 }
-
-htmlInput.addEventListener("input", handleInput);
-cssInput.addEventListener("input", handleInput);
-jsInput.addEventListener("input", handleInput);
 
 toggleButton.addEventListener("click", () => {
   expanded = !expanded;
