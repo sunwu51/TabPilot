@@ -76,6 +76,24 @@ describe("ChatMessageList", () => {
     expect(document.querySelector(".tool-result-arrow")?.textContent).toBe("▼");
   });
 
+  it("does not render invisible assistant bubbles around tool calls", () => {
+    render(
+      <ChatMessageList
+        messages={[
+          {
+            role: "assistant",
+            content: "\u200B",
+            tool_calls: [{ id: "call_1", function: { name: "tab_list", arguments: "{}" } }]
+          },
+          { role: "tool", tool_call_id: "call_1", tool_name: "tab_list", content: "{}" }
+        ]}
+      />
+    );
+
+    expect(screen.queryAllByTestId(/^message-/)).toHaveLength(0);
+    expect(screen.getByText(/tab_list/)).toBeTruthy();
+  });
+
   it("shows nested code-mode calls in the exec title and highlights the code input", () => {
     render(
       <ChatMessageList

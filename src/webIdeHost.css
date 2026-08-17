@@ -1,0 +1,26 @@
+html,
+body,
+#webide-frame {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+#webide-frame {
+  display: block;
+  border: 0;
+}
+
+#webide-host-error {
+  position: fixed;
+  inset: 0;
+  padding: 24px;
+  color: #991b1b;
+  background: #fef2f2;
+  font: 14px/1.5 system-ui, sans-serif;
+  white-space: pre-wrap;
+}

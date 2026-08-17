@@ -8,6 +8,7 @@ import { Button, Dialog } from "@sunwu51/camel-ui";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeImageRefSource, normalizeMessageImageRefs } from "./imageRefs";
 import { buildWebSearchActionLabels } from "./webSearchActions";
+import { hasVisibleText } from "./textVisibility";
 import { uploadSessionImage } from "../../api/supabase/images";
 import { createSupabaseSignedUrl } from "../../api/supabase/storage";
 import toast from "react-hot-toast";
@@ -190,7 +191,7 @@ const ChatMessage = memo(function ChatMessage({
       for (let i = 0; i < content.length; i++) {
         const block = content[i];
         if (!block) continue;
-        if (block.type === "text" && block.text) {
+        if (block.type === "text" && hasVisibleText(block.text)) {
           rendered.push(
             <AssistantTextBubble
               key={`t${i}`}
@@ -214,7 +215,7 @@ const ChatMessage = memo(function ChatMessage({
     // OpenAI format: tool_calls array on the message object
     if (msg.tool_calls && msg.tool_calls.length > 0) {
       // Render text content if present
-      if (content && typeof content === "string") {
+      if (typeof content === "string" && hasVisibleText(content)) {
         rendered.push(
           <AssistantTextBubble
             key="text"
@@ -248,7 +249,7 @@ const ChatMessage = memo(function ChatMessage({
       }
     }
 
-    if ((!msg.tool_calls || msg.tool_calls.length === 0) && content && typeof content === "string") {
+    if ((!msg.tool_calls || msg.tool_calls.length === 0) && typeof content === "string" && hasVisibleText(content)) {
       rendered.push(
         <AssistantTextBubble
           key="plain"
@@ -267,7 +268,7 @@ const ChatMessage = memo(function ChatMessage({
     if (rendered.length > 0) return <>{rendered}</>;
 
     // Plain text only
-    if (content && typeof content === "string") {
+    if (typeof content === "string" && hasVisibleText(content)) {
       return (
         <AssistantTextBubble
           text={content}
@@ -916,7 +917,7 @@ function extractThinkingBlocksFromMessage(msg) {
 function isRenderableThinkingBlock(block) {
   if (!block || typeof block !== "object") return false;
   if (block.type === "thinking") {
-    return typeof block.thinking === "string" || typeof block.signature === "string";
+    return hasVisibleText(block.thinking) || hasVisibleText(block.signature);
   }
   if (block.type === "redacted_thinking") {
     return typeof block.data === "string" && block.data.length > 0;

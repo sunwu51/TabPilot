@@ -117,6 +117,11 @@ describe("code runtime", () => {
     }, { invokeTool });
 
     expect(result.value.domains).toContainEqual(expect.objectContaining({ source: "builtin", domain: "tabs" }));
+    expect(result.value.domains).toContainEqual(expect.objectContaining({
+      source: "builtin",
+      domain: "storage",
+      summary: "Browser VFS files, stashes, and temporary HTML playgrounds"
+    }));
     expect(result.value.detail).toMatchObject({
       name: "tab_open",
       inputSchema: { type: "object" },

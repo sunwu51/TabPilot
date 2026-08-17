@@ -36,15 +36,30 @@ body:not(.is-expanded) .editor-panel {
   opacity: 0;
 }
 
-textarea {
+.editor-column {
   width: 33.3333%;
   height: 100%;
+  min-width: 0;
+  display: flex;
   box-sizing: border-box;
-  padding: 12px;
-  border: 0;
   border-right: 1px solid #334155;
+  background: #0f172a;
+}
+
+.editor-column:last-child {
+  border-right: 0;
+}
+
+.editor-input {
+  width: auto;
+  height: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
   outline: none;
-  resize: none;
+  overflow: hidden;
   background: #0f172a;
   color: #e5e7eb;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -52,12 +67,15 @@ textarea {
   line-height: 1.5;
 }
 
-textarea:last-child {
-  border-right: 0;
+.editor-input .cm-editor {
+  height: 100%;
+  font-size: 13px;
 }
 
-textarea::placeholder {
-  color: #94a3b8;
+.editor-input .cm-scroller {
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.55;
 }
 
 .control-bar {

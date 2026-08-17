@@ -57,6 +57,11 @@ import {
     refreshMcpServerToken
 } from "./api/mcp/oauth";
 import { buildLlmAuthHeaders } from "./api/llm/core/modelProfiles";
+import {
+    chromeStorageVfs,
+    VFS_CLEANUP_ALARM_NAME,
+    VFS_CLEANUP_PERIOD_MINUTES
+} from "./utils/chromeStorageVfs";
 
 const REUSE_PROMPT_TIMEOUT_MS = 30000;
 const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
@@ -68,6 +73,12 @@ const SCHEDULE_FIRE_ALARM_PREFIX = "schedule-fire:";
 const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
 const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const PASSWORD_PLACEHOLDER = "1A2b3!4399";
+
+function ensureVfsCleanupAlarm() {
+    chrome.alarms?.create(VFS_CLEANUP_ALARM_NAME, {
+        periodInMinutes: VFS_CLEANUP_PERIOD_MINUTES
+    });
+}
 
 function removeLegacyGithubSyncData() {
     void chrome.alarms?.clear("github-sync");
@@ -1380,6 +1391,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 chrome.runtime.onInstalled.addListener(() => {
     chrome.alarms?.create("ws-bridge-health", { periodInMinutes: 1 });
+    ensureVfsCleanupAlarm();
     void ensureSettingsMigrated();
     void restoreScheduledJobs();
     void startWsBridge();
@@ -1387,6 +1399,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+    ensureVfsCleanupAlarm();
     void ensureSettingsMigrated();
     void restoreScheduledJobs();
     void startWsBridge();
@@ -1396,6 +1409,7 @@ chrome.runtime.onStartup.addListener(() => {
 void ensureSettingsMigrated();
 void restoreScheduledJobs();
 void startWsBridge();
+ensureVfsCleanupAlarm();
 removeLegacyGithubSyncData();
 
 if (chrome.alarms) {
@@ -1404,6 +1418,14 @@ if (chrome.alarms) {
     });
 
     chrome.alarms.onAlarm.addListener(async (alarm) => {
+        if (alarm.name === VFS_CLEANUP_ALARM_NAME) {
+            try {
+                await chromeStorageVfs.cleanupExpiredFiles();
+            } catch (error) {
+                console.warn("[vfs] expired file cleanup failed:", error?.message || error);
+            }
+            return;
+        }
         if (alarm.name.startsWith(MCP_OAUTH_ALARM_PREFIX)) {
             const serverUrl = await getOAuthServerUrlForAlarm(alarm.name);
             if (!serverUrl) return;

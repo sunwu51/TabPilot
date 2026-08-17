@@ -1,6 +1,10 @@
 /* global chrome */
 import { _resolveControllableTab, _normalizeGroupId, _normalizeSplitViewId, _buildLastAccessed } from "./_shared";
-import { deflateStringToQueryParam } from "../../../../utils/playgroundCodec";
+import {
+  createPlaygroundProject,
+  getPlaygroundFilePath,
+  requirePlaygroundProject
+} from "../../../../utils/playgroundProjects";
 
 const SVAL_RUNTIME_FILE = "vendor/sval.min.js";
 
@@ -118,26 +122,31 @@ export async function openHelloWorldPlayground() {
   });
 }
 
-function _buildHtmlPlaygroundUrl({ html = "", css = "", js = "", expanded = false } = {}) {
-  const playgroundUrl = new URL(chrome.runtime.getURL("playground.html"));
-  playgroundUrl.searchParams.set("html", deflateStringToQueryParam(html));
-  playgroundUrl.searchParams.set("css", deflateStringToQueryParam(css));
-  playgroundUrl.searchParams.set("js", deflateStringToQueryParam(js));
+function _buildHtmlPlaygroundUrl({ playgroundId, expanded = false } = {}) {
+  const playgroundUrl = new URL(chrome.runtime.getURL("playground-host.html"));
+  playgroundUrl.searchParams.set("id", playgroundId);
   playgroundUrl.searchParams.set("expanded", expanded ? "1" : "0");
   return playgroundUrl.toString();
 }
 
 /**
- * Open the extension HTML playground with compressed html/css/js query params.
+ * Create a storage-backed playground project, or reopen an existing project.
  */
-export async function _execHtmlPlayground({ html = "", css = "", js = "", expanded = false } = {}) {
-  const url = _buildHtmlPlaygroundUrl({ html, css, js, expanded });
+export async function _execHtmlPlayground({ playgroundId, html = "", css = "", js = "", expanded = false, expireAt } = {}) {
+  const project = playgroundId
+    ? await requirePlaygroundProject(playgroundId)
+    : await createPlaygroundProject({ html, css, js, expireAt });
+  const url = _buildHtmlPlaygroundUrl({ playgroundId: project.id, expanded });
   const tab = await chrome.tabs.create({ url, active: true });
   if (tab?.windowId != null) {
     await chrome.windows.update(tab.windowId, { focused: true });
   }
   return {
     success: true,
+    playgroundId: project.id,
+    files: ["index.html", "style.css", "script.js"].map(file => getPlaygroundFilePath(project.id, file)),
+    revision: project.revision,
+    expireAt: project.expireAt,
     tabId: tab?.id,
     url: tab?.pendingUrl || tab?.url || url,
     expanded: !!expanded

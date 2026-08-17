@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { API_TYPES } from "../core/config";
-import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getCodeRuntimeToolDefinitions, getMcpToolCallAliases, getTools, isMcpToolCallName, listToolGroup, normalizeActiveToolNames } from "./definitions";
+import { BUILTIN_TOOL_NAMES, buildMcpToolCallName, findMcpToolByCallName, getBuiltinToolGroup, getCodeRuntimeToolDefinitions, getMcpToolCallAliases, getTools, isMcpToolCallName, listToolGroup, normalizeActiveToolNames } from "./definitions";
 
 function namesFor(apiType, options) {
   return getTools(apiType, [], options).map(tool => {
@@ -39,6 +39,27 @@ describe("llm tool definitions", () => {
     expect(names).toContain("list_macros");
     expect(names).toContain("describe_macro");
     expect(names).toContain("run_macro");
+  });
+
+  it("groups playground, VFS, and stash tools under storage", () => {
+    expect(getBuiltinToolGroup("html_playground")).toBe("storage");
+    expect(getBuiltinToolGroup("vfs_read_file")).toBe("storage");
+    expect(getBuiltinToolGroup("vfs_write_file")).toBe("storage");
+    expect(getBuiltinToolGroup("vfs_edit_file")).toBe("storage");
+    expect(getBuiltinToolGroup("stash_in_browser")).toBe("storage");
+    expect(getBuiltinToolGroup("webide_project")).toBe("storage");
+    expect(getBuiltinToolGroup("list_macros")).toBe("automation");
+  });
+
+  it("exposes React and Vanilla WebIDE project creation", () => {
+    const tool = getTools(API_TYPES.OPENAI_RESPONSES).find(item => item.name === "webide_project");
+    expect(tool.parameters.properties.template.enum).toEqual(["vanilla", "react"]);
+    expect(tool.description).toContain("transformed through esm.sh");
+    expect(tool.description).toContain("no npm install or package scripts run");
+    expect(tool.description).toContain("Remote package CSS imports");
+    expect(tool.description).toContain("peer-dependent component libraries");
+    expect(tool.description).toContain("import { Button } from \"antd\"");
+    expect(BUILTIN_TOOL_NAMES).toContain("webide_project");
   });
 
   it("keeps macro tools when beta features are disabled", () => {
@@ -99,6 +120,10 @@ describe("llm tool definitions", () => {
     expect(execDescription).toContain("page text is in `content`");
     expect(execDescription).toContain("if (state.error) return state");
     expect(execDescription).toContain("tools.mcp.server_name.tool_name(args)");
+    expect(execDescription).toContain("`html_playground` from the `storage` domain");
+    expect(execDescription).toContain("tools.describeTool('storage', 'html_playground')");
+    expect(execDescription).toContain("Always pass readable multi-line HTML, CSS, and JavaScript");
+    expect(execDescription).toContain("never minify or collapse playground source into one line");
     expect(execDescription).toContain("docs: Product documentation search");
     expect(execDescription).toContain("lookup (Lookup product documentation)");
     const runtimeNames = getCodeRuntimeToolDefinitions().map(tool => tool.name);
@@ -137,14 +162,45 @@ describe("llm tool definitions", () => {
     expect(BUILTIN_TOOL_NAMES).toContain("run_macro");
   });
 
-  it("exposes html_playground with optional expanded parameter", () => {
-    const playground = getTools(API_TYPES.OPENAI_RESPONSES).find(tool => tool.name === "html_playground");
+  it("exposes playground creation with generic VFS read and write tools", () => {
+    const tools = getTools(API_TYPES.OPENAI_RESPONSES);
+    const playground = tools.find(tool => tool.name === "html_playground");
+    const read = tools.find(tool => tool.name === "vfs_read_file");
+    const write = tools.find(tool => tool.name === "vfs_write_file");
+    const edit = tools.find(tool => tool.name === "vfs_edit_file");
 
     expect(playground.parameters.required).toEqual([]);
-    expect(Object.keys(playground.parameters.properties)).toEqual(["html", "css", "js", "expanded"]);
-    expect(playground.parameters.properties.html.description).toContain("<style>");
-    expect(playground.parameters.properties.expanded.description).toContain("Defaults to false");
-    expect(BUILTIN_TOOL_NAMES).toContain("html_playground");
+    expect(Object.keys(playground.parameters.properties)).toEqual(["playgroundId", "html", "css", "js", "expireAt", "expanded"]);
+    expect(playground.description).toContain("stable playgroundId");
+    expect(playground.parameters.expanded).toBeUndefined();
+    expect(read.parameters.required).toEqual(["path"]);
+    expect(read.parameters.properties.path.type).toBe("string");
+    expect(write.parameters.required).toEqual(["path", "content"]);
+    expect(write.description).toContain("expectedRevision 0");
+    expect(write.parameters.properties.expireAt.type).toBe("number");
+    expect(write.parameters.properties.startLine).toBeUndefined();
+    expect(edit.parameters.required).toEqual([
+      "path",
+      "startLine",
+      "endLine",
+      "originalContent",
+      "newContent",
+      "expectedRevision"
+    ]);
+    expect(edit.parameters.properties.edits).toBeUndefined();
+    expect(edit.description).toContain("may contain multiple lines");
+    expect(playground.description).toContain("Pass any returned files path unchanged");
+    expect(playground.description).toContain("expire after 24 hours");
+    expect(playground.description).toContain("readable multi-line source");
+    expect(write.description).toContain("never minify it into one line");
+    expect(edit.description).toContain("readable, multi-line");
+    expect(BUILTIN_TOOL_NAMES).toEqual(expect.arrayContaining([
+      "html_playground",
+      "vfs_read_file",
+      "vfs_write_file",
+      "vfs_edit_file"
+    ]));
+    expect(BUILTIN_TOOL_NAMES).not.toEqual(expect.arrayContaining(["html_playground_read", "html_playground_edit"]));
   });
 
   it("exposes image tools only when Image API is configured", () => {
@@ -254,7 +310,8 @@ describe("llm tool definitions", () => {
 
     expect(tool.description).toContain("downloads: Download management");
     expect(tool.description).toContain("github: GitHub repositories, issues, and pull requests");
-    expect(tool.parameters.properties.group.description).toContain("automation: Macros, stashes, and HTML playgrounds");
+    expect(tool.parameters.properties.group.description).toContain("automation: Browser macros and recorded automation");
+    expect(tool.parameters.properties.group.description).toContain("storage: Browser VFS files, stashes, and temporary HTML playgrounds");
     expect(tool.parameters.properties.group.enum).toBeUndefined();
   });
 

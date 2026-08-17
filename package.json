@@ -1,7 +1,7 @@
 {
   "name": "tabpilot",
   "private": true,
-  "version": "1.5.6.10",
+  "version": "1.5.6.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,11 +14,16 @@
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/language": "^6.12.3",
     "@codemirror/state": "^6.6.0",
+    "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.43.1",
     "@sunwu51/camel-ui": "^0.0.6",
+    "es-module-lexer": "^1.7.0",
     "highlight.js": "^11.11.1",
     "jsonc-parser": "^3.3.1",
     "pako": "^2.1.0",

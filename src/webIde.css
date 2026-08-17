@@ -1,0 +1,231 @@
+:root {
+  color: #1f2937;
+  background: #f8fafc;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#webide-root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+.webide-shell {
+  display: grid;
+  grid-template-rows: 40px minmax(0, 1fr) 24px;
+  width: 100%;
+  height: 100%;
+  background: #f8fafc;
+}
+
+.webide-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #d8dee8;
+  background: #ffffff;
+}
+
+.webide-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webide-template {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.webide-command {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  color: #1e293b;
+  background: #fff;
+  cursor: pointer;
+}
+
+.webide-command:hover {
+  background: #f1f5f9;
+}
+
+.webide-workspace {
+  display: grid;
+  grid-template-columns: 210px minmax(320px, 1fr) minmax(320px, 1fr);
+  min-height: 0;
+}
+
+.webide-sidebar,
+.webide-editor-pane,
+.webide-preview-pane {
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid #d8dee8;
+}
+
+.webide-sidebar {
+  overflow: auto;
+  background: #f3f6fa;
+}
+
+.webide-sidebar-header,
+.webide-preview-header {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 8px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.webide-sidebar-header {
+  justify-content: space-between;
+}
+
+.webide-icon-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  color: #334155;
+  background: transparent;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.webide-file {
+  display: block;
+  width: 100%;
+  height: 28px;
+  overflow: hidden;
+  padding: 0 10px 0 14px;
+  border: 0;
+  color: #334155;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.webide-file:hover,
+.webide-file.is-active {
+  background: #e2e8f0;
+}
+
+.webide-editor-pane {
+  display: grid;
+  grid-template-rows: 32px minmax(0, 1fr) auto;
+  background: #0f172a;
+}
+
+.webide-tabs {
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid #263244;
+  background: #111827;
+}
+
+.webide-tab {
+  flex: 0 0 auto;
+  height: 31px;
+  padding: 0 12px;
+  border: 0;
+  border-right: 1px solid #263244;
+  color: #94a3b8;
+  background: #111827;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.webide-tab.is-active {
+  color: #f8fafc;
+  background: #0f172a;
+}
+
+.webide-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.webide-editor .cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+
+.webide-editor .cm-scroller {
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.55;
+}
+
+.webide-errors {
+  max-height: 120px;
+  overflow: auto;
+  padding: 8px 12px;
+  border-top: 1px solid #7f1d1d;
+  color: #fecaca;
+  background: #450a0a;
+  font: 12px/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+
+.webide-preview-pane {
+  display: grid;
+  grid-template-rows: 32px minmax(0, 1fr);
+  border-right: 0;
+  background: #fff;
+}
+
+.webide-preview {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.webide-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  color: #475569;
+  border-top: 1px solid #d8dee8;
+  background: #eef2f7;
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .webide-workspace {
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
+
+  .webide-preview-pane {
+    display: none;
+  }
+}

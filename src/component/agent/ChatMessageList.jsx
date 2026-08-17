@@ -3,6 +3,7 @@ import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import ChatMessage, { EditableChatImage } from "./ChatMessage";
 import { useI18n } from "../../i18n";
+import { hasVisibleText } from "./textVisibility";
 
 hljs.registerLanguage("javascript", javascript);
 
@@ -424,11 +425,11 @@ function stripThinkingFromAssistantMessage(message) {
 
 function hasRenderableAssistantMessage(message) {
   if (!message || message.role !== "assistant") return false;
-  if (typeof message.content === "string") return message.content.length > 0;
+  if (typeof message.content === "string") return hasVisibleText(message.content);
   if (Array.isArray(message.content)) {
     return message.content.some(block => {
       if (!block) return false;
-      if (block.type === "text") return typeof block.text === "string" && block.text.length > 0;
+      if (block.type === "text") return hasVisibleText(block.text);
       return block.type !== "thinking" && block.type !== "redacted_thinking";
     });
   }
@@ -513,7 +514,7 @@ function extractAssistantRenderItems(message) {
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
       if (!block) continue;
-      if (block.type === "text" && block.text) {
+      if (block.type === "text" && hasVisibleText(block.text)) {
         items.push({ type: "message", message: { role: "assistant", content: block.text } });
       } else if (block.type === "thinking" || block.type === "redacted_thinking") {
         items.push({ type: "message", message: { role: "assistant", content: [block] } });
@@ -534,7 +535,7 @@ function extractAssistantRenderItems(message) {
     items.push({ type: "message", message: { role: "assistant", content: [block] } });
   }
 
-  if (message.content && typeof message.content === "string") {
+  if (typeof message.content === "string" && hasVisibleText(message.content)) {
     items.push({ type: "message", message: { role: "assistant", content: message.content } });
   }
 
@@ -596,7 +597,7 @@ function extractThinkingBlocksForRender(message) {
   }
 
   return blocks.filter(block => {
-    if (block?.type === "thinking") return typeof block.thinking === "string" || typeof block.signature === "string";
+    if (block?.type === "thinking") return hasVisibleText(block.thinking) || hasVisibleText(block.signature);
     if (block?.type === "redacted_thinking") return typeof block.data === "string" && block.data.length > 0;
     return false;
   });

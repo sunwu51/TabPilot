@@ -1,68 +1,14 @@
-/* global chrome */
-import { DEFAULT_STASH_EXPIRE_AT, STASH_STORAGE_KEY } from "../../core/constants";
+import { DEFAULT_STASH_EXPIRE_AT } from "../../core/constants";
+import { chromeStorageVfs } from "../../../../utils/chromeStorageVfs";
+import {
+  getStashVfsPath,
+  listStashFilesFromVfs,
+  readStashRecordFromVfs,
+  removeStashRecordFromVfs,
+  saveStashRecordToVfs
+} from "../../../../utils/stashVfs";
 
-async function _getStashes() {
-  const result = await chrome.storage.local.get({ [STASH_STORAGE_KEY]: {} });
-  return result[STASH_STORAGE_KEY] || {};
-}
-
-async function _saveStashes(stashes) {
-  await chrome.storage.local.set({ [STASH_STORAGE_KEY]: stashes });
-}
-
-/**
- * Stash info to browser local storage with optional expiration.
- */
-export async function _execStashInBrowser({ title, info, expireAt }) {
-  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
-  if (info === undefined || info === null) return { error: "info is required" };
-
-  const stashes = await _getStashes();
-  const now = Date.now();
-  let computedExpireAt;
-  if (expireAt === -1) {
-    computedExpireAt = -1;
-  } else if (typeof expireAt === "number" && expireAt > now) {
-    computedExpireAt = expireAt;
-  } else {
-    computedExpireAt = DEFAULT_STASH_EXPIRE_AT;
-  }
-
-  const existing = stashes[title];
-  stashes[title] = {
-    info: String(info),
-    expireAt: computedExpireAt,
-    createdAt: Number(existing?.createdAt) || Number(existing?.updatedAt) || now,
-    updatedAt: now
-  };
-
-  await _saveStashes(stashes);
-
-  return {
-    success: true,
-    title,
-    expireAt: computedExpireAt,
-    permanent: computedExpireAt === -1
-  };
-}
-
-/**
- * Get a single stash by title. Filters out expired stashes.
- */
-export async function _execUnstashInBrowser({ title }) {
-  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
-
-  const stashes = await _getStashes();
-  const stash = stashes[title];
-  if (!stash) return { error: `Stash not found: ${title}` };
-
-  const now = Date.now();
-  if (stash.expireAt !== -1 && now > stash.expireAt) {
-    delete stashes[title];
-    await _saveStashes(stashes);
-    return { error: `Stash has expired: ${title}` };
-  }
-
+function toUnstashResult(title, stash) {
   return {
     success: true,
     title,
@@ -74,45 +20,105 @@ export async function _execUnstashInBrowser({ title }) {
 }
 
 /**
- * List all stash titles, excluding expired ones.
+ * Stash info to the shared browser VFS with optional expiration.
  */
-export async function _execListStashesInBrowser() {
-  const stashes = await _getStashes();
-  const now = Date.now();
-  const titles = [];
-  let cleaned = false;
+export async function _execStashInBrowser({ title, info, expireAt }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+  if (info === undefined || info === null) return { error: "info is required" };
 
-  for (const [title, stash] of Object.entries(stashes)) {
-    if (stash.expireAt !== -1 && now > stash.expireAt) {
-      delete stashes[title];
-      cleaned = true;
-    } else {
-      titles.push(title);
-    }
+  const existingRecord = await readStashRecordFromVfs(title);
+  const existing = existingRecord?.stash;
+  const now = Date.now();
+  let computedExpireAt;
+  if (expireAt === -1) {
+    computedExpireAt = -1;
+  } else if (typeof expireAt === "number" && expireAt > now) {
+    computedExpireAt = expireAt;
+  } else {
+    computedExpireAt = DEFAULT_STASH_EXPIRE_AT;
   }
 
-  if (cleaned) await _saveStashes(stashes);
+  await saveStashRecordToVfs({
+    title,
+    info: String(info),
+    expireAt: computedExpireAt,
+    createdAt: Number(existing?.createdAt) || Number(existing?.updatedAt) || now,
+    updatedAt: now
+  });
 
   return {
     success: true,
-    count: titles.length,
-    titles
+    title,
+    expireAt: computedExpireAt,
+    permanent: computedExpireAt === -1
   };
 }
 
 /**
- * Remove a stash by title.
+ * Get a single stash by title. Removes expired stash files.
+ */
+export async function _execUnstashInBrowser({ title }) {
+  if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
+
+  let record = await readStashRecordFromVfs(title);
+  if (!record) return { error: `Stash not found: ${title}` };
+
+  const now = Date.now();
+  if (record.stash.expireAt !== -1 && now > record.stash.expireAt) {
+    try {
+      await chromeStorageVfs.unlink(record.path, { expectedRevision: record.revision });
+    } catch (error) {
+      if (error?.code !== "ESTALE") throw error;
+      record = await readStashRecordFromVfs(title);
+      if (record && (record.stash.expireAt === -1 || now <= record.stash.expireAt)) {
+        return toUnstashResult(title, record.stash);
+      }
+    }
+    return { error: `Stash has expired: ${title}` };
+  }
+
+  return toUnstashResult(title, record.stash);
+}
+
+/**
+ * List all stash titles, excluding and removing expired files.
+ */
+export async function _execListStashesInBrowser() {
+  const files = await listStashFilesFromVfs();
+  const now = Date.now();
+  const titles = new Set();
+
+  for (const file of files) {
+    const record = await chromeStorageVfs.readJsonWithStat(file.path);
+    const stash = record.value;
+    if (stash.expireAt !== -1 && now > stash.expireAt) {
+      try {
+        await chromeStorageVfs.unlink(file.path, { expectedRevision: record.stat.revision });
+      } catch (error) {
+        if (error?.code !== "ESTALE") throw error;
+        const latest = await chromeStorageVfs.readJson(file.path);
+        if (latest.expireAt === -1 || now <= latest.expireAt) titles.add(latest.title);
+      }
+    } else {
+      titles.add(stash.title);
+    }
+  }
+
+  const sortedTitles = [...titles].sort((a, b) => a.localeCompare(b));
+  return {
+    success: true,
+    count: sortedTitles.length,
+    titles: sortedTitles
+  };
+}
+
+/**
+ * Remove a stash file by title.
  */
 export async function _execRemoveStashInBrowser({ title }) {
   if (!title || typeof title !== "string") return { error: "title is required and must be a string" };
 
-  const stashes = await _getStashes();
-  if (!stashes[title]) {
-    return { success: true, title, existed: false };
-  }
-
-  delete stashes[title];
-  await _saveStashes(stashes);
-
-  return { success: true, title, removed: true };
+  const result = await removeStashRecordFromVfs(title);
+  if (!result.removed) return { success: true, title, existed: false };
+  return { success: true, title, removed: true, path: getStashVfsPath(title) };
 }
