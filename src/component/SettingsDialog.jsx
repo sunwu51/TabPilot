@@ -168,13 +168,6 @@ function SettingsDialogBody() {
     { label: "32k", value: 32000 },
     { label: "128k", value: 128000 }
   ];
-  const reasoningEffortOptions = [
-    { label: "供应商默认", value: "default" },
-    { label: "低 low", value: "low" },
-    { label: "中 medium", value: "medium" },
-    { label: "高 high", value: "high" },
-    { label: "超高 xhigh", value: "xhigh" }
-  ];
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
   const resolvedImageGenUrl = resolveImageApiRequestUrl(imageBaseUrl, "generations");
   const resolvedImageEditUrl = resolveImageApiRequestUrl(imageBaseUrl, "edits");
@@ -936,18 +929,6 @@ function SettingsDialogBody() {
             }}
             placeholder="20"
           />
-          <Select
-            label="思考强度"
-            items={reasoningEffortOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, reasoningEffortOptions.findIndex((item) => item.value === reasoningEffort))}
-            onSelectedItemChange={(changes) => {
-              const selected = reasoningEffortOptions.find((item) => item.label === changes.selectedItem);
-              setReasoningEffort(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.reasoningEffort);
-            }}
-          />
-          <div className="settings-api-url-hint">
-            默认不设置，由供应商决定
-          </div>
           <div className="mt-2">
             <Checkbox isSelected={omitThinkingFromRequests} onChange={setOmitThinkingFromRequests}>
               <span className="text-sm">思考内容不回传（需供应商支持）</span>

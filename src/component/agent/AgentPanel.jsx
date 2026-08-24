@@ -213,6 +213,13 @@ const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
 const STREAMING_BUBBLE_MIN_CHARS = 200;
+const REASONING_EFFORT_OPTIONS = [
+  { key: "reasoningDefault", value: "default" },
+  { key: "reasoningLow", value: "low" },
+  { key: "reasoningMedium", value: "medium" },
+  { key: "reasoningHigh", value: "high" },
+  { key: "reasoningXhigh", value: "xhigh" }
+];
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
 const SESSION_DEBUG_GLOBAL = "__tabManagerDebugSession";
@@ -2792,6 +2799,15 @@ export default function AgentPanel() {
     setModelMenuOpen(null);
   }
 
+  async function switchReasoningEffort(value) {
+    await ensureSettingsMigrated();
+    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const nextConfig = normalizeStoredModelConfig({ ...llmConfig, reasoningEffort: normalizeReasoningEffort(value) });
+    await chrome.storage.local.set({ llmConfig: nextConfig });
+    setLlmConfigInfo(current => ({ ...current, reasoningEffort: nextConfig.reasoningEffort }));
+    setModelMenuOpen(null);
+  }
+
   function toggleModelMenu(kind) {
     setShowAttachMenu(false);
     setModelMenuOpen(prev => prev === kind ? null : kind);
@@ -5124,6 +5140,31 @@ export default function AgentPanel() {
                           title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
                         >
                           <span>{item.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="chat-input-model-switcher">
+                  <button
+                    type="button"
+                    className="chat-input-model-button"
+                    onClick={() => toggleModelMenu("reasoning")}
+                    title={t("reasoningEffort")}
+                  >
+                    {t(REASONING_EFFORT_OPTIONS.find(item => item.value === llmConfigInfo.reasoningEffort)?.key || "reasoningDefault")}
+                    <span className="chat-input-model-caret">⌃</span>
+                  </button>
+                  {modelMenuOpen === "reasoning" && (
+                    <div className="chat-input-model-menu">
+                      {REASONING_EFFORT_OPTIONS.map(item => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={`chat-input-model-menu-item${item.value === llmConfigInfo.reasoningEffort ? " chat-input-model-menu-item-active" : ""}`}
+                          onClick={() => void switchReasoningEffort(item.value)}
+                        >
+                          <span>{t(item.key)}</span>
                         </button>
                       ))}
                     </div>

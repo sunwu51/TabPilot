@@ -88,7 +88,7 @@ function HookEditor({ hook, onSave, onDelete }) {
     </div>
     <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={draft.enabled} onChange={event => updateDraft({ enabled: event.target.checked })} /> Enabled</label>
     <HookCodeEditor value={draft.code} onChange={code => updateDraft({ code })} />
-    <div className="text-xs text-gray-500 space-y-1"><p>函数格式：<code>async (&#123; phase, context, state &#125;) =&gt; &#123; ... &#125;</code>。新建 Hook 时编辑器会填入完整的四阶段打印示例。</p><p><code>before</code>：主操作前，可打印数据、返回 <code>state</code>，也可返回 <code>changes</code>；<code>after</code>：主操作成功后读取 <code>result</code>；<code>error</code>：读取 <code>error</code>；<code>cancel</code>：读取取消原因。</p><p><code>context.data</code> 会随事件变化：工具调用通常包含 <code>tool</code>、<code>args</code>、<code>result</code>；Agent 运行包含 <code>input</code>；压缩包含 <code>messages</code>、<code>previousSummary</code>；可使用 <code>fetch</code>、<code>chrome</code>、<code>llm.profiles()</code> 和 <code>llm.complete()</code>。</p></div>
+    <p className="text-xs text-gray-500">详细 Hook 介绍请参考 <a className="text-blue-600 hover:underline" href="https://my.feishu.cn/wiki/EyDcwiBaliWlDNkRVv0cOAVHnUd?from=from_copylink" target="_blank" rel="noreferrer">高级用法</a>。</p>
   </div>;
 }
 
