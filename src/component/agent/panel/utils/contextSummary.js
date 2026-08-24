@@ -6,6 +6,9 @@ export const CONTEXT_SUMMARY_MIN_MESSAGES_TO_COMPACT = 4;
 export const CONTEXT_SUMMARY_APPROX_CHARS_PER_TOKEN = 4;
 export const CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS = 700;
 export const CONTEXT_SUMMARY_MAX_CHARS = 2400;
+export const CONTEXT_SUMMARY_MAX_TOOL_ARGUMENT_CHARS = 1200;
+export const CONTEXT_SUMMARY_MAX_TOOL_RESULT_CHARS = 2000;
+const CONTEXT_SUMMARY_RETAINED_TAIL_RATIO = 0.25;
 
 const SUMMARY_ROLE = "user";
 
@@ -31,14 +34,14 @@ export function shouldAutoCompactContext({ contextUsage, limitTokens, messages, 
   const safeMessages = Array.isArray(messages) ? messages : [];
   if (safeMessages.length < CONTEXT_SUMMARY_MIN_MESSAGES_TO_COMPACT) return false;
 
-  const cutIndex = findContextSummaryCutIndex(safeMessages);
+  const limit = Number(limitTokens);
+  if (!Number.isFinite(limit) || limit <= 0) return false;
+
+  const cutIndex = findContextSummaryCutIndex(safeMessages, { limitTokens: limit });
   if (cutIndex < 0) return false;
 
   const normalizedSummary = normalizeContextSummary(contextSummary);
   if (normalizedSummary && normalizedSummary.coveredMessageIndex >= cutIndex) return false;
-
-  const limit = Number(limitTokens);
-  if (!Number.isFinite(limit) || limit <= 0) return false;
 
   const usageTokens = Number(contextUsage?.tokens);
   if (Number.isFinite(usageTokens)) {
@@ -55,6 +58,21 @@ export function findContextSummaryCutIndex(messages, options = {}) {
   if (cutIndex < 0) return -1;
 
   cutIndex = moveCutIndexToCompletedToolSequenceEnd(safeMessages, cutIndex);
+
+  const limitTokens = Number(options.limitTokens);
+  const retainedTokenBudget = Number.isFinite(limitTokens) && limitTokens > 0
+    ? limitTokens * CONTEXT_SUMMARY_RETAINED_TAIL_RATIO
+    : 0;
+  while (
+    retainedTokenBudget > 0 &&
+    cutIndex >= 0 &&
+    cutIndex < safeMessages.length - 2 &&
+    estimateMessagesTokens(safeMessages.slice(cutIndex + 1)) > retainedTokenBudget
+  ) {
+    const nextCutIndex = moveCutIndexToCompletedToolSequenceEnd(safeMessages, cutIndex + 1);
+    if (nextCutIndex <= cutIndex) break;
+    cutIndex = nextCutIndex;
+  }
 
   return cutIndex >= 0 ? cutIndex : -1;
 }
@@ -203,7 +221,7 @@ function messageHasToolCalls(message) {
   return Array.isArray(message.content) && message.content.some(block => block?.type === "tool_use");
 }
 
-function formatMessagesForSummary(messages) {
+export function formatMessagesForSummary(messages) {
   return (Array.isArray(messages) ? messages : [])
     .map((message, index) => `#${index} ${formatMessageForSummary(message)}`)
     .join("\n\n");
@@ -213,24 +231,33 @@ function formatMessageForSummary(message) {
   if (!message || typeof message !== "object") return String(message ?? "");
   const role = message.role || "message";
   if (role === "tool") {
-    return `[tool:${message.tool_name || message.tool_call_id || "unknown"}]\n${formatContentForSummary(message.content)}`;
+    return `[tool:${message.tool_name || message.tool_call_id || "unknown"}]\n${trimToolTextForSummary(formatContentForSummary(message.content), CONTEXT_SUMMARY_MAX_TOOL_RESULT_CHARS, "工具结果")}`;
   }
   if (role === "assistant" && messageHasToolCalls(message)) {
-    const toolNames = extractToolNames(message).join(", ");
+    const toolCalls = formatToolCallsForSummary(message);
     const text = formatContentForSummary(message.content);
-    return `[assistant tool_calls: ${toolNames || "unknown"}]${text ? `\n${text}` : ""}`;
+    return `[assistant tool_calls: ${toolCalls || "unknown"}]${text ? `\n${text}` : ""}`;
   }
   return `[${role}]\n${formatContentForSummary(message.content)}`;
 }
 
-function extractToolNames(message) {
+function formatToolCallsForSummary(message) {
   if (Array.isArray(message.tool_calls)) {
-    return message.tool_calls.map(call => call?.function?.name || call?.name).filter(Boolean);
+    return message.tool_calls.map(call => {
+      const name = call?.function?.name || call?.name;
+      if (!name) return "";
+      const args = call?.function?.arguments ?? call?.arguments ?? call?.args;
+      return `${name}(${trimToolTextForSummary(stringifyForSummary(args ?? {}), CONTEXT_SUMMARY_MAX_TOOL_ARGUMENT_CHARS, "工具参数")})`;
+    }).filter(Boolean).join(", ");
   }
   if (Array.isArray(message.content)) {
-    return message.content.filter(block => block?.type === "tool_use").map(block => block.name).filter(Boolean);
+    return message.content
+      .filter(block => block?.type === "tool_use")
+      .map(block => block.name)
+      .filter(Boolean)
+      .join(", ");
   }
-  return [];
+  return "";
 }
 
 function formatContentForSummary(content) {
@@ -247,7 +274,7 @@ function formatContentBlockForSummary(block) {
   if (block.type === "text") return block.text || "";
   if (block.type === "file") return `[Attached file: ${block.fileName || "file"}]\n${block.text || ""}`;
   if (block.type === "image") return `[Image: ${block.ref || block.source?.ref || block.source?.media_type || "attached"}]`;
-  if (block.type === "tool_use") return `[Tool call: ${block.name || "unknown"}]\n${stringifyForSummary(block.input || {})}`;
+  if (block.type === "tool_use") return `[Tool call: ${block.name || "unknown"}]\n${trimToolTextForSummary(stringifyForSummary(block.input || {}), CONTEXT_SUMMARY_MAX_TOOL_ARGUMENT_CHARS, "工具参数")}`;
   if (block.type === "thinking" || block.type === "redacted_thinking") return "";
   return stringifyForSummary(block);
 }
@@ -258,4 +285,14 @@ function stringifyForSummary(value) {
   } catch (_error) {
     return String(value);
   }
+}
+
+function trimToolTextForSummary(value, maxChars, label) {
+  const text = String(value || "");
+  if (text.length <= maxChars) return text;
+  const suffix = `\n[${label}已截断，原始长度 ${text.length} 字符]`;
+  const retainedLength = Math.max(0, maxChars - suffix.length);
+  const headLength = Math.ceil(retainedLength * 0.7);
+  const tailLength = Math.max(0, retainedLength - headLength);
+  return `${text.slice(0, headLength)}\n...\n${tailLength ? text.slice(-tailLength) : ""}${suffix}`;
 }

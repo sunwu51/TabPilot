@@ -27,6 +27,7 @@ import {
   normalizeActiveToolNames
 } from "../../api/llm";
 import { ensureSettingsMigrated } from "../../api/settings/migrations";
+import { createHookLlmRuntime, loadAgentHooks, runAroundHooks } from "../../api/agent/hooks";
 import {
   generateSessionId,
   listSessions,
@@ -207,7 +208,7 @@ export { buildSessionExportMarkdown, collectToolResultDisplayImages, ImageEditDi
 export { buildRewindRestoredAttachments, buildImageEditRewindHint };
 
 const CHAT_AUTO_FOLLOW_BOTTOM_THRESHOLD_PX = 80;
-const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const SESSION_KEYWORDS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
 const STREAMING_BUBBLE_MIN_CHARS = 200;
@@ -2957,11 +2958,118 @@ export default function AgentPanel() {
     const nextRunId = getSessionRuntime(currentSessionId).runId + 1;
     setSessionRuntime(currentSessionId, { loading: true, abort: null, runId: nextRunId });
 
-    void runConversation(config, currentSessionId, newMessages, nextRunId).catch(err => {
+    void runAgentLifecycle(config, currentSessionId, newMessages, nextRunId).catch(err => {
       console.error("Failed to start conversation:", err);
       toast.error(`发送失败: ${err.message || String(err)}`);
       setSessionRuntime(currentSessionId, { loading: false, abort: null });
     });
+  }
+
+  async function runAgentLifecycle(config, targetSessionId, conversationMessages, runId) {
+    const hooks = await loadAgentHooks();
+    const lastUserMessage = [...conversationMessages].reverse().find(message => message?.role === "user") || {};
+    const originalUserText = extractHookUserText(lastUserMessage);
+    const outcome = await runAroundHooks({
+      event: "agent.run",
+      context: {
+        eventBase: "agent.run",
+        session: { id: targetSessionId },
+        run: { id: runId, kind: "agent" },
+        data: {
+          input: {
+            messageId: String(lastUserMessage.id || ""),
+            text: originalUserText,
+            attachments: extractHookAttachments(lastUserMessage),
+            selectedTabs: Array.isArray(lastUserMessage.selectedTabs) ? lastUserMessage.selectedTabs : [],
+            imageRefs: extractHookImageRefs(lastUserMessage),
+            images: extractHookImages(lastUserMessage)
+          }
+        }
+      },
+      hooks,
+      runtime: { fetch: (...args) => fetch(...args), chrome: typeof chrome !== "undefined" ? chrome : undefined, llm: createHookLlmRuntime(config) },
+      operation: async data => {
+        if (!isCurrentRun(targetSessionId, runId)) return;
+        const nextText = data?.input?.text;
+        const nextMessages = typeof nextText === "string" && nextText !== originalUserText
+          ? conversationMessages.map(message => message === lastUserMessage ? updateHookUserMessageText(message, nextText) : message)
+          : conversationMessages;
+        if (nextMessages !== conversationMessages) {
+          setSessionMessages(targetSessionId, nextMessages);
+          await autoSave(targetSessionId, nextMessages);
+        }
+        return await new Promise((resolve, reject) => {
+          void runConversation(config, targetSessionId, nextMessages, runId, { resolve, reject });
+        });
+      }
+    });
+    if (outcome.cancelled && isCurrentRun(targetSessionId, runId)) {
+      toast(outcome.reason, { duration: 2500 });
+      setSessionRuntime(targetSessionId, { loading: false, abort: null });
+    }
+  }
+
+  function extractHookUserText(message) {
+    if (typeof message?.displayContent === "string") return message.displayContent;
+    if (typeof message?.content === "string") return message.content;
+    if (Array.isArray(message?.content)) {
+      return message.content
+        .filter(block => block?.type === "text")
+        .map(block => String(block.text || ""))
+        .join("\n");
+    }
+    return "";
+  }
+
+  function updateHookUserMessageText(message, text) {
+    if (Array.isArray(message?.content)) {
+      const content = message.content.map(block => block?.type === "text" ? { ...block, text } : block);
+      return { ...message, content, displayContent: text };
+    }
+    return { ...message, content: text, displayContent: message?.displayContent !== undefined ? text : message?.displayContent };
+  }
+
+  function extractHookImageRefs(message) {
+    return normalizeMessageImageRefs(Array.isArray(message?.imageRefs) ? message.imageRefs : [])
+      .map(item => ({
+        ref: item.ref,
+        mediaType: item.dataUrl?.match(/^data:([^;]+);/i)?.[1] || "",
+        dataUrl: item.dataUrl || ""
+      }));
+  }
+
+  function extractHookAttachments(message) {
+    if (Array.isArray(message?.attachments) && message.attachments.length > 0) {
+      return message.attachments;
+    }
+    if (!Array.isArray(message?.content)) return [];
+    return message.content
+      .filter(block => block?.type === "image" || block?.type === "file")
+      .map(block => {
+        if (block.type === "file") {
+          return { type: "text", fileName: String(block.fileName || ""), text: String(block.text || "") };
+        }
+        return {
+          type: "image",
+          ref: String(block.ref || block.source?.ref || "").trim(),
+          mediaType: String(block.source?.media_type || "").trim(),
+          dataUrl: block.source?.data
+            ? `data:${block.source.media_type || "application/octet-stream"};base64,${block.source.data}`
+            : ""
+        };
+      });
+  }
+
+  function extractHookImages(message) {
+    if (!Array.isArray(message?.content)) return [];
+    return message.content
+      .filter(block => block?.type === "image")
+      .map(block => ({
+        ref: String(block.ref || block.source?.ref || "").trim(),
+        mediaType: String(block.source?.media_type || "").trim(),
+        hasData: !!block.source?.data,
+        dataLength: String(block.source?.data || "").length
+      }));
   }
 
   async function drainNextQueuedMessage(targetSessionId, options = {}) {
@@ -3033,7 +3141,9 @@ export default function AgentPanel() {
     const existingSummary = getSessionContextSummary(targetSessionId);
     const latestUsage = getSessionRuntime(targetSessionId).contextUsage ||
       getLatestContextUsageFromMessages(conversationMessages, config);
-    const cutIndex = findContextSummaryCutIndex(conversationMessages);
+    const cutIndex = findContextSummaryCutIndex(conversationMessages, {
+      limitTokens: config.modelContextLimitTokens
+    });
     const shouldCompact = shouldAutoCompactContext({
       contextUsage: latestUsage,
       limitTokens: config.modelContextLimitTokens,
@@ -3110,7 +3220,7 @@ export default function AgentPanel() {
     }
   }
 
-  async function runConversation(config, targetSessionId, conversationMessages, runId) {
+  async function runConversation(config, targetSessionId, conversationMessages, runId, completion = null) {
     if (!isCurrentRun(targetSessionId, runId)) return;
     const systemPrompt = await buildSystemPrompt(config);
     await loadSessionImagesIntoCache(targetSessionId);
@@ -3148,6 +3258,7 @@ export default function AgentPanel() {
     sessionStreamingWebSearchesRef.current.set(targetSessionId, []);
 
     const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
+    const agentHooks = await loadAgentHooks();
     const abort = streamChat(config, fullMessages, {
       onText: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
@@ -3246,6 +3357,7 @@ export default function AgentPanel() {
               buildFinalAssistantMessage(config.apiType, config.model, streamedContent, msg)
             ];
             await completeSessionRun(targetSessionId, finalMessages);
+            completion?.resolve();
             return;
           }
 
@@ -3263,46 +3375,54 @@ export default function AgentPanel() {
 
           const toolResults = [];
           const executeToolWithApproval = async (toolCall, resolvedArgs) => {
-            let result;
-            let permissionDenied = false;
-            const resolvedToolCall = { ...toolCall, args: resolvedArgs };
-            const permissionMeta = getPermissionMetaForToolCall(resolvedToolCall);
-            if (permissionMeta && !(await hasDownloadsPermission())) {
-              toast(`${permissionMeta.title}`, { duration: 2500 });
-              const { granted } = await requestPermissionApproval(targetSessionId, runId, resolvedToolCall, permissionMeta);
-              if (!isCurrentRun(targetSessionId, runId)) return;
-              if (!granted) {
-                result = {
-                  error: "User denied the required permission: " + (permissionMeta.permissions || []).join(","),
-                  cancelled: true
-                };
-                permissionDenied = true;
+            const runTool = async (args) => {
+              let result;
+              let permissionDenied = false;
+              const resolvedToolCall = { ...toolCall, args };
+              const permissionMeta = getPermissionMetaForToolCall(resolvedToolCall);
+              if (permissionMeta && !(await hasDownloadsPermission())) {
+                toast(`${permissionMeta.title}`, { duration: 2500 });
+                const { granted } = await requestPermissionApproval(targetSessionId, runId, resolvedToolCall, permissionMeta);
+                if (!isCurrentRun(targetSessionId, runId)) return;
+                if (!granted) {
+                  result = { error: "User denied the required permission: " + (permissionMeta.permissions || []).join(","), cancelled: true };
+                  permissionDenied = true;
+                }
               }
-            }
-            if (permissionDenied) return result;
-
-            const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
-            if (!dangerousMeta) {
-              return await executeTool(toolCall.name, resolvedArgs, combinedMcpTools);
-            }
-
-            const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
-            if (dangerousToolSkipApproval) {
-              return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
-            }
-
-            toast(`${dangerousMeta.title}：${toolCall.name}`, { duration: 2500 });
-            const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
-            if (!isCurrentRun(targetSessionId, runId)) return;
-            if (!approved) return { error: "Execution canceled by user", cancelled: true };
-            return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? resolvedArgs, combinedMcpTools);
+              if (permissionDenied) return result;
+              const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
+              if (!dangerousMeta) return await executeTool(toolCall.name, args, combinedMcpTools);
+              const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
+              if (dangerousToolSkipApproval) return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools);
+              toast(`${dangerousMeta.title}：${toolCall.name}`, { duration: 2500 });
+              const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
+              if (!isCurrentRun(targetSessionId, runId)) return;
+              if (!approved) return { error: "Execution canceled by user", cancelled: true };
+              return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools);
+            };
+            const outcome = await runAroundHooks({
+              event: "tool.call",
+              context: { eventBase: "tool.call", session: { id: targetSessionId }, run: { id: runId, kind: "agent" }, data: { tool: { name: toolCall.name, source: isMcpToolCallName(toolCall.name) ? "mcp" : "builtin" }, args: resolvedArgs } },
+              hooks: agentHooks,
+              runtime: { fetch: (...args) => fetch(...args), chrome: typeof chrome !== "undefined" ? chrome : undefined, llm: createHookLlmRuntime(config) },
+              builtins: [{ id: "builtin_image_refs", name: "Image references", priority: 10000, run: async ({ phase, context }) => {
+                if (phase === "before") return { changes: { args: resolveToolImageRefs(targetSessionId, context.data.args || {}) } };
+              } }],
+              operation: async data => {
+                const raw = await runTool(data.args || {});
+                const transformed = replaceBase64ImageDataUrlsWithRefs(raw, dataUrl => registerSessionImageDataUrl(targetSessionId, dataUrl));
+                if (transformed.images.length) await persistSessionImageDataUrls(targetSessionId, transformed.images);
+                return transformed.value;
+              }
+            });
+            return outcome.cancelled ? { error: outcome.reason, cancelled: true, code: "HOOK_CANCELLED" } : outcome.result;
           };
 
           const executeOneToolCall = async (tc) => {
             if (!isCurrentRun(targetSessionId, runId)) return;
             let result;
             const t0 = Date.now();
-            const resolvedArgs = resolveToolImageRefs(targetSessionId, tc.args);
+            const resolvedArgs = tc.args;
             if (tc.name === "tool_list_group") {
               result = buildToolGroupResult(resolvedArgs?.group, config);
             } else if (tc.name === "tool_enable") {
@@ -3356,7 +3476,7 @@ export default function AgentPanel() {
                 onToolCall: updateExecToolCard,
                 invokeTool: async (name, args) => {
                   if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
-                  const nestedArgs = resolveToolImageRefs(targetSessionId, args || {});
+                  const nestedArgs = args || {};
                   return await executeToolWithApproval({ name, args: nestedArgs }, nestedArgs);
                 }
               });
@@ -3425,7 +3545,7 @@ export default function AgentPanel() {
                 isCancelled: () => !isCurrentRun(targetSessionId, runId),
                 invokeTool: async (name, args) => {
                   if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
-                  const nestedArgs = resolveToolImageRefs(targetSessionId, args || {});
+                  const nestedArgs = args || {};
                   if (name === "exec") {
                     const nestedCalls = [];
                     const execResult = await executeCodeRuntime(nestedArgs, {
@@ -3462,8 +3582,8 @@ export default function AgentPanel() {
                       },
                       invokeTool: async (nestedName, nestedNestedArgs) => {
                         if (!isCurrentRun(targetSessionId, runId)) throw new Error("Execution was cancelled");
-                        const resolved = resolveToolImageRefs(targetSessionId, nestedNestedArgs || {});
-                        return await executeToolWithApproval({ name: nestedName, args: resolved }, resolved);
+                        const nestedArgs = nestedNestedArgs || {};
+                        return await executeToolWithApproval({ name: nestedName, args: nestedArgs }, nestedArgs);
                       }
                     });
                     if (nestedCalls.length > 0) execResult._subagentNestedCalls = nestedCalls;
@@ -3536,12 +3656,13 @@ export default function AgentPanel() {
           // Setting both causes React 18 batching to skip this one,
           // and onText's prev may reference the wrong array.
           if (!isCurrentRun(targetSessionId, runId)) return;
-          await runConversation(config, targetSessionId, continuedMessages, runId);
+          await runConversation(config, targetSessionId, continuedMessages, runId, completion);
         } catch (err) {
           if (!isCurrentRun(targetSessionId, runId)) return;
           console.error("Failed to continue conversation after tool execution:", err);
           toast.error(`工具执行后续跑失败: ${err.message || String(err)}`);
           setSessionRuntime(targetSessionId, { loading: false, abort: null });
+          completion?.reject(err);
         }
       },
 
@@ -3561,6 +3682,7 @@ export default function AgentPanel() {
         setSessionMessages(targetSessionId, finalMessages);
         setSessionRuntime(targetSessionId, { loading: false, abort: null });
         void autoSave(targetSessionId, finalMessages);
+        completion?.reject(err);
       }
     }, combinedMcpTools, {
       sessionId: targetSessionId,

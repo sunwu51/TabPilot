@@ -201,6 +201,8 @@ describe("settings backup", () => {
         supportsToolImageInput: false,
         reasoningEffort: "default",
         omitThinkingFromRequests: false,
+        keywordSummaryUseCustomModel: false,
+        keywordSummaryModelId: "llm_opencode_zen_big_pickle",
         activeImageModelId: "",
         imageModels: []
       },

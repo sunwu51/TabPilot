@@ -7,6 +7,7 @@ import {
   normalizeLlmModelProfiles,
   resolveActiveImageConfig,
   resolveActiveLlmConfig,
+  resolveKeywordSummaryLlmConfig,
   syncActiveModelFields
 } from "./modelProfiles";
 import { isImageApiConfigured } from "../tools/builtins/imageApi";
@@ -57,6 +58,22 @@ describe("modelProfiles", () => {
       "llm_custom"
     ]);
     expect(normalized.activeId).toBe("llm_custom");
+  });
+
+  it("uses the OpenCode free model for keyword summaries until explicitly overridden", () => {
+    const config = {
+      activeLlmModelId: "llm_custom",
+      llmModels: [{ id: "llm_custom", name: "Custom", apiType: "openai-chat-completions", baseUrl: "https://api.example.com/v1", apiKey: "sk-test", model: "custom-model" }]
+    };
+
+    expect(resolveKeywordSummaryLlmConfig(config)).toMatchObject({
+      keywordSummaryModelId: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+      model: "big-pickle"
+    });
+    expect(resolveKeywordSummaryLlmConfig({ ...config, keywordSummaryUseCustomModel: true, keywordSummaryModelId: "llm_custom" })).toMatchObject({
+      keywordSummaryModelId: "llm_custom",
+      model: "custom-model"
+    });
   });
 
   it("omits authorization headers when an LLM profile has no API key", () => {

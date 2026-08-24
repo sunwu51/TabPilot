@@ -6,6 +6,7 @@ const MIN_SESSION_KEYWORD_CHARS = 100;
 const MAX_SESSION_KEYWORD_SOURCE_CHARS = 12000;
 const MAX_KEYWORD_CHARS = 10;
 const KEYWORD_COUNT_MAX = 3;
+const KEYWORD_FAILURE_RETRY_MS = 30 * 60 * 1000;
 
 export function getSessionKeywordTextStats(messages, startIndex = 0) {
   const safeMessages = Array.isArray(messages) ? messages : [];
@@ -44,6 +45,17 @@ export async function refreshSessionKeywords(sessionId, messages) {
   const existingMessageIndex = Number.isInteger(entry.keywordMessageIndex)
     ? entry.keywordMessageIndex
     : (Number.isInteger(entry.keywordsMessageIndex) ? entry.keywordsMessageIndex : -1);
+  const retryAfter = Number(entry.keywordRetryAfter) || 0;
+  const retryMessageIndex = Number.isInteger(entry.keywordRetryMessageIndex)
+    ? entry.keywordRetryMessageIndex
+    : -1;
+  const lastMessageIndex = Math.max(0, messages.length - 1);
+
+  // Do not send the same malformed or failed source back to the model every
+  // refresh cycle. A new message is meaningful new input and bypasses retry.
+  if (retryAfter > Date.now() && retryMessageIndex >= lastMessageIndex) {
+    return { updated: false, reason: "retry_cooldown", retryAfter };
+  }
 
   if (existingKeywords.length > 0 && !existingHasOverlongKeyword && existingKeywords.length !== (entry.keywords || []).length) {
     await updateSessionKeywordEntry(safeSessionId, index, entry, {
@@ -57,7 +69,6 @@ export async function refreshSessionKeywords(sessionId, messages) {
     return { updated: false, reason: "already_current" };
   }
 
-  const lastMessageIndex = Math.max(0, messages.length - 1);
   const hasValidExistingPointer = !existingHasOverlongKeyword && existingKeywords.length > 0 && existingMessageIndex >= 0 && existingMessageIndex < messages.length;
   const stats = hasValidExistingPointer
     ? getSessionKeywordTextStats(messages, existingMessageIndex + 1)
@@ -67,22 +78,43 @@ export async function refreshSessionKeywords(sessionId, messages) {
     return { updated: false, reason: "too_short", charCount: stats.charCount };
   }
 
-  const config = await getLLMConfigForMemory();
+  const config = await getLLMConfigForMemory({ keywordSummary: true });
   if (!config) return { updated: false, reason: "missing_llm_config" };
 
-  const keywords = await generateSessionKeywords(config, {
-    previousKeywords: hasValidExistingPointer ? existingKeywords : [],
-    conversationText: stats.text
-  });
-  if (keywords.error) return { updated: false, reason: keywords.error };
-  if (keywords.items.length === 0) return { updated: false, reason: "empty_keywords" };
+  let keywords;
+  try {
+    keywords = await generateSessionKeywords(config, {
+      previousKeywords: hasValidExistingPointer ? existingKeywords : [],
+      conversationText: stats.text
+    });
+  } catch (error) {
+    return recordKeywordFailure(safeSessionId, index, entry, lastMessageIndex, "request_failed", error);
+  }
+  if (keywords.error) {
+    return recordKeywordFailure(safeSessionId, index, entry, lastMessageIndex, keywords.error);
+  }
+  if (keywords.items.length === 0) {
+    return recordKeywordFailure(safeSessionId, index, entry, lastMessageIndex, "invalid_keyword_format");
+  }
 
-  await updateSessionKeywordEntry(safeSessionId, index, entry, {
+  const { keywordRetryAfter, keywordRetryMessageIndex, keywordLastError, ...entryWithoutRetry } = entry;
+  await updateSessionKeywordEntry(safeSessionId, index, entryWithoutRetry, {
     keywords: keywords.items,
     keywordMessageIndex: lastMessageIndex,
     keywordUpdatedAt: Date.now()
   });
   return { updated: true, keywords: keywords.items, keywordMessageIndex: lastMessageIndex };
+}
+
+async function recordKeywordFailure(sessionId, index, entry, messageIndex, reason, error) {
+  const retryAfter = Date.now() + KEYWORD_FAILURE_RETRY_MS;
+  await updateSessionKeywordEntry(sessionId, index, entry, {
+    keywordRetryAfter: retryAfter,
+    keywordRetryMessageIndex: messageIndex,
+    keywordLastError: reason
+  });
+  if (error) console.warn("Failed to generate session keywords:", error);
+  return { updated: false, reason, retryAfter };
 }
 
 async function updateSessionKeywordEntry(sessionId, index, entry, patch) {
@@ -164,16 +196,12 @@ function parseKeywordOutput(output) {
   if (jsonText) {
     try {
       const parsed = JSON.parse(jsonText);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === "string")) return parsed;
     } catch {
-      // fallback below
+      return [];
     }
   }
-
-  return text
-    .split(/[\n,，、;；|]+/)
-    .map(item => item.replace(/^[-*\d.\s]+/, "").trim())
-    .filter(Boolean);
+  return [];
 }
 
 function extractJsonArrayText(text) {

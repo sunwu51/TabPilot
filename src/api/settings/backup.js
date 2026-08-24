@@ -29,6 +29,8 @@ const LLM_CONFIG_KEYS = [
   "model",
   "activeLlmModelId",
   "llmModels",
+  "keywordSummaryUseCustomModel",
+  "keywordSummaryModelId",
   "modelContextLimitTokens",
   "firstPacketTimeoutSeconds",
   "supportsImageInput",
@@ -138,6 +140,10 @@ function normalizeLlmConfigPatch(value) {
     patch.reasoningEffort = normalizeReasoningEffort(source.reasoningEffort);
   }
   addBooleanPatch(patch, source, "omitThinkingFromRequests");
+  addBooleanPatch(patch, source, "keywordSummaryUseCustomModel");
+  if (Object.prototype.hasOwnProperty.call(source, "keywordSummaryModelId")) {
+    patch.keywordSummaryModelId = String(source.keywordSummaryModelId || "").trim();
+  }
 
   return patch;
 }

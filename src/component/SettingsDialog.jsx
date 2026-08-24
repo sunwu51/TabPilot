@@ -7,6 +7,7 @@ import {
   API_TYPES,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
   IMAGE_API_PROTOCOLS,
   MODEL_CONTEXT_LIMIT_OPTIONS,
   captureFullPageScreenshotToTab,
@@ -52,6 +53,8 @@ const DEFAULT_SETTINGS = {
   llmConfig: {
     activeLlmModelId: "",
     llmModels: [],
+    keywordSummaryUseCustomModel: false,
+    keywordSummaryModelId: "",
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
@@ -113,6 +116,8 @@ function SettingsDialogBody() {
   const [nativeWebSearch, setNativeWebSearch] = useState(false);
   const [llmModels, setLlmModels] = useState(DEFAULT_SETTINGS.llmConfig.llmModels);
   const [activeLlmModelId, setActiveLlmModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeLlmModelId);
+  const [keywordSummaryUseCustomModel, setKeywordSummaryUseCustomModel] = useState(DEFAULT_SETTINGS.llmConfig.keywordSummaryUseCustomModel);
+  const [keywordSummaryModelId, setKeywordSummaryModelId] = useState(DEFAULT_SETTINGS.llmConfig.keywordSummaryModelId);
   const [llmModelFormOpen, setLlmModelFormOpen] = useState(false);
   const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
@@ -235,6 +240,10 @@ function SettingsDialogBody() {
       const normalizedImageProfiles = normalizeImageModelProfiles(rawLlmConfig);
       setLlmModels(normalizedLlmProfiles.profiles);
       setActiveLlmModelId(normalizedLlmProfiles.activeId);
+      setKeywordSummaryUseCustomModel(nextLlmConfig.keywordSummaryUseCustomModel === true);
+      setKeywordSummaryModelId(normalizedLlmProfiles.profiles.some(item => item.id === nextLlmConfig.keywordSummaryModelId)
+        ? nextLlmConfig.keywordSummaryModelId
+        : DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID);
       setImageModels(normalizedImageProfiles.profiles);
       setActiveImageModelId(normalizedImageProfiles.activeId);
       setApiType(DEFAULT_LLM_MODEL_DRAFT.apiType);
@@ -309,6 +318,8 @@ function SettingsDialogBody() {
       const nextLlmConfig = normalizeStoredModelConfig({
           activeLlmModelId,
           llmModels,
+          keywordSummaryUseCustomModel,
+          keywordSummaryModelId,
           modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
@@ -634,6 +645,14 @@ function SettingsDialogBody() {
     }
   }
 
+  async function handleOpenHooks() {
+    try {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("hooks.html") });
+    } catch (error) {
+      toast.error(error?.message || "打开 Hook 设置失败");
+    }
+  }
+
   function openNewSubagentTemplateForm() {
     setEditingSubagentTemplateId("");
     setSubagentTemplateDraft(createEmptySubagentTemplate());
@@ -779,6 +798,25 @@ function SettingsDialogBody() {
           >
             {llmModelFormOpen ? "收起添加模型" : "添加模型"}
           </Button>
+          <div className="mt-3">
+            <Checkbox isSelected={keywordSummaryUseCustomModel} onChange={setKeywordSummaryUseCustomModel}>
+              <span className="text-sm">使用自定义关键词总结模型</span>
+            </Checkbox>
+          </div>
+          {keywordSummaryUseCustomModel && (
+            <Select
+              label="关键词总结模型"
+              items={llmModels.map(item => `${item.name} (${item.model})`)}
+              defaultIndex={Math.max(0, llmModels.findIndex(item => item.id === keywordSummaryModelId))}
+              onSelectedItemChange={(changes) => {
+                const selected = llmModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
+                if (selected) setKeywordSummaryModelId(selected.id);
+              }}
+            />
+          )}
+          {!keywordSummaryUseCustomModel && (
+            <div className="settings-api-url-hint">关键词总结默认使用 OpenCode Zen 免费模型</div>
+          )}
           {llmModelFormOpen && (
             <div className="settings-model-form">
               <Select
@@ -1229,6 +1267,12 @@ function SettingsDialogBody() {
               onPress={handleOpenPostdog}
             >
               postdog
+            </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleOpenHooks}
+            >
+              hooks
             </Button>
           </div>
           <hr className="settings-quick-entry-divider" />

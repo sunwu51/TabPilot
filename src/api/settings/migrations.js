@@ -88,6 +88,8 @@ export function migrateModelProfilesV2(llmConfig = {}) {
     supportsToolImageInput: source.supportsImageInput === true && source.supportsToolImageInput === true,
     reasoningEffort: normalizeReasoningEffort(source.reasoningEffort),
     omitThinkingFromRequests: source.omitThinkingFromRequests === true,
+    keywordSummaryUseCustomModel: source.keywordSummaryUseCustomModel === true,
+    keywordSummaryModelId: String(source.keywordSummaryModelId || ""),
     activeImageModelId: imageProfiles.activeId,
     imageModels: imageProfiles.profiles
   });
