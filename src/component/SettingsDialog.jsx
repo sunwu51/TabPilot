@@ -1227,6 +1227,11 @@ function SettingsDialogBody() {
               <Input label={t("subagentTemplateDescription")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder={t("subagentTemplateDescriptionPlaceholder")} />
               <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
               <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
+              <label className="settings-form-label" htmlFor="subagent-template-model">模型（留空使用当前模型）</label>
+              <select id="subagent-template-model" className="settings-select" value={subagentTemplateDraft.modelProfileId} onChange={event => setSubagentTemplateDraft(current => ({ ...current, modelProfileId: event.target.value }))}>
+                <option value="">使用当前上下文模型</option>
+                {llmModels.map(profile => <option key={profile.id} value={profile.id}>{profile.name} ({profile.model})</option>)}
+              </select>
               <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
               <div className="settings-checkbox-grid">
                 {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
@@ -1491,6 +1496,7 @@ function createEmptySubagentTemplate() {
     templateName: "",
     description: "",
     systemPrompt: "",
+    modelProfileId: "",
     allowedBuiltinDomains: [],
     allowedMcpServers: [],
     enabled: true

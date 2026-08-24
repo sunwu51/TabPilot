@@ -16,6 +16,7 @@ export function normalizeSubagentTemplate(value, index = 0) {
     templateName,
     description: String(value.description || "").trim(),
     systemPrompt: String(value.systemPrompt || "").trim(),
+    modelProfileId: String(value.modelProfileId || "").trim(),
     allowedBuiltinDomains: Array.isArray(value.allowedBuiltinDomains)
       ? value.allowedBuiltinDomains.map(String).map(item => item.trim()).filter(Boolean)
       : [],

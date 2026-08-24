@@ -3,7 +3,7 @@ import { normalizeLlmModelProfiles, resolveActiveLlmConfig } from "../llm/core/m
 import { textComplete } from "../llm/providers/textComplete";
 
 export const AGENT_HOOKS_STORAGE_KEY = "agentHooks";
-export const AGENT_HOOK_EVENTS = ["agent.run", "tool.call"];
+export const AGENT_HOOK_EVENTS = ["agent.run", "llm.request", "tool.call", "context.compact", "subagent.run"];
 export const DEFAULT_HOOK_TIMEOUT_MS = 1500;
 
 export function createHookLlmRuntime(llmConfig = {}) {
@@ -36,7 +36,56 @@ export function createEmptyAgentHook() {
     enabled: true,
     priority: 0,
     timeoutMs: DEFAULT_HOOK_TIMEOUT_MS,
-    code: "async ({ phase, context, state }) => {\n  if (phase === \"before\") {\n    // Return { changes, state, action, reason } when needed.\n  }\n}"
+    code: `async ({ phase, context, state }) => {
+  if (phase === "before") {
+    console.log("[hook before]", {
+      event: context.event,
+      tool: context.data?.tool,
+      args: context.data?.args,
+      input: context.data?.input
+    });
+
+    return {
+      state: {
+        startedAt: Date.now(),
+        toolName: context.data?.tool?.name || ""
+      }
+      // 如需修改默认流程，可额外返回：
+      // changes: { args: { ...context.data.args } }
+    };
+  }
+
+  if (phase === "after") {
+    console.log("[hook after]", {
+      event: context.event,
+      tool: context.data?.tool,
+      args: context.data?.args,
+      result: context.data?.result,
+      durationMs: state?.startedAt ? Date.now() - state.startedAt : null
+    });
+    return;
+  }
+
+  if (phase === "error") {
+    console.error("[hook error]", {
+      event: context.event,
+      tool: context.data?.tool,
+      args: context.data?.args,
+      error: context.data?.error,
+      durationMs: state?.startedAt ? Date.now() - state.startedAt : null
+    });
+    return;
+  }
+
+  if (phase === "cancel") {
+    console.warn("[hook cancel]", {
+      event: context.event,
+      tool: context.data?.tool,
+      reason: context.data?.reason,
+      state
+    });
+  }
+}`
   };
 }
 

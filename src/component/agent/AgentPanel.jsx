@@ -15,6 +15,7 @@ import {
   normalizeLlmModelProfiles,
   normalizeModelContextLimitTokens,
   normalizeStoredModelConfig,
+  resolveActiveLlmConfig,
   syncActiveModelFields,
   streamChat,
   executeTool,
@@ -475,6 +476,14 @@ function normalizeImageEditPreviewImages(items = []) {
       role: String(item?.role || "").trim()
     }))
     .filter(item => item.dataUrl && ["edit_image", "edit_reference", "edit_mask"].includes(item.role));
+}
+
+function resolveSubagentConfig(config, template) {
+  const profileId = String(template?.modelProfileId || "").trim();
+  if (!profileId) return config;
+  const profiles = Array.isArray(config?.llmModels) ? config.llmModels : [];
+  if (!profiles.some(profile => profile.id === profileId)) return config;
+  return resolveActiveLlmConfig({ ...config, activeLlmModelId: profileId });
 }
 
 export default function AgentPanel() {
@@ -3138,6 +3147,7 @@ export default function AgentPanel() {
   }
 
   async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId) {
+    const hooks = await loadAgentHooks();
     const existingSummary = getSessionContextSummary(targetSessionId);
     const latestUsage = getSessionRuntime(targetSessionId).contextUsage ||
       getLatestContextUsageFromMessages(conversationMessages, config);
@@ -3197,7 +3207,19 @@ export default function AgentPanel() {
         allowEmptyResponse: false
       });
       setSessionRuntime(targetSessionId, { abort: summaryStream.abort, loading: true });
-      const summaryText = await summaryStream.promise;
+      const compactOutcome = await runAroundHooks({
+        event: "context.compact",
+        context: { eventBase: "context.compact", session: { id: targetSessionId }, run: { id: runId, kind: "agent" }, data: {
+          messages: messagesToSummarize,
+          previousSummary: existingSummary?.summary || "",
+          range: { endMessageIndex: cutIndex, messageCount: messagesToSummarize.length },
+          request: { maxTokens: CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS, maxChars: CONTEXT_SUMMARY_MAX_CHARS }
+        } },
+        hooks,
+        runtime: { fetch: (...args) => fetch(...args), chrome: typeof chrome !== "undefined" ? chrome : undefined, llm: createHookLlmRuntime(config) },
+        operation: async () => await summaryStream.promise
+      });
+      const summaryText = compactOutcome.result;
       if (!isCurrentRun(targetSessionId, runId)) return existingSummary;
       const nextSummary = buildMergedContextSummary({
         previousSummary: existingSummary,
@@ -3242,6 +3264,19 @@ export default function AgentPanel() {
       nativeWebSearch: config.nativeWebSearch === true
     });
     const fullMessages = [{ role: "system", content: systemPrompt }, ...apiConversationMessages];
+    const llmHooks = await loadAgentHooks();
+    const llmRequest = await runAroundHooks({
+      event: "llm.request",
+      context: { eventBase: "llm.request", session: { id: targetSessionId }, run: { id: runId, kind: "agent" }, data: {
+        messages: fullMessages,
+        request: { profileId: config.activeLlmModelId || "", apiType: config.apiType, model: config.model, stream: true, origin: "agent" }
+      } },
+      hooks: llmHooks,
+      runtime: { fetch: (...args) => fetch(...args), chrome: typeof chrome !== "undefined" ? chrome : undefined, llm: createHookLlmRuntime(config) },
+      operation: async data => data
+    });
+    const requestData = llmRequest.data;
+    const requestMessages = Array.isArray(requestData.messages) ? requestData.messages : fullMessages;
 
     let streamedContent = "";
     let streamedThinking = "";
@@ -3259,7 +3294,7 @@ export default function AgentPanel() {
 
     const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
     const agentHooks = await loadAgentHooks();
-    const abort = streamChat(config, fullMessages, {
+    const abort = streamChat({ ...config, ...(requestData.request || {}) }, requestMessages, {
       onText: (chunk) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
         streamedContent += chunk;
@@ -3487,6 +3522,7 @@ export default function AgentPanel() {
                 ? { ...resolvedArgs, name: `${template.templateName} · ${resolvedArgs.name || "run"}` }
                 : resolvedArgs;
               const templateMcpTools = template ? filterSubagentMcpTools(combinedMcpTools, template.allowedMcpServers) : combinedMcpTools;
+              const subagentConfig = resolveSubagentConfig(config, template);
               const updateSubagentCard = (steps, streamedMessage, streamedToolArgs) => {
                 const currentMsgs = getSessionMessages(targetSessionId);
                 const updatedMsgs = currentMsgs.map(currentMessage => (
@@ -3501,8 +3537,13 @@ export default function AgentPanel() {
                 ));
                 setSessionMessages(targetSessionId, updatedMsgs);
               };
-              const subagentResult = await runSubagent(templateRunArgs, {
-                config,
+              const subagentHookOutcome = await runAroundHooks({
+                event: "subagent.run",
+                context: { eventBase: "subagent.run", session: { id: targetSessionId }, run: { id: tc.id || `subagent_${Date.now()}`, parentId: runId, kind: "subagent" }, data: { input: templateRunArgs } },
+                hooks: agentHooks,
+                runtime: { fetch: (...args) => fetch(...args), chrome: typeof chrome !== "undefined" ? chrome : undefined, llm: createHookLlmRuntime(config) },
+                operation: async data => await runSubagent(data.input, {
+                config: subagentConfig,
                 sessionId: targetSessionId,
                 subagentId: tc.id || `subagent_${Date.now()}`,
                 mcpTools: templateMcpTools,
@@ -3591,7 +3632,9 @@ export default function AgentPanel() {
                   }
                   return await executeToolWithApproval({ name, args: nestedArgs }, nestedArgs);
                 }
+                })
               });
+              const subagentResult = subagentHookOutcome.result || { success: false, error: subagentHookOutcome.reason };
               tc._subagentRuns = subagentResult.steps || [];
               result = {
                 success: subagentResult.success,
