@@ -214,11 +214,11 @@ const SKILLS_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const SESSION_LOCK_HEARTBEAT_MS = 10 * 1000;
 const STREAMING_BUBBLE_MIN_CHARS = 200;
 const REASONING_EFFORT_OPTIONS = [
-  { key: "reasoningDefault", value: "default" },
-  { key: "reasoningLow", value: "low" },
-  { key: "reasoningMedium", value: "medium" },
-  { key: "reasoningHigh", value: "high" },
-  { key: "reasoningXhigh", value: "xhigh" }
+  { key: "reasoningDefault", shortKey: "reasoningShortDefault", value: "default" },
+  { key: "reasoningLow", shortKey: "reasoningShortLow", value: "low" },
+  { key: "reasoningMedium", shortKey: "reasoningShortMedium", value: "medium" },
+  { key: "reasoningHigh", shortKey: "reasoningShortHigh", value: "high" },
+  { key: "reasoningXhigh", shortKey: "reasoningShortXhigh", value: "xhigh" }
 ];
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
@@ -5152,7 +5152,7 @@ export default function AgentPanel() {
                     onClick={() => toggleModelMenu("reasoning")}
                     title={t("reasoningEffort")}
                   >
-                    {t(REASONING_EFFORT_OPTIONS.find(item => item.value === llmConfigInfo.reasoningEffort)?.key || "reasoningDefault")}
+                    {t(REASONING_EFFORT_OPTIONS.find(item => item.value === llmConfigInfo.reasoningEffort)?.shortKey || "reasoningShortDefault")}
                     <span className="chat-input-model-caret">⌃</span>
                   </button>
                   {modelMenuOpen === "reasoning" && (
