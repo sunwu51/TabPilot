@@ -1,7 +1,7 @@
 /* global chrome */
 import { resolveLlmRequestUrl } from "../core/endpoint";
 import { API_TYPES, normalizeApiType } from "../core/config";
-import { buildLlmAuthHeaders, isLlmConfigUsable, syncActiveModelFields } from "../core/modelProfiles";
+import { buildLlmAuthHeaders, isLlmConfigUsable, resolveKeywordSummaryLlmConfig, syncActiveModelFields } from "../core/modelProfiles";
 import { ensureSettingsMigrated } from "../../settings/migrations";
 import { streamChat } from "./streamChat";
 
@@ -269,12 +269,14 @@ function truncateTextComplete(value, maxChars) {
  * Read LLM config from chrome.storage.local.
  * Returns null if not configured.
  */
-export async function getLLMConfigForMemory() {
+export async function getLLMConfigForMemory(options = {}) {
   await ensureSettingsMigrated();
   const { llmConfig } = await chrome.storage.local.get({
     llmConfig: { activeLlmModelId: "", llmModels: [] },
   });
-  const activeConfig = syncActiveModelFields(llmConfig);
+  const activeConfig = options.keywordSummary === true
+    ? resolveKeywordSummaryLlmConfig(llmConfig)
+    : syncActiveModelFields(llmConfig);
   if (!isLlmConfigUsable(activeConfig)) {
     return null;
   }

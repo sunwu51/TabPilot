@@ -5,7 +5,10 @@ import {
   buildMergedContextSummary,
   CONTEXT_SUMMARY_MAX_CHARS,
   CONTEXT_SUMMARY_MAX_OUTPUT_TOKENS,
+  CONTEXT_SUMMARY_MAX_TOOL_ARGUMENT_CHARS,
+  CONTEXT_SUMMARY_MAX_TOOL_RESULT_CHARS,
   findContextSummaryCutIndex,
+  formatMessagesForSummary,
   getKeepLastMessagesForContextSummary,
   getMessagesToSummarize,
   normalizeContextSummary,
@@ -99,6 +102,23 @@ describe("contextSummary helpers", () => {
     expect(normalized.summary).toContain("摘要已按长度上限截断");
   });
 
+  it("trims long tool arguments and results only in the compaction transcript", () => {
+    const longArguments = "a".repeat(CONTEXT_SUMMARY_MAX_TOOL_ARGUMENT_CHARS + 200);
+    const longResult = "z".repeat(CONTEXT_SUMMARY_MAX_TOOL_RESULT_CHARS + 200);
+    const messages = [
+      { role: "assistant", tool_calls: [{ id: "call_1", function: { name: "exec", arguments: longArguments } }] },
+      { role: "tool", tool_call_id: "call_1", tool_name: "exec", content: longResult }
+    ];
+
+    const transcript = formatMessagesForSummary(messages);
+
+    expect(transcript).toContain("工具参数已截断");
+    expect(transcript).toContain("工具结果已截断");
+    expect(transcript).toContain(`原始长度 ${longArguments.length + 2} 字符`);
+    expect(messages[0].tool_calls[0].function.arguments).toBe(longArguments);
+    expect(messages[1].content).toBe(longResult);
+  });
+
   it("moves the cut to the end of a completed tool sequence", () => {
     const messages = [
       ...makeMessages(6),
@@ -108,6 +128,31 @@ describe("contextSummary helpers", () => {
     ];
 
     expect(findContextSummaryCutIndex(messages, { keepLastMessages: 5 })).toBe(7);
+  });
+
+  it("compacts a completed, oversized recent tool round instead of retaining it wholesale", () => {
+    const messages = [
+      ...makeMessages(40),
+      { role: "assistant", content: "calling", tool_calls: [{ id: "call_1", function: { name: "tab_extract", arguments: "{}" } }] },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        role: "tool",
+        tool_call_id: `call_${index + 1}`,
+        tool_name: "tab_extract",
+        content: "x".repeat(3000)
+      })),
+      { role: "user", content: "继续处理" }
+    ];
+    const defaultCutIndex = findContextSummaryCutIndex(messages);
+    const adaptiveCutIndex = findContextSummaryCutIndex(messages, { limitTokens: 10_000 });
+
+    expect(adaptiveCutIndex).toBeGreaterThan(defaultCutIndex);
+    expect(adaptiveCutIndex).toBe(messages.length - 2);
+    expect(shouldAutoCompactContext({
+      contextUsage: { tokens: 7_300 },
+      limitTokens: 10_000,
+      messages,
+      contextSummary: { version: 1, coveredMessageIndex: defaultCutIndex, summary: "old summary" }
+    })).toBe(true);
   });
 
   it("does not compact into a pending tool sequence", () => {

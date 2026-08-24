@@ -627,7 +627,10 @@ describe("sessions storage", () => {
         sessionKeywords: ["legacy"],
         keywordMessageIndex: 8,
         keywordsMessageIndex: 7,
-        keywordUpdatedAt: 123
+        keywordUpdatedAt: 123,
+        keywordRetryAfter: 456,
+        keywordRetryMessageIndex: 8,
+        keywordLastError: "invalid_keyword_format"
       }]
     });
     vi.spyOn(Date, "now").mockReturnValue(200);

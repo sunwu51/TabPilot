@@ -7,6 +7,7 @@ import {
   API_TYPES,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
   IMAGE_API_PROTOCOLS,
   MODEL_CONTEXT_LIMIT_OPTIONS,
   captureFullPageScreenshotToTab,
@@ -52,6 +53,8 @@ const DEFAULT_SETTINGS = {
   llmConfig: {
     activeLlmModelId: "",
     llmModels: [],
+    keywordSummaryUseCustomModel: false,
+    keywordSummaryModelId: "",
     modelContextLimitTokens: DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
     firstPacketTimeoutSeconds: 20,
     supportsImageInput: false,
@@ -113,6 +116,8 @@ function SettingsDialogBody() {
   const [nativeWebSearch, setNativeWebSearch] = useState(false);
   const [llmModels, setLlmModels] = useState(DEFAULT_SETTINGS.llmConfig.llmModels);
   const [activeLlmModelId, setActiveLlmModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeLlmModelId);
+  const [keywordSummaryUseCustomModel, setKeywordSummaryUseCustomModel] = useState(DEFAULT_SETTINGS.llmConfig.keywordSummaryUseCustomModel);
+  const [keywordSummaryModelId, setKeywordSummaryModelId] = useState(DEFAULT_SETTINGS.llmConfig.keywordSummaryModelId);
   const [llmModelFormOpen, setLlmModelFormOpen] = useState(false);
   const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
@@ -162,13 +167,6 @@ function SettingsDialogBody() {
     { label: "16k", value: 16000 },
     { label: "32k", value: 32000 },
     { label: "128k", value: 128000 }
-  ];
-  const reasoningEffortOptions = [
-    { label: "供应商默认", value: "default" },
-    { label: "低 low", value: "low" },
-    { label: "中 medium", value: "medium" },
-    { label: "高 high", value: "high" },
-    { label: "超高 xhigh", value: "xhigh" }
   ];
   const resolvedApiUrl = resolveLlmRequestUrl(apiType, baseUrl);
   const resolvedImageGenUrl = resolveImageApiRequestUrl(imageBaseUrl, "generations");
@@ -235,6 +233,10 @@ function SettingsDialogBody() {
       const normalizedImageProfiles = normalizeImageModelProfiles(rawLlmConfig);
       setLlmModels(normalizedLlmProfiles.profiles);
       setActiveLlmModelId(normalizedLlmProfiles.activeId);
+      setKeywordSummaryUseCustomModel(nextLlmConfig.keywordSummaryUseCustomModel === true);
+      setKeywordSummaryModelId(normalizedLlmProfiles.profiles.some(item => item.id === nextLlmConfig.keywordSummaryModelId)
+        ? nextLlmConfig.keywordSummaryModelId
+        : DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID);
       setImageModels(normalizedImageProfiles.profiles);
       setActiveImageModelId(normalizedImageProfiles.activeId);
       setApiType(DEFAULT_LLM_MODEL_DRAFT.apiType);
@@ -309,6 +311,8 @@ function SettingsDialogBody() {
       const nextLlmConfig = normalizeStoredModelConfig({
           activeLlmModelId,
           llmModels,
+          keywordSummaryUseCustomModel,
+          keywordSummaryModelId,
           modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
@@ -634,6 +638,14 @@ function SettingsDialogBody() {
     }
   }
 
+  async function handleOpenHooks() {
+    try {
+      await chrome.tabs.create({ url: chrome.runtime.getURL("hooks.html") });
+    } catch (error) {
+      toast.error(error?.message || "打开 Hook 设置失败");
+    }
+  }
+
   function openNewSubagentTemplateForm() {
     setEditingSubagentTemplateId("");
     setSubagentTemplateDraft(createEmptySubagentTemplate());
@@ -779,6 +791,25 @@ function SettingsDialogBody() {
           >
             {llmModelFormOpen ? "收起添加模型" : "添加模型"}
           </Button>
+          <div className="mt-3">
+            <Checkbox isSelected={keywordSummaryUseCustomModel} onChange={setKeywordSummaryUseCustomModel}>
+              <span className="text-sm">使用自定义关键词总结模型</span>
+            </Checkbox>
+          </div>
+          {keywordSummaryUseCustomModel && (
+            <Select
+              label="关键词总结模型"
+              items={llmModels.map(item => `${item.name} (${item.model})`)}
+              defaultIndex={Math.max(0, llmModels.findIndex(item => item.id === keywordSummaryModelId))}
+              onSelectedItemChange={(changes) => {
+                const selected = llmModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
+                if (selected) setKeywordSummaryModelId(selected.id);
+              }}
+            />
+          )}
+          {!keywordSummaryUseCustomModel && (
+            <div className="settings-api-url-hint">关键词总结默认使用 OpenCode Zen 免费模型</div>
+          )}
           {llmModelFormOpen && (
             <div className="settings-model-form">
               <Select
@@ -898,18 +929,6 @@ function SettingsDialogBody() {
             }}
             placeholder="20"
           />
-          <Select
-            label="思考强度"
-            items={reasoningEffortOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, reasoningEffortOptions.findIndex((item) => item.value === reasoningEffort))}
-            onSelectedItemChange={(changes) => {
-              const selected = reasoningEffortOptions.find((item) => item.label === changes.selectedItem);
-              setReasoningEffort(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.reasoningEffort);
-            }}
-          />
-          <div className="settings-api-url-hint">
-            默认不设置，由供应商决定
-          </div>
           <div className="mt-2">
             <Checkbox isSelected={omitThinkingFromRequests} onChange={setOmitThinkingFromRequests}>
               <span className="text-sm">思考内容不回传（需供应商支持）</span>
@@ -1189,6 +1208,17 @@ function SettingsDialogBody() {
               <Input label={t("subagentTemplateDescription")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder={t("subagentTemplateDescriptionPlaceholder")} />
               <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
               <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
+              <label className="settings-form-label" htmlFor="subagent-template-model">模型（留空使用当前模型）</label>
+              <Select
+                items={["使用当前上下文模型", ...llmModels.map(profile => `${profile.name} (${profile.model})`)]}
+                defaultIndex={Math.max(0, subagentTemplateDraft.modelProfileId
+                  ? llmModels.findIndex(profile => profile.id === subagentTemplateDraft.modelProfileId) + 1
+                  : 0)}
+                onSelectedItemChange={changes => {
+                  const selected = llmModels.find(profile => `${profile.name} (${profile.model})` === changes.selectedItem);
+                  setSubagentTemplateDraft(current => ({ ...current, modelProfileId: selected?.id || "" }));
+                }}
+              />
               <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
               <div className="settings-checkbox-grid">
                 {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
@@ -1229,6 +1259,12 @@ function SettingsDialogBody() {
               onPress={handleOpenPostdog}
             >
               postdog
+            </Button>
+            <Button
+              className="!min-h-7 !px-3 !py-0 !text-xs"
+              onPress={handleOpenHooks}
+            >
+              hooks
             </Button>
           </div>
           <hr className="settings-quick-entry-divider" />
@@ -1447,6 +1483,7 @@ function createEmptySubagentTemplate() {
     templateName: "",
     description: "",
     systemPrompt: "",
+    modelProfileId: "",
     allowedBuiltinDomains: [],
     allowedMcpServers: [],
     enabled: true

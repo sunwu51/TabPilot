@@ -24,6 +24,7 @@ export default defineConfig({
         stash: "stash.html",
         postdog: "postdog.html",
         imageViewer: "image-viewer.html",
+        hooks: "hooks.html",
       },
       output: {
         entryFileNames: "[name].js",

@@ -108,6 +108,27 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
   return merged;
 }
 
+export function resolveKeywordSummaryLlmConfig(llmConfig = {}) {
+  const { profiles } = normalizeLlmModelProfiles(llmConfig);
+  const requestedId = llmConfig.keywordSummaryUseCustomModel === true
+    ? String(llmConfig.keywordSummaryModelId || "").trim()
+    : DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID;
+  const profile = profiles.find(item => item.id === requestedId) ||
+    profiles.find(item => item.id === DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID) ||
+    null;
+  return {
+    ...llmConfig,
+    keywordSummaryUseCustomModel: llmConfig.keywordSummaryUseCustomModel === true,
+    keywordSummaryModelId: profile?.id || DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+    apiType: normalizeApiType(profile?.apiType || getDefaultApiType()),
+    baseUrl: profile?.baseUrl ?? "",
+    apiKey: profile?.apiKey ?? "",
+    model: profile?.model ?? "",
+    nativeWebSearch: false,
+    requiresApiKey: profile?.requiresApiKey !== false
+  };
+}
+
 export function resolveActiveImageConfig(llmConfig = {}, imageModelId = "") {
   const { profiles, activeId, activeProfile } = normalizeImageModelProfiles(llmConfig);
   const requestedId = String(imageModelId || "").trim();
@@ -161,6 +182,10 @@ export function normalizeStoredModelConfig(llmConfig = {}) {
     supportsToolImageInput: llmConfig.supportsImageInput === true && llmConfig.supportsToolImageInput === true,
     reasoningEffort: llmConfig.reasoningEffort || "default",
     omitThinkingFromRequests: llmConfig.omitThinkingFromRequests === true,
+    keywordSummaryUseCustomModel: llmConfig.keywordSummaryUseCustomModel === true,
+    keywordSummaryModelId: llmConfig.keywordSummaryUseCustomModel === true && llmProfiles.profiles.some(item => item.id === llmConfig.keywordSummaryModelId)
+      ? llmConfig.keywordSummaryModelId
+      : DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
     activeImageModelId: imageProfiles.activeId,
     imageModels: imageProfiles.profiles
   };

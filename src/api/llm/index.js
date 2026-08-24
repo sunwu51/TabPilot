@@ -23,6 +23,7 @@ export {
   normalizeStoredModelConfig,
   resolveActiveImageConfig,
   resolveActiveLlmConfig,
+  resolveKeywordSummaryLlmConfig,
   syncActiveModelFields
 } from "./core/modelProfiles";
 export { getLongToolArgumentFields, isLongToolArgumentName } from "./core/longToolArgs";
@@ -53,3 +54,4 @@ export {
   resolveImageApiRequestUrl
 } from "./tools/builtins/imageApi";
 export { streamChat } from "./providers/streamChat";
+export { textComplete, streamTextComplete } from "./providers/textComplete";

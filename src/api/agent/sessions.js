@@ -888,6 +888,9 @@ export async function clearSessionKeywords(id) {
   delete entry.keywordMessageIndex;
   delete entry.keywordsMessageIndex;
   delete entry.keywordUpdatedAt;
+  delete entry.keywordRetryAfter;
+  delete entry.keywordRetryMessageIndex;
+  delete entry.keywordLastError;
   entry.updatedAt = Date.now();
 
   await chrome.storage.local.set({ sessions_index });
