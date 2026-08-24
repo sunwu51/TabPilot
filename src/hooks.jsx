@@ -9,6 +9,12 @@ import { useRef } from "react";
 import { createEmptyAgentHook, loadAgentHooks, saveAgentHooks } from "./api/agent/hooks";
 import "./index.css";
 
+const hookEditorTheme = EditorView.theme({
+  "&": { maxHeight: "min(560px, 65vh)" },
+  ".cm-scroller": { overflow: "auto" },
+  ".cm-content": { minHeight: "320px" }
+});
+
 function HooksPage() {
   const [hooks, setHooks] = useState([]);
   const [selectedId, setSelectedId] = useState("");
@@ -41,7 +47,7 @@ function HooksPage() {
     if (selectedId === id) setSelectedId("");
   }
 
-  return <main className="min-h-screen bg-gray-50 text-gray-900 p-6">
+  return <main className="min-h-screen overflow-y-auto bg-gray-50 text-gray-900 p-6">
     <div className="max-w-6xl mx-auto">
       <header className="flex items-center justify-between mb-5">
         <div><h1 className="text-2xl font-semibold">Agent Hooks</h1><p className="text-sm text-gray-500 mt-1">Hook code runs in an Sval sandbox. Errors and timeouts are skipped.</p></div>
@@ -96,7 +102,7 @@ function HookCodeEditor({ value, onChange }) {
       parent: hostRef.current,
       state: EditorState.create({
         doc: value || "",
-        extensions: [lineNumbers(), highlightSpecialChars(), history(), drawSelection(), highlightActiveLine(), bracketMatching(), javascript(), syntaxHighlighting(defaultHighlightStyle, { fallback: true }), keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]), EditorView.lineWrapping, EditorState.tabSize.of(2), editorPlaceholder("async ({ phase, context, state }) => { ... }") , EditorView.updateListener.of(update => { if (update.docChanged) onChangeRef.current?.(update.state.doc.toString()); })]
+        extensions: [lineNumbers(), highlightSpecialChars(), history(), drawSelection(), highlightActiveLine(), bracketMatching(), javascript(), syntaxHighlighting(defaultHighlightStyle, { fallback: true }), keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]), EditorView.lineWrapping, EditorState.tabSize.of(2), hookEditorTheme, editorPlaceholder("async ({ phase, context, state }) => { ... }") , EditorView.updateListener.of(update => { if (update.docChanged) onChangeRef.current?.(update.state.doc.toString()); })]
       })
     });
     viewRef.current = view;
@@ -107,7 +113,7 @@ function HookCodeEditor({ value, onChange }) {
     if (!view || value === view.state.doc.toString()) return;
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value || "" } });
   }, [value]);
-  return <label className="block text-sm">Function source<div ref={hostRef} className="mt-1 border rounded overflow-hidden min-h-[320px]" /></label>;
+  return <label className="block text-sm">Function source<div ref={hostRef} className="hook-code-editor mt-1 border rounded overflow-hidden min-h-[320px]" /></label>;
 }
 
 createRoot(document.getElementById("root")).render(<HooksPage />);

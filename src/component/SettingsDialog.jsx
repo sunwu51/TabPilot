@@ -1228,10 +1228,16 @@ function SettingsDialogBody() {
               <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
               <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
               <label className="settings-form-label" htmlFor="subagent-template-model">模型（留空使用当前模型）</label>
-              <select id="subagent-template-model" className="settings-select" value={subagentTemplateDraft.modelProfileId} onChange={event => setSubagentTemplateDraft(current => ({ ...current, modelProfileId: event.target.value }))}>
-                <option value="">使用当前上下文模型</option>
-                {llmModels.map(profile => <option key={profile.id} value={profile.id}>{profile.name} ({profile.model})</option>)}
-              </select>
+              <Select
+                items={["使用当前上下文模型", ...llmModels.map(profile => `${profile.name} (${profile.model})`)]}
+                defaultIndex={Math.max(0, subagentTemplateDraft.modelProfileId
+                  ? llmModels.findIndex(profile => profile.id === subagentTemplateDraft.modelProfileId) + 1
+                  : 0)}
+                onSelectedItemChange={changes => {
+                  const selected = llmModels.find(profile => `${profile.name} (${profile.model})` === changes.selectedItem);
+                  setSubagentTemplateDraft(current => ({ ...current, modelProfileId: selected?.id || "" }));
+                }}
+              />
               <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
               <div className="settings-checkbox-grid">
                 {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
