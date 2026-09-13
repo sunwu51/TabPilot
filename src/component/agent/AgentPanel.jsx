@@ -1418,6 +1418,17 @@ export default function AgentPanel() {
     closeInputCompletions();
   }
 
+  function consumeComposerCommandText(targetSessionId) {
+    const draft = { ...getCurrentComposerDraft(), text: "" };
+    setInput("");
+    if (targetSessionId && (draft.attachments.length > 0 || draft.selectedTabs.length > 0 || draft.selectedSkills.length > 0)) {
+      sessionDraftsRef.current.set(targetSessionId, draft);
+    } else if (targetSessionId) {
+      sessionDraftsRef.current.delete(targetSessionId);
+    }
+    closeInputCompletions();
+  }
+
   function shouldHoldSessionLock(targetSessionId) {
     const runtime = getSessionRuntime(targetSessionId);
     return !!runtime.loading || !!runtime.pendingApproval || getSessionQueuedMessages(targetSessionId).length > 0;
@@ -3159,10 +3170,41 @@ export default function AgentPanel() {
     }
     if (command.id === "recall_mem") {
       await sendMessage({ text: buildRecallMemoryCommandPrompt(), attachments: [], selectedTabs: [], selectedSkills: [] });
+      return;
+    }
+    if (command.id === "compact") {
+      const targetSessionId = activeSessionIdRef.current;
+      if (!targetSessionId) return;
+      consumeComposerCommandText(targetSessionId);
+      const config = await getLLMConfig();
+      if (!isLlmConfigUsable(config)) {
+        toast.error("请先在设置中配置 LLM API");
+        return;
+      }
+      const runtime = getSessionRuntime(targetSessionId);
+      const previousSummary = getSessionContextSummary(targetSessionId);
+      const sessionMessages = getSessionMessages(targetSessionId);
+      const cutIndex = findContextSummaryCutIndex(sessionMessages, { limitTokens: config.modelContextLimitTokens });
+      if (cutIndex < 0 || getMessagesToSummarize(sessionMessages, previousSummary, cutIndex).length === 0) {
+        toast("没有新的早期上下文可压缩", { duration: 1800 });
+        return;
+      }
+      setSessionRuntime(targetSessionId, { loading: true, abort: null });
+      try {
+        await maybeCompactContextBeforeRequest(
+          config,
+          targetSessionId,
+          sessionMessages,
+          runtime.runId,
+          { force: true }
+        );
+      } finally {
+        setSessionRuntime(targetSessionId, { loading: false, abort: null, contextCompaction: null });
+      }
     }
   }
 
-  async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId) {
+  async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId, options = {}) {
     const hooks = await loadAgentHooks();
     const existingSummary = getSessionContextSummary(targetSessionId);
     const latestUsage = getSessionRuntime(targetSessionId).contextUsage ||
@@ -3170,12 +3212,14 @@ export default function AgentPanel() {
     const cutIndex = findContextSummaryCutIndex(conversationMessages, {
       limitTokens: config.modelContextLimitTokens
     });
-    const shouldCompact = shouldAutoCompactContext({
-      contextUsage: latestUsage,
-      limitTokens: config.modelContextLimitTokens,
-      messages: conversationMessages,
-      contextSummary: existingSummary
-    });
+    const shouldCompact = options.force === true
+      ? cutIndex >= 0 && (!existingSummary || existingSummary.coveredMessageIndex < cutIndex)
+      : shouldAutoCompactContext({
+        contextUsage: latestUsage,
+        limitTokens: config.modelContextLimitTokens,
+        messages: conversationMessages,
+        contextSummary: existingSummary
+      });
     console.debug("[context-summary]", "auto compact check", {
       shouldCompact,
       messageCount: conversationMessages.length,
@@ -3200,7 +3244,7 @@ export default function AgentPanel() {
           displayMessageIndex
         }
       });
-      toast("上下文较长，正在压缩早期历史...", { duration: 1800 });
+      toast(options.force === true ? "正在主动压缩早期上下文..." : "上下文较长，正在压缩早期历史...", { duration: 1800 });
       const prompt = buildContextSummaryPrompt({
         oldSummary: existingSummary?.summary || "",
         messages: messagesToSummarize
@@ -4165,7 +4209,7 @@ export default function AgentPanel() {
   }
 
   function getFilteredSlashCommands(inputText = input) {
-    return filterSlashCommands(SLASH_COMMANDS, agentSkills.skills, selectedMentionSkills, inputText);
+    return filterSlashCommands(SLASH_COMMANDS, agentSkills.skills, selectedMentionSkills, inputText, t);
   }
 
   function selectMentionTab(tab) {

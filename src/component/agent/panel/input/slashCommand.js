@@ -3,20 +3,26 @@ export const SLASH_COMMANDS = [
   {
     id: "mem",
     name: "/mem",
-    title: "总结到记忆",
-    description: "提炼本次对话中对未来有用的信息，并在有记忆工具时保存。"
+    titleKey: "slashMemoryTitle",
+    descriptionKey: "slashMemoryDescription"
   },
   {
     id: "recall_mem",
     name: "/recall_mem",
-    title: "召回相关记忆",
-    description: "根据当前对话检索长期记忆，并把相关信息拉取到当前上下文。"
+    titleKey: "slashRecallMemoryTitle",
+    descriptionKey: "slashRecallMemoryDescription"
+  },
+  {
+    id: "compact",
+    name: "/compact",
+    titleKey: "slashCompactTitle",
+    descriptionKey: "slashCompactDescription"
   },
   {
     id: "clear",
     name: "/clear",
-    title: "清空当前会话",
-    description: "与工具栏清空按钮相同，会清空消息、计划和关键词。"
+    titleKey: "slashClearTitle",
+    descriptionKey: "slashClearDescription"
   }
 ];
 
@@ -30,10 +36,15 @@ export function shouldOpenSlashCommand(input) {
   return /^\/[a-zA-Z0-9_-]*$/.test(String(input || "").trimStart());
 }
 
-export function filterSlashCommands(commands, skills, selectedSkills, input) {
+export function filterSlashCommands(commands, skills, selectedSkills, input, translate = key => key) {
   const query = String(input || "").trimStart().replace(/^\//, "").toLowerCase();
   const selectedSkillPaths = new Set((selectedSkills || []).map(skill => skill.path));
   const builtins = (commands || [])
+    .map(command => ({
+      ...command,
+      title: translate(command.titleKey || command.title || ""),
+      description: translate(command.descriptionKey || command.description || "")
+    }))
     .filter(command => {
       if (!query) return true;
       return command.id.includes(query) || command.name.toLowerCase().includes(query) || command.title.toLowerCase().includes(query);

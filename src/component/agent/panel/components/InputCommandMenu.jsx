@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useEffect, useRef } from "react";
+import { useI18n } from "../../../../i18n";
 
 export function useAutoScrollMenuOnPointerEdge(active) {
   const ref = useRef(null);
@@ -80,6 +81,7 @@ export function InputCommandMenu({
   onTabHover,
   onTabSelect
 }) {
+  const { t } = useI18n();
   const menuRef = useAutoScrollMenuOnPointerEdge(slashOpen || tabOpen);
   useEffect(() => {
     const activeItem = menuRef.current?.querySelector(".chat-input-command-item-active");
@@ -88,9 +90,9 @@ export function InputCommandMenu({
 
   if (slashOpen) {
     return (
-      <div ref={menuRef} className="chat-input-command-menu" role="listbox" aria-label="内置指令">
+      <div ref={menuRef} className="chat-input-command-menu" role="listbox" aria-label={t("slashCommandsLabel")}>
         {slashCommands.length === 0 ? (
-          <div className="chat-input-command-empty">没有匹配的内置指令</div>
+          <div className="chat-input-command-empty">{t("slashCommandsEmpty")}</div>
         ) : slashCommands.map((command, index) => (
           <button
             key={command.id}
@@ -105,7 +107,7 @@ export function InputCommandMenu({
               <span className="chat-input-command-title-row">
                 <span className="chat-input-command-title">{command.title}</span>
                 {command.type !== "skill" && (
-                  <span className="chat-input-command-badge">内置指令</span>
+                  <span className="chat-input-command-badge">{t("slashCommandBuiltin")}</span>
                 )}
               </span>
               <span className="chat-input-command-desc">{command.description}</span>
@@ -147,7 +149,6 @@ export function InputCommandMenu({
   return null;
 }
 /* eslint-enable react/prop-types */
-
 
 
 
