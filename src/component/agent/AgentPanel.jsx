@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  MODEL_CONTEXT_LIMIT_OPTIONS,
   IMAGE_API_PROTOCOLS,
   getDefaultApiType,
   isLlmConfigUsable,
@@ -2820,6 +2821,18 @@ export default function AgentPanel() {
     setModelMenuOpen(null);
   }
 
+  async function switchModelContextLimit(value) {
+    await ensureSettingsMigrated();
+    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const nextConfig = normalizeStoredModelConfig({
+      ...llmConfig,
+      modelContextLimitTokens: normalizeModelContextLimitTokens(value)
+    });
+    await chrome.storage.local.set({ llmConfig: nextConfig });
+    setLlmConfigInfo(current => ({ ...current, modelContextLimitTokens: nextConfig.modelContextLimitTokens }));
+    setModelMenuOpen(null);
+  }
+
   function toggleModelMenu(kind) {
     setShowAttachMenu(false);
     setModelMenuOpen(prev => prev === kind ? null : kind);
@@ -3345,13 +3358,16 @@ export default function AgentPanel() {
 
     setSessionMessages(targetSessionId, conversationMessages);
     void autoSave(targetSessionId, conversationMessages);
-    setStreamingContent("");
-    setStreamingThinking(null);
-    setStreamingToolArgs(null);
-    setStreamingWebSearches([]);
+    sessionStreamingRef.current.set(targetSessionId, "");
     sessionStreamingThinkingRef.current.delete(targetSessionId);
     sessionStreamingToolArgsRef.current.delete(targetSessionId);
     sessionStreamingWebSearchesRef.current.set(targetSessionId, []);
+    if (activeSessionIdRef.current === targetSessionId) {
+      setStreamingContent("");
+      setStreamingThinking(null);
+      setStreamingToolArgs(null);
+      setStreamingWebSearches([]);
+    }
 
     const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
     const agentHooks = await loadAgentHooks();
@@ -3418,21 +3434,26 @@ export default function AgentPanel() {
         streamedContent = "";
         streamedThinking = "";
         streamedToolArgs = null;
-        sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingRef.current.set(targetSessionId, "");
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
-        setStreamingContent("");
-        setStreamingThinking(null);
-        setStreamingToolArgs(null);
-        setStreamingWebSearches(null);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingContent("");
+          setStreamingThinking(null);
+          setStreamingToolArgs(null);
+          setStreamingWebSearches(null);
+        }
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
 
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
-        setStreamingContent(null);
-        setStreamingThinking(null);
-        setStreamingToolArgs(null);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingContent(null);
+          setStreamingThinking(null);
+          setStreamingToolArgs(null);
+          setStreamingWebSearches(null);
+        }
         sessionStreamingRef.current.delete(targetSessionId);
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
@@ -3772,10 +3793,12 @@ export default function AgentPanel() {
 
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
-        setStreamingContent(null);
-        setStreamingThinking(null);
-        setStreamingToolArgs(null);
-        setStreamingWebSearches(null);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingContent(null);
+          setStreamingThinking(null);
+          setStreamingToolArgs(null);
+          setStreamingWebSearches(null);
+        }
         sessionStreamingRef.current.delete(targetSessionId);
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
@@ -5169,7 +5192,7 @@ export default function AgentPanel() {
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"
-                    className="chat-input-model-button"
+                    className={`chat-input-model-button${modelMenuOpen === "llm" ? " chat-input-model-button-open" : ""}`}
                     onClick={() => toggleModelMenu("llm")}
                     title={formatModelName(llmConfigInfo.model)}
                   >
@@ -5197,7 +5220,32 @@ export default function AgentPanel() {
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"
-                    className="chat-input-model-button"
+                    className={`chat-input-model-button${modelMenuOpen === "context" ? " chat-input-model-button-open" : ""}`}
+                    onClick={() => toggleModelMenu("context")}
+                    title={t("modelContextLimit")}
+                  >
+                    {MODEL_CONTEXT_LIMIT_OPTIONS.find(item => item.value === llmConfigInfo.modelContextLimitTokens)?.label || "200K"}
+                    <span className="chat-input-model-caret">⌃</span>
+                  </button>
+                  {modelMenuOpen === "context" && (
+                    <div className="chat-input-model-menu">
+                      {MODEL_CONTEXT_LIMIT_OPTIONS.map(item => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={`chat-input-model-menu-item${item.value === llmConfigInfo.modelContextLimitTokens ? " chat-input-model-menu-item-active" : ""}`}
+                          onClick={() => void switchModelContextLimit(item.value)}
+                        >
+                          <span>{t("contextOption", { limit: item.label })}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="chat-input-model-switcher">
+                  <button
+                    type="button"
+                    className={`chat-input-model-button${modelMenuOpen === "reasoning" ? " chat-input-model-button-open" : ""}`}
                     onClick={() => toggleModelMenu("reasoning")}
                     title={t("reasoningEffort")}
                   >
@@ -5222,7 +5270,7 @@ export default function AgentPanel() {
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"
-                    className="chat-input-model-button chat-input-image-model-button"
+                    className={`chat-input-model-button chat-input-image-model-button${modelMenuOpen === "image" ? " chat-input-model-button-open" : ""}`}
                     onClick={() => toggleModelMenu("image")}
                     title={formatModelName(llmConfigInfo.imageModel)}
                   >

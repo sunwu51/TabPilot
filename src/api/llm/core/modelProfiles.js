@@ -13,6 +13,7 @@ export const DEFAULT_LLM_MODEL_PROFILES = Object.freeze([]);
 export const DEFAULT_IMAGE_MODEL_PROFILE = "gpt-image-2";
 export const DEFAULT_IMAGE_API_PROTOCOL = "generate";
 export const IMAGE_CHAT_COMPLETIONS_PROTOCOL = "chat_completions";
+export const IMAGE_OPENAI_BUILTIN_PROTOCOL = "openai_builtin_image_gen";
 
 export function createModelProfileId(prefix = "model") {
   return `${prefix}_${generateHex()}`;
@@ -44,6 +45,7 @@ function generateHex() {
 }
 
 export function normalizeImageProfileProtocol(value) {
+  if (value === IMAGE_OPENAI_BUILTIN_PROTOCOL) return IMAGE_OPENAI_BUILTIN_PROTOCOL;
   return value === IMAGE_CHAT_COMPLETIONS_PROTOCOL ? IMAGE_CHAT_COMPLETIONS_PROTOCOL : DEFAULT_IMAGE_API_PROTOCOL;
 }
 
@@ -85,6 +87,8 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
     apiKey: activeProfile?.apiKey ?? "",
     model: activeProfile?.model ?? "",
     nativeWebSearch: activeProfile?.nativeWebSearch === true,
+    credentialId: activeProfile?.credentialId || "",
+    accountId: activeProfile?.accountId || "",
     requiresApiKey: activeProfile?.requiresApiKey !== false,
     modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig.modelContextLimitTokens),
     firstPacketTimeoutSeconds: Math.max(1, Number(llmConfig.firstPacketTimeoutSeconds) || 20),
@@ -111,6 +115,8 @@ export function resolveKeywordSummaryLlmConfig(llmConfig = {}) {
     apiKey: profile?.apiKey ?? "",
     model: profile?.model ?? "",
     nativeWebSearch: false,
+    credentialId: profile?.credentialId || "",
+    accountId: profile?.accountId || "",
     requiresApiKey: profile?.requiresApiKey !== false
   };
 }
@@ -138,6 +144,7 @@ export function resolveActiveImageConfig(llmConfig = {}, imageModelId = "") {
     imageApiKey: profile?.imageApiKey || "",
     imageApiProtocol: normalizeImageProfileProtocol(profile?.imageApiProtocol),
     imageModel: profile ? (profile.imageModel || DEFAULT_IMAGE_MODEL_PROFILE) : "",
+    sourceLlmModelId: profile?.sourceLlmModelId || "",
     selectedImageProfile: profile || null
   };
 }
@@ -178,6 +185,9 @@ export function normalizeStoredModelConfig(llmConfig = {}) {
 }
 
 export function isConfiguredImageProfile(profile = {}) {
+  if (normalizeImageProfileProtocol(profile.imageApiProtocol) === IMAGE_OPENAI_BUILTIN_PROTOCOL) {
+    return !!String(profile.sourceLlmModelId || "").trim();
+  }
   return !!String(profile.imageBaseUrl || "").trim() && !!String(profile.imageApiKey || "").trim();
 }
 
@@ -195,7 +205,13 @@ function normalizeLlmModelProfile(item, index) {
     baseUrl,
     apiKey,
     model,
-    nativeWebSearch: item.nativeWebSearch === true,
+    nativeWebSearch: apiType === API_TYPES.OPENAI_SUBSCRIPTION ? item.nativeWebSearch !== false : item.nativeWebSearch === true,
+    ...(apiType === API_TYPES.OPENAI_SUBSCRIPTION ? {
+      credentialId: String(item.credentialId || item.id || "").trim(),
+      accountId: String(item.accountId || "").trim(),
+      email: String(item.email || "").trim(),
+      planType: String(item.planType || "").trim()
+    } : {}),
     ...(item.requiresApiKey === false ? { requiresApiKey: false } : {})
   };
 }
@@ -203,6 +219,9 @@ function normalizeLlmModelProfile(item, index) {
 export function isLlmConfigUsable(config = {}) {
   const activeConfig = Array.isArray(config.llmModels) ? resolveActiveLlmConfig(config) : config;
   const requiresApiKey = activeConfig.requiresApiKey !== false;
+  if (normalizeApiType(activeConfig.apiType) === API_TYPES.OPENAI_SUBSCRIPTION) {
+    return !!String(activeConfig.model || "").trim() && !!String(activeConfig.credentialId || activeConfig.activeLlmModelId || "").trim();
+  }
   return !!String(activeConfig.baseUrl || "").trim() &&
     !!String(activeConfig.model || "").trim() &&
     (!requiresApiKey || !!String(activeConfig.apiKey || "").trim());
@@ -241,6 +260,8 @@ function normalizeImageModelProfile(item, index) {
     imageBaseUrl,
     imageApiKey,
     imageApiProtocol: normalizeImageProfileProtocol(item.imageApiProtocol),
-    imageModel
+    imageModel,
+    ...(String(item.sourceLlmModelId || "").trim() ? { sourceLlmModelId: String(item.sourceLlmModelId).trim() } : {}),
+    ...(String(item.imageGenerationModel || "").trim() ? { imageGenerationModel: String(item.imageGenerationModel).trim() } : {})
   };
 }

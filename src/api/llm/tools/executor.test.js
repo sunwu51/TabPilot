@@ -781,6 +781,64 @@ describe("built-in tool execution", () => {
     }
   });
 
+  it("uses an existing OpenAI Responses model for built-in image generation", async () => {
+    const originalFetch = globalThis.fetch;
+    const events = [
+      { type: "response.output_item.done", item: { type: "image_generation_call", result: "aW1n", revised_prompt: "Revised", model: "gpt-image-2-codex" } },
+      { type: "response.completed", response: { output: [] } }
+    ].map(event => `data: ${JSON.stringify(event)}\n\n`).join("");
+    globalThis.fetch = vi.fn(async () => new Response(events, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    }));
+    await chrome.storage.local.set({
+      llmConfig: {
+        activeLlmModelId: "llm_responses",
+        llmModels: [{
+          id: "llm_responses",
+          name: "GPT 5.6 Sol",
+          apiType: "openai-responses",
+          baseUrl: "https://proxy.example/v1/responses",
+          apiKey: "response-token",
+          model: "gpt-5.6-sol"
+        }],
+        activeImageModelId: "img_builtin",
+        imageModels: [{
+          id: "img_builtin",
+          name: "gpt-5.6-sol-built-in",
+          imageApiProtocol: "openai_builtin_image_gen",
+          imageModel: "gpt-5.6-sol-built-in",
+          sourceLlmModelId: "llm_responses",
+          imageGenerationModel: "gpt-image-2.5-sunburst"
+        }]
+      }
+    });
+
+    try {
+      const result = await executeTool("image_gen", { prompt: "Draw a circle", size: "1024x1024" });
+      expect(result).toMatchObject({
+        success: true,
+        endpoint: "openai_builtin_image_gen",
+        model: "gpt-5.6-sol",
+        imageModelName: "gpt-5.6-sol-built-in",
+        actualImageModel: "gpt-image-2-codex",
+        dataUrl: "data:image/png;base64,aW1n",
+        revisedPrompt: "Revised"
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith("https://proxy.example/v1/responses", expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer response-token" })
+      }));
+      const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+      expect(body).toMatchObject({
+        model: "gpt-5.6-sol",
+        tools: [{ type: "image_generation", size: "1024x1024", output_format: "png", model: "gpt-image-2.5-sunburst" }]
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("calls the configured chat/completions image endpoint and reads OpenRouter-style images", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({

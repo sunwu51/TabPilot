@@ -8,7 +8,6 @@ import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
   IMAGE_API_PROTOCOLS,
-  MODEL_CONTEXT_LIMIT_OPTIONS,
   captureFullPageScreenshotToTab,
   createModelProfileId,
   createImageModelProfileId,
@@ -17,7 +16,6 @@ import {
   normalizeImageModelProfiles,
   normalizeImageApiProtocol,
   normalizeLlmModelProfiles,
-  normalizeModelContextLimitTokens,
   normalizeStoredModelConfig,
   BUILTIN_TOOL_GROUPS,
   openHelloWorldPlayground,
@@ -102,6 +100,23 @@ const DEFAULT_IMAGE_MODEL_DRAFT = {
   imageApiProtocol: IMAGE_API_PROTOCOLS.GENERATE,
   imageModel: ""
 };
+const OPENAI_IMAGE_GENERATION_MODELS = [
+  { label: "Auto", value: "" },
+  { label: "GPT Image 2.5 Sunburst", value: "gpt-image-2.5-sunburst" },
+  { label: "GPT Image 2.5 Flare", value: "gpt-image-2.5-flare" },
+  { label: "GPT Image 2", value: "gpt-image-2" }
+];
+
+function dedupeSubscriptionProfiles(profiles) {
+  const seen = new Set();
+  return profiles.filter((profile) => {
+    if (profile.apiType !== API_TYPES.OPENAI_SUBSCRIPTION) return true;
+    const key = `${profile.credentialId || profile.id}\n${String(profile.model || "").trim()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function SettingsDialogBody() {
   const { locale, setLocale, t } = useI18n();
@@ -117,7 +132,12 @@ function SettingsDialogBody() {
   const [keywordSummaryUseCustomModel, setKeywordSummaryUseCustomModel] = useState(DEFAULT_SETTINGS.llmConfig.keywordSummaryUseCustomModel);
   const [keywordSummaryModelId, setKeywordSummaryModelId] = useState(DEFAULT_SETTINGS.llmConfig.keywordSummaryModelId);
   const [llmModelFormOpen, setLlmModelFormOpen] = useState(false);
-  const [modelContextLimitTokens, setModelContextLimitTokens] = useState(DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
+  const [editingLlmModelId, setEditingLlmModelId] = useState("");
+  const [openAiLoginPending, setOpenAiLoginPending] = useState(false);
+  const [subscriptionAvailableModels, setSubscriptionAvailableModels] = useState([]);
+  const [selectedSubscriptionModels, setSelectedSubscriptionModels] = useState([]);
+  const [subscriptionModelsLoading, setSubscriptionModelsLoading] = useState(false);
+  const [subscriptionModelManagerOpen, setSubscriptionModelManagerOpen] = useState(false);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
   const [supportsImageInput, setSupportsImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsImageInput);
   const [supportsToolImageInput, setSupportsToolImageInput] = useState(DEFAULT_SETTINGS.llmConfig.supportsToolImageInput);
@@ -127,9 +147,12 @@ function SettingsDialogBody() {
   const [imageApiKey, setImageApiKey] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageApiKey);
   const [imageApiProtocol, setImageApiProtocol] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
   const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL_DRAFT.imageModel);
+  const [imageSourceLlmModelId, setImageSourceLlmModelId] = useState("");
+  const [imageGenerationModel, setImageGenerationModel] = useState("");
   const [imageModels, setImageModels] = useState(DEFAULT_SETTINGS.llmConfig.imageModels);
   const [activeImageModelId, setActiveImageModelId] = useState(DEFAULT_SETTINGS.llmConfig.activeImageModelId);
   const [imageModelFormOpen, setImageModelFormOpen] = useState(false);
+  const [editingImageModelId, setEditingImageModelId] = useState("");
   const [mcpToolTimeoutSeconds, setMcpToolTimeoutSeconds] = useState(DEFAULT_SETTINGS.mcpToolTimeoutSeconds);
   const [reuse, setReuse] = useState(DEFAULT_SETTINGS.reuse);
   const [extractTextLimit, setExtractTextLimit] = useState(DEFAULT_SETTINGS.extractTextLimit);
@@ -157,6 +180,8 @@ function SettingsDialogBody() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formKey, setFormKey] = useState(0);
+  const [llmFormKey, setLlmFormKey] = useState(0);
+  const [imageFormKey, setImageFormKey] = useState(0);
   const rootRef = useRef(null);
   const localizedRootRef = useLocalizedDom();
   const settingsImportInputRef = useRef(null);
@@ -172,12 +197,37 @@ function SettingsDialogBody() {
   const resolvedImageChatUrl = resolveImageApiRequestUrl(imageBaseUrl, "chat_completions");
   const imageProtocolOptions = [
     { label: "Generate / Edit API", value: IMAGE_API_PROTOCOLS.GENERATE },
-    { label: "Chat Completions", value: IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS }
+    { label: "Chat Completions", value: IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS },
+    { label: "OpenAI Built-in Image Gen", value: IMAGE_API_PROTOCOLS.OPENAI_BUILTIN }
   ];
+  const builtinImageHostModels = llmModels.filter(item => [API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(item.apiType));
   const ttsVoiceOptions = buildTtsVoiceOptions(ttsVoices);
 
   useEffect(() => {
     void loadDraft();
+  }, []);
+
+  useEffect(() => {
+    const handleMessage = async (message) => {
+      if (message?.type !== "openai_subscription_oauth_completed") return;
+      setOpenAiLoginPending(false);
+      if (message.success === false) {
+        toast.error(`OpenAI Subscription 登录失败: ${message.error || "未知错误"}`);
+        return;
+      }
+      await loadDraft();
+      setApiType(API_TYPES.OPENAI_SUBSCRIPTION);
+      setEditingLlmModelId(message.profileId);
+      setModel(message.model || "");
+      setNativeWebSearch(true);
+      setLlmModelFormOpen(true);
+      setSubscriptionAvailableModels(message.availableModels || []);
+      setSelectedSubscriptionModels((message.availableModels || []).map(item => item.id));
+      setSubscriptionModelManagerOpen(true);
+      toast.success("OpenAI Subscription 登录成功");
+    };
+    chrome.runtime.onMessage.addListener(handleMessage);
+    return () => chrome.runtime.onMessage.removeListener(handleMessage);
   }, []);
 
   useEffect(() => {
@@ -241,7 +291,6 @@ function SettingsDialogBody() {
       setBaseUrl("");
       setApiKey("");
       setModel("");
-      setModelContextLimitTokens(normalizeModelContextLimitTokens(nextLlmConfig.modelContextLimitTokens));
       setFirstPacketTimeoutSeconds(Math.max(1, Number(nextLlmConfig.firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
       setSupportsImageInput(nextLlmConfig.supportsImageInput === true);
       setSupportsToolImageInput(nextLlmConfig.supportsImageInput === true && (
@@ -255,8 +304,15 @@ function SettingsDialogBody() {
       setImageApiKey("");
       setImageApiProtocol(DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
       setImageModel("");
+      setImageSourceLlmModelId("");
+      setImageGenerationModel("");
       setLlmModelFormOpen(false);
       setImageModelFormOpen(false);
+      setEditingLlmModelId("");
+      setEditingImageModelId("");
+      setSubscriptionAvailableModels([]);
+      setSelectedSubscriptionModels([]);
+      setSubscriptionModelManagerOpen(false);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
       setExtractTextLimit(res.extractTextLimit || DEFAULT_SETTINGS.extractTextLimit);
@@ -306,12 +362,13 @@ function SettingsDialogBody() {
         return;
       }
 
+      const { llmConfig: previousLlmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
       const nextLlmConfig = normalizeStoredModelConfig({
+          ...previousLlmConfig,
           activeLlmModelId,
           llmModels,
           keywordSummaryUseCustomModel,
           keywordSummaryModelId,
-          modelContextLimitTokens: normalizeModelContextLimitTokens(modelContextLimitTokens),
           firstPacketTimeoutSeconds: Math.max(1, Number(firstPacketTimeoutSeconds) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds),
           supportsImageInput,
           supportsToolImageInput: supportsImageInput && supportsToolImageInput,
@@ -321,6 +378,13 @@ function SettingsDialogBody() {
           activeImageModelId,
           imageModels
       });
+      const nextSubscriptionIds = new Set(nextLlmConfig.llmModels
+        .filter(item => item.apiType === API_TYPES.OPENAI_SUBSCRIPTION)
+        .map(item => item.credentialId || item.id));
+      const removedSubscriptionIds = normalizeLlmModelProfiles(previousLlmConfig).profiles
+        .filter(item => item.apiType === API_TYPES.OPENAI_SUBSCRIPTION && !nextSubscriptionIds.has(item.credentialId || item.id))
+        .map(item => item.credentialId || item.id)
+        .filter((id, index, all) => all.indexOf(id) === index);
 
       await chrome.storage.local.set({
         llmConfig: nextLlmConfig,
@@ -336,6 +400,11 @@ function SettingsDialogBody() {
         postdogToolsEnabled,
         [SUBAGENT_TEMPLATES_STORAGE_KEY]: normalizeSubagentTemplates(subagentTemplates)
       });
+      await Promise.all(removedSubscriptionIds.map(profileId => chrome.runtime.sendMessage({
+        type: "openai_subscription_oauth",
+        action: "remove",
+        profileId
+      })));
       await saveSupabaseConfig(currentSupabaseConfig());
       toast.success(t("settingsSaved"));
       closeDialog();
@@ -432,6 +501,9 @@ function SettingsDialogBody() {
   function handleToggleLlmModelForm() {
     setLlmModelFormOpen(prev => {
       const nextOpen = !prev;
+      setEditingLlmModelId("");
+      setSubscriptionAvailableModels([]);
+      setSelectedSubscriptionModels([]);
       if (nextOpen) {
         const activeProfile = llmModels.find(item => item.id === activeLlmModelId);
         if (activeProfile) {
@@ -449,6 +521,7 @@ function SettingsDialogBody() {
   function handleToggleImageModelForm() {
     setImageModelFormOpen(prev => {
       const nextOpen = !prev;
+      setEditingImageModelId("");
       if (nextOpen) {
         const activeProfile = imageModels.find(item => item.id === activeImageModelId);
         if (activeProfile) {
@@ -456,35 +529,158 @@ function SettingsDialogBody() {
           setImageApiKey(activeProfile.imageApiKey || "");
           setImageApiProtocol(normalizeImageApiProtocol(activeProfile.imageApiProtocol));
           setImageModel(activeProfile.imageModel || "");
+          setImageSourceLlmModelId(activeProfile.sourceLlmModelId || "");
+          setImageGenerationModel(activeProfile.imageGenerationModel || "");
         }
       }
       return nextOpen;
     });
   }
 
+  function handleEditLlmModel(profile) {
+    setApiType(normalizeApiType(profile.apiType));
+    setBaseUrl(profile.baseUrl || "");
+    setApiKey(profile.apiKey || "");
+    setModel(profile.model || "");
+    setNativeWebSearch(profile.nativeWebSearch === true);
+    setEditingLlmModelId(profile.id);
+    setLlmModelFormOpen(true);
+    setSubscriptionModelManagerOpen(false);
+    setLlmFormKey(prev => prev + 1);
+    if (normalizeApiType(profile.apiType) !== API_TYPES.OPENAI_SUBSCRIPTION) {
+      setSubscriptionAvailableModels([]);
+      setSelectedSubscriptionModels([]);
+    }
+  }
+
+  async function loadSubscriptionModels(profile, refresh = false) {
+    setSubscriptionModelsLoading(true);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: "openai_subscription_oauth",
+        action: "models",
+        credentialId: profile.credentialId || profile.id,
+        refresh
+      });
+      if (!response?.success) throw new Error(response?.error || "无法读取模型列表");
+      const models = Array.isArray(response.result) ? response.result : [];
+      const credentialId = profile.credentialId || profile.id;
+      const configured = new Set(llmModels
+        .filter(item => item.apiType === API_TYPES.OPENAI_SUBSCRIPTION && (item.credentialId || item.id) === credentialId)
+        .map(item => item.model));
+      setSubscriptionAvailableModels(models);
+      setSelectedSubscriptionModels(models.filter(item => configured.has(item.id)).map(item => item.id));
+    } catch (error) {
+      toast.error(`读取 OpenAI 模型失败: ${error?.message || String(error)}`);
+    } finally {
+      setSubscriptionModelsLoading(false);
+    }
+  }
+
+  async function handleAddSelectedSubscriptionModels() {
+    const sourceProfile = llmModels.find(item => item.id === editingLlmModelId);
+    if (!sourceProfile) return;
+    const selected = subscriptionAvailableModels.filter(item => selectedSubscriptionModels.includes(item.id));
+    if (selected.length === 0) {
+      toast.error("请至少选择一个模型");
+      return;
+    }
+    const credentialId = sourceProfile.credentialId || sourceProfile.id;
+    const existingModels = new Set(llmModels
+      .filter(item => (item.credentialId || item.id) === credentialId)
+      .map(item => item.model));
+    const additions = selected.filter(item => !existingModels.has(item.id)).map(item => ({
+      id: createModelProfileId("llm"),
+      name: `OpenAI · ${item.name || item.id}`,
+      apiType: API_TYPES.OPENAI_SUBSCRIPTION,
+      baseUrl: "",
+      apiKey: "",
+      model: item.id,
+      nativeWebSearch: true,
+      credentialId,
+      accountId: sourceProfile.accountId || "",
+      email: sourceProfile.email || "",
+      planType: sourceProfile.planType || "",
+      requiresApiKey: false
+    }));
+    if (additions.length === 0) {
+      toast.success("所选模型已经添加");
+      return;
+    }
+    const nextModels = dedupeSubscriptionProfiles([...llmModels, ...additions]);
+    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    await chrome.storage.local.set({
+      llmConfig: normalizeStoredModelConfig({ ...llmConfig, llmModels: nextModels, activeLlmModelId })
+    });
+    setLlmModels(nextModels);
+    toast.success(`已添加 ${additions.length} 个模型`);
+  }
+
+  function handleEditImageModel(profile) {
+    setImageBaseUrl(profile.imageBaseUrl || "");
+    setImageApiKey(profile.imageApiKey || "");
+    setImageApiProtocol(normalizeImageApiProtocol(profile.imageApiProtocol));
+    setImageModel(profile.imageModel || "");
+    setImageSourceLlmModelId(profile.sourceLlmModelId || "");
+    setImageGenerationModel(profile.imageGenerationModel || "");
+    setEditingImageModelId(profile.id);
+    setImageModelFormOpen(true);
+    setImageFormKey(prev => prev + 1);
+  }
+
   async function handleAddLlmModel() {
     const trimmedBaseUrl = String(baseUrl || "").trim();
     const trimmedApiKey = String(apiKey || "").trim();
     const trimmedModel = String(model || "").trim();
-    if (!trimmedBaseUrl || !trimmedApiKey || !trimmedModel) {
+    const normalizedType = normalizeApiType(apiType);
+    const subscription = normalizedType === API_TYPES.OPENAI_SUBSCRIPTION;
+    if (!trimmedModel || (!subscription && (!trimmedBaseUrl || !trimmedApiKey))) {
       toast.error("API 地址、API Key 和模型不能为空");
       return;
     }
+    const profileId = editingLlmModelId || createModelProfileId("llm");
+    const existingProfile = llmModels.find(item => item.id === editingLlmModelId);
+    if (subscription && !existingProfile?.accountId) {
+      setOpenAiLoginPending(true);
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: "openai_subscription_oauth",
+          action: "authorize",
+          profileId,
+          model: trimmedModel
+        });
+        if (!response?.success) throw new Error(response?.error || "无法开始 OAuth 登录");
+        toast.success("已打开 OpenAI 登录页面");
+      } catch (error) {
+        setOpenAiLoginPending(false);
+        toast.error(`OpenAI 登录失败: ${error?.message || String(error)}`);
+      }
+      return;
+    }
     const profile = {
-      id: createModelProfileId("llm"),
-      name: trimmedModel,
-      apiType: normalizeApiType(apiType),
-      baseUrl: trimmedBaseUrl,
-      apiKey: trimmedApiKey,
+      id: profileId,
+      name: subscription ? (existingProfile?.name || "OpenAI Subscription") : trimmedModel,
+      apiType: normalizedType,
+      baseUrl: subscription ? "" : trimmedBaseUrl,
+      apiKey: subscription ? "" : trimmedApiKey,
       model: trimmedModel,
-      nativeWebSearch: normalizeApiType(apiType) === API_TYPES.OPENAI_RESPONSES && nativeWebSearch
+      nativeWebSearch: [API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(normalizedType) && nativeWebSearch,
+      ...(subscription ? {
+        credentialId: existingProfile.credentialId || existingProfile.id,
+        accountId: existingProfile.accountId || "",
+        email: existingProfile.email || "",
+        planType: existingProfile.planType || "",
+        requiresApiKey: false
+      } : {})
     };
     try {
       const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
       const rawStoredConfig = res.llmConfig || {};
       const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...rawStoredConfig };
       const storedProfiles = normalizeLlmModelProfiles(rawStoredConfig);
-      const nextModels = [...storedProfiles.profiles, profile];
+      const nextModels = dedupeSubscriptionProfiles(editingLlmModelId
+        ? storedProfiles.profiles.map(item => item.id === editingLlmModelId ? profile : item)
+        : [...storedProfiles.profiles, profile]);
       const nextActiveLlmModelId = storedProfiles.activeId || profile.id;
       const nextLlmConfig = normalizeStoredModelConfig({
         ...storedConfig,
@@ -492,11 +688,24 @@ function SettingsDialogBody() {
         activeLlmModelId: nextActiveLlmModelId
       });
       await chrome.storage.local.set({ llmConfig: nextLlmConfig });
-      setLlmModels(prev => [...prev, profile]);
+      if (existingProfile?.apiType === API_TYPES.OPENAI_SUBSCRIPTION && !subscription) {
+        const credentialStillUsed = nextLlmConfig.llmModels.some(item =>
+          item.apiType === API_TYPES.OPENAI_SUBSCRIPTION && item.credentialId === existingProfile.credentialId);
+        if (!credentialStillUsed) {
+          await chrome.runtime.sendMessage({
+            type: "openai_subscription_oauth",
+            action: "remove",
+            profileId: existingProfile.credentialId || existingProfile.id
+          });
+        }
+      }
+      setLlmModels(prev => dedupeSubscriptionProfiles(editingLlmModelId
+        ? prev.map(item => item.id === editingLlmModelId ? profile : item)
+        : [...prev, profile]));
       if (!activeLlmModelId) setActiveLlmModelId(profile.id);
-      toast.success("模型已添加");
+      toast.success(editingLlmModelId ? "模型已修改" : "模型已添加");
     } catch (error) {
-      toast.error(`添加模型失败: ${error?.message || String(error)}`);
+      toast.error(`${editingLlmModelId ? "修改" : "添加"}模型失败: ${error?.message || String(error)}`);
       return;
     }
     setApiType(DEFAULT_LLM_MODEL_DRAFT.apiType);
@@ -504,8 +713,10 @@ function SettingsDialogBody() {
     setApiKey("");
     setModel("");
     setNativeWebSearch(false);
+    setSubscriptionModelManagerOpen(false);
     setLlmModelFormOpen(false);
-    setFormKey(prev => prev + 1);
+    setEditingLlmModelId("");
+    setLlmFormKey(prev => prev + 1);
   }
 
   function handleRemoveLlmModel(id) {
@@ -516,30 +727,40 @@ function SettingsDialogBody() {
       }
       return next;
     });
+    if (editingLlmModelId === id) {
+      setEditingLlmModelId("");
+      setLlmModelFormOpen(false);
+    }
   }
 
   async function handleAddImageModel() {
     const trimmedBaseUrl = String(imageBaseUrl || "").trim();
     const trimmedApiKey = String(imageApiKey || "").trim();
     const trimmedModel = String(imageModel || "").trim();
-    if (!trimmedBaseUrl || !trimmedApiKey || !trimmedModel) {
+    const builtin = imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN;
+    const sourceProfile = builtinImageHostModels.find(item => item.id === imageSourceLlmModelId);
+    if ((builtin && !sourceProfile) || (!builtin && (!trimmedBaseUrl || !trimmedApiKey || !trimmedModel))) {
       toast.error("Image API 地址、Token 和模型不能为空");
       return;
     }
+    const effectiveModel = builtin ? (imageGenerationModel || `${sourceProfile.model}-built-in`) : trimmedModel;
     const profile = {
-      id: createImageModelProfileId(trimmedModel),
-      name: trimmedModel,
-      imageBaseUrl: trimmedBaseUrl,
-      imageApiKey: trimmedApiKey,
+      id: editingImageModelId || createImageModelProfileId(effectiveModel),
+      name: effectiveModel,
+      imageBaseUrl: builtin ? "" : trimmedBaseUrl,
+      imageApiKey: builtin ? "" : trimmedApiKey,
       imageApiProtocol: normalizeImageApiProtocol(imageApiProtocol),
-      imageModel: trimmedModel
+      imageModel: effectiveModel,
+      ...(builtin ? { sourceLlmModelId: sourceProfile.id, imageGenerationModel } : {})
     };
     try {
       const res = await chrome.storage.local.get({ llmConfig: DEFAULT_SETTINGS.llmConfig });
       const rawStoredConfig = res.llmConfig || {};
       const storedConfig = { ...DEFAULT_SETTINGS.llmConfig, ...rawStoredConfig };
       const storedProfiles = normalizeImageModelProfiles(rawStoredConfig);
-      const nextModels = [...storedProfiles.profiles, profile];
+      const nextModels = editingImageModelId
+        ? storedProfiles.profiles.map(item => item.id === editingImageModelId ? profile : item)
+        : [...storedProfiles.profiles, profile];
       const nextActiveImageModelId = storedProfiles.activeId || profile.id;
       const nextLlmConfig = normalizeStoredModelConfig({
         ...storedConfig,
@@ -547,19 +768,24 @@ function SettingsDialogBody() {
         activeImageModelId: nextActiveImageModelId
       });
       await chrome.storage.local.set({ llmConfig: nextLlmConfig });
-      setImageModels(prev => [...prev, profile]);
+      setImageModels(prev => editingImageModelId
+        ? prev.map(item => item.id === editingImageModelId ? profile : item)
+        : [...prev, profile]);
       if (!activeImageModelId) setActiveImageModelId(profile.id);
-      toast.success("图片模型已添加");
+      toast.success(editingImageModelId ? "图片模型已修改" : "图片模型已添加");
     } catch (error) {
-      toast.error(`添加图片模型失败: ${error?.message || String(error)}`);
+      toast.error(`${editingImageModelId ? "修改" : "添加"}图片模型失败: ${error?.message || String(error)}`);
       return;
     }
     setImageBaseUrl("");
     setImageApiKey("");
     setImageApiProtocol(DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
     setImageModel("");
+    setImageSourceLlmModelId("");
+    setImageGenerationModel("");
     setImageModelFormOpen(false);
-    setFormKey(prev => prev + 1);
+    setEditingImageModelId("");
+    setImageFormKey(prev => prev + 1);
   }
 
   function handleRemoveImageModel(id) {
@@ -570,6 +796,10 @@ function SettingsDialogBody() {
       }
       return next;
     });
+    if (editingImageModelId === id) {
+      setEditingImageModelId("");
+      setImageModelFormOpen(false);
+    }
   }
 
   async function handleClearReusePolicies() {
@@ -735,16 +965,6 @@ function SettingsDialogBody() {
     }} key={formKey} className="settings-dialog-body">
       <div className="settings-dialog-scroll">
         <div className="settings-card">
-          <div className="settings-card-title">{t("language")}</div>
-          <Select
-            label={t("language")}
-            items={[t("chinese"), t("english")]}
-            defaultIndex={locale === "zh" ? 0 : 1}
-            onSelectedItemChange={(changes) => setLocale(changes.selectedItem === t("chinese") ? "zh" : "en")}
-          />
-          <div className="settings-api-url-hint">{t("languageHint")}</div>
-        </div>
-        <div className="settings-card">
           <div className="settings-card-title">LLM 配置</div>
           <div className="settings-model-badges" aria-label="已保存 LLM 模型">
             {llmModels.length === 0 ? (
@@ -753,7 +973,7 @@ function SettingsDialogBody() {
               <button
                 key={item.id}
                 type="button"
-                className={`settings-model-badge${item.id === activeLlmModelId ? " settings-model-badge-active" : ""}`}
+                className={`settings-model-badge${item.id === activeLlmModelId ? " settings-model-badge-active" : ""}${item.id === editingLlmModelId ? " settings-model-badge-editing" : ""}`}
                 onClick={() => setActiveLlmModelId(item.id)}
                 title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
               >
@@ -777,6 +997,27 @@ function SettingsDialogBody() {
                 >
                   ×
                 </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="settings-model-badge-edit"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleEditLlmModel(item);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleEditLlmModel(item);
+                  }}
+                  aria-label={`编辑 ${item.name}`}
+                  title="编辑"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                  </svg>
+                </span>
               </button>
             ))}
           </div>
@@ -784,7 +1025,7 @@ function SettingsDialogBody() {
             className="settings-model-add-toggle bg-[var(--w-indigo)]"
             onPress={handleToggleLlmModelForm}
           >
-            {llmModelFormOpen ? "收起添加模型" : "添加模型"}
+            {llmModelFormOpen ? (editingLlmModelId ? "取消编辑" : "收起添加模型") : "添加模型"}
           </Button>
           <div className="mt-3">
             <Checkbox isSelected={keywordSummaryUseCustomModel} onChange={setKeywordSummaryUseCustomModel}>
@@ -806,15 +1047,18 @@ function SettingsDialogBody() {
             <div className="settings-api-url-hint">关键词总结默认使用当前聊天模型</div>
           )}
           {llmModelFormOpen && (
-            <div className="settings-model-form">
+            <div key={llmFormKey} className="settings-model-form">
               <Select
                 label="API 类型"
-                items={["OpenAI Chat Completions", "OpenAI Responses", "Anthropic"]}
-                defaultIndex={apiType === API_TYPES.OPENAI_RESPONSES ? 1 : (apiType === API_TYPES.ANTHROPIC ? 2 : 0)}
+                items={["OpenAI Chat Completions", "OpenAI Responses", "OpenAI Subscription", "Anthropic"]}
+                defaultIndex={apiType === API_TYPES.OPENAI_RESPONSES ? 1 : (apiType === API_TYPES.OPENAI_SUBSCRIPTION ? 2 : (apiType === API_TYPES.ANTHROPIC ? 3 : 0))}
                 onSelectedItemChange={(changes) => {
                   const selected = changes.selectedItem;
                   if (selected === "Anthropic") {
                     setApiType(API_TYPES.ANTHROPIC);
+                  } else if (selected === "OpenAI Subscription") {
+                    setApiType(API_TYPES.OPENAI_SUBSCRIPTION);
+                    setNativeWebSearch(true);
                   } else if (selected === "OpenAI Responses") {
                     setApiType(API_TYPES.OPENAI_RESPONSES);
                   } else {
@@ -822,18 +1066,26 @@ function SettingsDialogBody() {
                   }
                 }}
               />
-              <Input
-                label="API 地址"
-                labelClassName="!text-sm !font-medium !text-gray-500"
-                inputClassName="!min-h-8"
-                defaultValue={baseUrl}
-                onChange={setBaseUrl}
-                placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
-              />
-              <div className="settings-api-url-hint">
-                finalURL: {resolvedApiUrl || "—"}
-              </div>
-              <div className="settings-secret-field">
+              {apiType === API_TYPES.OPENAI_SUBSCRIPTION ? (
+                <div className="settings-api-url-hint">
+                  使用 ChatGPT 订阅登录，API 地址由 OpenAI 固定提供，不需要填写 API Key。
+                  {editingLlmModelId && llmModels.find(item => item.id === editingLlmModelId)?.email
+                    ? ` 当前账号：${llmModels.find(item => item.id === editingLlmModelId)?.email}`
+                    : ""}
+                </div>
+              ) : (<>
+                <Input
+                  label="API 地址"
+                  labelClassName="!text-sm !font-medium !text-gray-500"
+                  inputClassName="!min-h-8"
+                  defaultValue={baseUrl}
+                  onChange={setBaseUrl}
+                  placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
+                />
+                <div className="settings-api-url-hint">
+                  finalURL: {resolvedApiUrl || "—"}
+                </div>
+                <div className="settings-secret-field">
                 <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-api-key">API Key</label>
                 <div className="settings-secret-input-wrapper">
                   <input
@@ -886,34 +1138,97 @@ function SettingsDialogBody() {
                     )}
                   </button>
                 </div>
-              </div>
+                </div>
+              </>)}
               <Input
                 label="模型"
                 labelClassName="!text-sm !font-medium !text-gray-500"
                 inputClassName="!min-h-8"
                 defaultValue={model}
                 onChange={setModel}
-                placeholder={apiType === API_TYPES.ANTHROPIC ? "claude-sonnet-4-20250514" : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-4.1-mini" : "deepseek-v4-flash")}
+                placeholder={apiType === API_TYPES.ANTHROPIC
+                  ? "claude-sonnet-4-20250514"
+                  : ([API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(apiType) ? "gpt-5-codex" : "deepseek-v4-flash")}
               />
-              {apiType === API_TYPES.OPENAI_RESPONSES && (
+              {[API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(apiType) && (
                 <Checkbox isSelected={nativeWebSearch} onChange={setNativeWebSearch}>
-                  <span className="text-sm">启用 OpenAI 服务端联网搜索</span>
+                  <span className="text-sm">启用 OpenAI 内置 Web Search</span>
                 </Checkbox>
               )}
-              <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={handleAddLlmModel}>
-                添加
+              {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && !subscriptionModelManagerOpen && (
+                <Button className="settings-model-add-button" isDisabled={subscriptionModelsLoading} onPress={() => {
+                  const profile = llmModels.find(item => item.id === editingLlmModelId);
+                  if (!profile) return;
+                  setSubscriptionModelManagerOpen(true);
+                  void loadSubscriptionModels(profile, true);
+                }}>
+                  管理此账号的模型
+                </Button>
+              )}
+              {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && subscriptionModelManagerOpen && (
+                <div className="settings-subscription-models">
+                  <div className="settings-inline-section-title">可用订阅模型</div>
+                  {subscriptionModelsLoading ? (
+                    <div className="settings-api-url-hint">正在读取模型列表...</div>
+                  ) : subscriptionAvailableModels.length === 0 ? (
+                    <div className="settings-api-url-hint">暂时没有读取到模型列表，可刷新后重试。</div>
+                  ) : subscriptionAvailableModels.map(item => (
+                    <Checkbox
+                      key={item.id}
+                      isSelected={selectedSubscriptionModels.includes(item.id)}
+                      onChange={(selected) => setSelectedSubscriptionModels(current => selected
+                        ? [...new Set([...current, item.id])]
+                        : current.filter(id => id !== item.id))}
+                    >
+                      <span className="text-sm" title={item.description || item.id}>{item.name || item.id}</span>
+                    </Checkbox>
+                  ))}
+                  <div className="settings-model-action-row">
+                    <Button className="settings-model-add-button" isDisabled={subscriptionModelsLoading} onPress={() => {
+                      const profile = llmModels.find(item => item.id === editingLlmModelId);
+                      if (profile) void loadSubscriptionModels(profile, true);
+                    }}>
+                      刷新列表
+                    </Button>
+                    <Button className="settings-model-add-button bg-[var(--w-indigo)]" isDisabled={subscriptionModelsLoading} onPress={handleAddSelectedSubscriptionModels}>
+                      添加所选模型
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && (
+                <Button
+                  className="settings-model-add-button"
+                  isDisabled={openAiLoginPending}
+                  onPress={async () => {
+                    setOpenAiLoginPending(true);
+                    try {
+                      const response = await chrome.runtime.sendMessage({
+                        type: "openai_subscription_oauth",
+                        action: "authorize",
+                        profileId: editingLlmModelId,
+                        model: String(model || "").trim()
+                      });
+                      if (!response?.success) throw new Error(response?.error || "无法开始 OAuth 登录");
+                      toast.success("已打开 OpenAI 登录页面");
+                    } catch (error) {
+                      setOpenAiLoginPending(false);
+                      toast.error(error?.message || "无法开始 OAuth 登录");
+                    }
+                  }}
+                >
+                  重新登录
+                </Button>
+              )}
+              <Button className="settings-model-add-button bg-[var(--w-indigo)]" isDisabled={openAiLoginPending} onPress={handleAddLlmModel}>
+                {openAiLoginPending
+                  ? "等待登录..."
+                  : (apiType === API_TYPES.OPENAI_SUBSCRIPTION && !editingLlmModelId
+                    ? "登录并添加"
+                    : (editingLlmModelId ? "保存修改" : "添加"))}
               </Button>
             </div>
           )}
-          <Select
-            label="模型上下文大小（用于上下文告警）"
-            items={MODEL_CONTEXT_LIMIT_OPTIONS.map((item) => item.label)}
-            defaultIndex={Math.max(0, MODEL_CONTEXT_LIMIT_OPTIONS.findIndex((item) => item.value === modelContextLimitTokens))}
-            onSelectedItemChange={(changes) => {
-              const selected = MODEL_CONTEXT_LIMIT_OPTIONS.find((item) => item.label === changes.selectedItem);
-              setModelContextLimitTokens(selected ? selected.value : DEFAULT_SETTINGS.llmConfig.modelContextLimitTokens);
-            }}
-          />
           <Input
             label="LLM 首包超时（秒）"
             labelClassName="!text-sm !font-medium !text-gray-500"
@@ -972,7 +1287,7 @@ function SettingsDialogBody() {
               <button
                 key={item.id}
                 type="button"
-                className={`settings-model-badge settings-image-model-badge${item.id === activeImageModelId ? " settings-model-badge-active" : ""}`}
+                className={`settings-model-badge settings-image-model-badge${item.id === activeImageModelId ? " settings-model-badge-active" : ""}${item.id === editingImageModelId ? " settings-model-badge-editing" : ""}`}
                 onClick={() => setActiveImageModelId(item.id)}
                 title={`${item.name}\n${item.imageApiProtocol}\n${item.imageBaseUrl}`}
               >
@@ -996,6 +1311,27 @@ function SettingsDialogBody() {
                 >
                   ×
                 </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="settings-model-badge-edit"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleEditImageModel(item);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleEditImageModel(item);
+                  }}
+                  aria-label={`编辑 ${item.name}`}
+                  title="编辑"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                  </svg>
+                </span>
               </button>
             ))}
           </div>
@@ -1003,19 +1339,52 @@ function SettingsDialogBody() {
             className="settings-model-add-toggle bg-[var(--w-green)]"
             onPress={handleToggleImageModelForm}
           >
-            {imageModelFormOpen ? "收起添加图片模型" : "添加图片模型"}
+            {imageModelFormOpen ? (editingImageModelId ? "取消编辑" : "收起添加图片模型") : "添加图片模型"}
           </Button>
           {imageModelFormOpen && (
-            <div className="settings-model-form">
+            <div key={imageFormKey} className="settings-model-form">
               <Select
                 label="Image API 规范"
                 items={imageProtocolOptions.map((item) => item.label)}
                 defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
                 onSelectedItemChange={(changes) => {
                   const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
-                  setImageApiProtocol(selected ? selected.value : DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol);
+                  const nextProtocol = selected ? selected.value : DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol;
+                  setImageApiProtocol(nextProtocol);
+                  if (nextProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN && !imageSourceLlmModelId) {
+                    setImageSourceLlmModelId(builtinImageHostModels[0]?.id || "");
+                  }
                 }}
               />
+              {imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN ? (
+                <>
+                  <Select
+                    label="OpenAI 宿主模型"
+                    items={builtinImageHostModels.map(item => `${item.name} (${item.model})`)}
+                    defaultIndex={Math.max(0, builtinImageHostModels.findIndex(item => item.id === imageSourceLlmModelId))}
+                    onSelectedItemChange={(changes) => {
+                      const selected = builtinImageHostModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
+                      setImageSourceLlmModelId(selected?.id || "");
+                    }}
+                  />
+                  <Select
+                    label="图片生成模型"
+                    items={OPENAI_IMAGE_GENERATION_MODELS.map(item => item.label)}
+                    defaultIndex={Math.max(0, OPENAI_IMAGE_GENERATION_MODELS.findIndex(item => item.value === imageGenerationModel))}
+                    onSelectedItemChange={(changes) => {
+                      const selected = OPENAI_IMAGE_GENERATION_MODELS.find(item => item.label === changes.selectedItem);
+                      setImageGenerationModel(selected?.value || "");
+                    }}
+                  />
+                  <div className="settings-api-url-hint">{t("imageGenerationModelAccountHint")}</div>
+                  {builtinImageHostModels.length === 0 && (
+                    <div className="settings-api-url-hint">请先添加 OpenAI Responses 或 OpenAI Subscription 模型。</div>
+                  )}
+                  <div className="settings-api-url-hint">
+                    {t("openAiBuiltinImageGenHint")}
+                  </div>
+                </>
+              ) : (<>
               <Input
                 label="Image API 地址"
                 labelClassName="!text-sm !font-medium !text-gray-500"
@@ -1091,8 +1460,9 @@ function SettingsDialogBody() {
                 onChange={setImageModel}
                 placeholder={DEFAULT_IMAGE_MODEL}
               />
+              </>)}
               <Button className="settings-model-add-button bg-[var(--w-green)]" onPress={handleAddImageModel}>
-                添加
+                {editingImageModelId ? "保存修改" : "添加"}
               </Button>
             </div>
           )}
@@ -1405,6 +1775,17 @@ function SettingsDialogBody() {
               <Button className="!min-h-7 !px-3 !py-0 !text-xs">{t("feedback")}</Button>
             </a>
           </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">{t("language")}</div>
+          <Select
+            label={t("language")}
+            items={[t("chinese"), t("english")]}
+            defaultIndex={locale === "zh" ? 0 : 1}
+            onSelectedItemChange={(changes) => setLocale(changes.selectedItem === t("chinese") ? "zh" : "en")}
+          />
+          <div className="settings-api-url-hint">{t("languageHint")}</div>
         </div>
 
       </div>

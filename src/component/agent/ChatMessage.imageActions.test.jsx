@@ -130,6 +130,7 @@ describe("ChatMessage image actions", () => {
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByAltText("用户上传的图片")).toHaveAttribute("src", "data:image/png;base64,dXNlcg==");
     expect(within(dialog).getAllByText("100%").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("1200 × 800")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "适应窗口" }));
     expect(within(dialog).getByText("75%")).toBeInTheDocument();

@@ -68,6 +68,33 @@ describe("modelProfiles", () => {
     })).toEqual({});
   });
 
+  it("keeps OpenAI Subscription identity fields without requiring a URL or API key", () => {
+    const config = {
+      activeLlmModelId: "llm_subscription",
+      llmModels: [{
+        id: "llm_subscription",
+        name: "OpenAI Subscription",
+        apiType: "openai-subscription",
+        model: "gpt-5-codex",
+        credentialId: "llm_subscription",
+        accountId: "account-123",
+        email: "user@example.com",
+        planType: "plus",
+        requiresApiKey: false
+      }]
+    };
+
+    expect(resolveActiveLlmConfig(config)).toMatchObject({
+      apiType: "openai-subscription",
+      baseUrl: "",
+      apiKey: "",
+      credentialId: "llm_subscription",
+      accountId: "account-123",
+      nativeWebSearch: true
+    });
+    expect(isLlmConfigUsable(config)).toBe(true);
+  });
+
   it("keeps explicitly cleared image model profiles empty", () => {
     const config = {
       imageModels: [],

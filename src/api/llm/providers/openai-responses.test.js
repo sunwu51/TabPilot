@@ -1,3 +1,4 @@
+/* global chrome */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildResponsesRequestInput,
@@ -17,6 +18,50 @@ afterEach(() => {
 });
 
 describe("OpenAI responses reasoning helpers", () => {
+  it("uses stored OAuth credentials for OpenAI Subscription requests", async () => {
+    await chrome.storage.local.set({
+      "openAiSubscriptionCredential:llm_subscription": {
+        accessToken: "oauth-access-token",
+        refreshToken: "oauth-refresh-token",
+        accountId: "account-123",
+        expiresAt: Date.now() + 60 * 60 * 1000
+      }
+    });
+    chrome.runtime.sendMessage.mockResolvedValue({
+      success: true,
+      result: {
+        accessToken: "oauth-access-token",
+        refreshToken: "oauth-refresh-token",
+        accountId: "account-123",
+        expiresAt: Date.now() + 60 * 60 * 1000
+      }
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      'data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}\n\n',
+      { status: 200, headers: { "Content-Type": "text/event-stream" } }
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await streamOpenAIResponsesAttempt({
+      apiType: "openai-subscription",
+      activeLlmModelId: "llm_subscription",
+      credentialId: "llm_subscription",
+      model: "gpt-5-codex"
+    }, [{ role: "user", content: "Hello" }], new AbortController().signal, {}, [], { includeBuiltins: false });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("https://chatgpt.com/backend-api/codex/responses");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      Authorization: "Bearer oauth-access-token",
+      "ChatGPT-Account-Id": "account-123",
+      originator: "codex_cli_rs"
+    });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      model: "gpt-5-codex",
+      stream: true,
+      store: false
+    });
+  });
+
   it("deduplicates identical output text and keeps annotations", () => {
     const annotation = { type: "url_citation", title: "Title", url: "https://example.com", start_index: 0, end_index: 4 };
     expect(dedupeResponsesOutputTextParts([

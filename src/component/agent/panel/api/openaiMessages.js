@@ -98,7 +98,7 @@ export function getOpenAIReasoningContentForApi(msg) {
 }
 
 export function copyOpenAIProviderMetadataForApi(source, target, options = {}) {
-  if (normalizeApiType(options.apiType) !== API_TYPES.OPENAI_RESPONSES) return target;
+  if (!isOpenAIResponsesRequest(options)) return target;
   if (!shouldOmitThinkingFromRequests(options) && Array.isArray(source?._responsesReasoningItems) && source._responsesReasoningItems.length > 0) {
     target._responsesReasoningItems = source._responsesReasoningItems;
   }
@@ -199,7 +199,8 @@ function buildOpenAIToolMessageForApi(msg, options = {}) {
 }
 
 function isOpenAIResponsesRequest(options = {}) {
-  return normalizeApiType(options.apiType) === API_TYPES.OPENAI_RESPONSES;
+  const apiType = normalizeApiType(options.apiType);
+  return apiType === API_TYPES.OPENAI_RESPONSES || apiType === API_TYPES.OPENAI_SUBSCRIPTION;
 }
 
 function copyResponsesToolImageFieldsForApi(source, target) {

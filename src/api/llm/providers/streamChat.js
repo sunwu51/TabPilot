@@ -24,7 +24,7 @@ async function streamWithRetry(config, messages, signal, callbacks, mcpTools = [
       const apiType = normalizeApiType(config.apiType);
       if (apiType === API_TYPES.ANTHROPIC) {
         await streamAnthropicAttempt(config, messages, signal, callbacks, mcpTools, options);
-      } else if (apiType === API_TYPES.OPENAI_RESPONSES) {
+      } else if (apiType === API_TYPES.OPENAI_RESPONSES || apiType === API_TYPES.OPENAI_SUBSCRIPTION) {
         await streamOpenAIResponsesAttempt(config, messages, signal, callbacks, mcpTools, options);
       } else {
         await streamOpenAIAttempt(config, messages, signal, callbacks, mcpTools, options);

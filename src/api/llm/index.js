@@ -11,6 +11,7 @@ export {
   buildLlmAuthHeaders,
   createModelProfileId,
   createImageModelProfileId,
+  IMAGE_OPENAI_BUILTIN_PROTOCOL,
   DEFAULT_LLM_MODEL_PROFILES,
   isLlmConfigUsable,
   isConfiguredImageProfile,

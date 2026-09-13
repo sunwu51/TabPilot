@@ -1,12 +1,16 @@
 /* global chrome */
 
-import { isConfiguredImageProfile, resolveActiveImageConfig } from "../../core/modelProfiles";
+import { buildLlmAuthHeaders, isConfiguredImageProfile, normalizeLlmModelProfiles, resolveActiveImageConfig } from "../../core/modelProfiles";
+import { API_TYPES } from "../../core/config";
+import { resolveLlmRequestUrl } from "../../core/endpoint";
+import { OPENAI_SUBSCRIPTION_API_URL, requestOpenAiSubscriptionAccess } from "../../providers/openai-subscription-auth";
 import { ensureSettingsMigrated } from "../../../settings/migrations";
 
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const IMAGE_API_PROTOCOLS = {
   GENERATE: "generate",
-  CHAT_COMPLETIONS: "chat_completions"
+  CHAT_COMPLETIONS: "chat_completions",
+  OPENAI_BUILTIN: "openai_builtin_image_gen"
 };
 
 const IMAGE_GENERATIONS_PATH = "/v1/images/generations";
@@ -57,6 +61,7 @@ export function resolveImageApiRequestUrl(baseUrl, endpoint) {
 }
 
 export function normalizeImageApiProtocol(value) {
+  if (value === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN) return IMAGE_API_PROTOCOLS.OPENAI_BUILTIN;
   return value === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
     ? IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
     : IMAGE_API_PROTOCOLS.GENERATE;
@@ -73,6 +78,9 @@ export async function executeImageGeneration(args = {}) {
 
   if (config.imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS) {
     return executeChatCompletionsImageGeneration(args, config, { prompt });
+  }
+  if (config.imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN) {
+    return executeOpenAiBuiltinImageGeneration(args, config, { prompt, images: [] });
   }
 
   const body = buildImageRequestBody(args, config, { prompt });
@@ -104,6 +112,10 @@ export async function executeImageEdit(args = {}) {
 
   if (config.imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS) {
     return executeChatCompletionsImageEdit(args, config, { prompt, images });
+  }
+  if (config.imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN) {
+    if (String(args.mask || "").trim()) return { error: "mask is not supported by OpenAI built-in Image Gen" };
+    return executeOpenAiBuiltinImageGeneration(args, config, { prompt, images });
   }
 
   const body = buildImageRequestBody(args, config, { prompt });
@@ -165,6 +177,8 @@ async function readImageApiConfig(args = {}) {
   const config = resolveActiveImageConfig(llmConfig, args.image_model_id);
   if (config.error) return { error: config.error };
   const selectedProfile = config?.selectedImageProfile || null;
+  const sourceLlmModelId = String(selectedProfile?.sourceLlmModelId || "").trim();
+  const sourceLlmProfile = normalizeLlmModelProfiles(llmConfig).profiles.find(item => item.id === sourceLlmModelId) || null;
   const imageModel = String(config?.imageModel || DEFAULT_IMAGE_MODEL).trim() || DEFAULT_IMAGE_MODEL;
   return {
     imageBaseUrl: String(config?.imageBaseUrl || "").trim(),
@@ -173,12 +187,22 @@ async function readImageApiConfig(args = {}) {
     imageModelId: String(selectedProfile?.id || config?.activeImageModelId || "").trim(),
     imageModelName: imageModel,
     imageApiProtocol: normalizeImageApiProtocol(config?.imageApiProtocol),
+    sourceLlmModelId,
+    sourceLlmProfile,
+    imageGenerationModel: String(selectedProfile?.imageGenerationModel || "").trim(),
     imageModels: config?.imageModels || [],
     activeImageModelId: config?.activeImageModelId || ""
   };
 }
 
 function validateImageApiConfig(config) {
+  if (config?.imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN) {
+    if (!config.sourceLlmProfile) return { error: "Referenced OpenAI model is not configured" };
+    if (![API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(config.sourceLlmProfile.apiType)) {
+      return { error: "Referenced model must use OpenAI Responses" };
+    }
+    return null;
+  }
   if (!String(config?.imageBaseUrl || "").trim()) {
     return { error: "Image API URL is not configured" };
   }
@@ -186,6 +210,92 @@ function validateImageApiConfig(config) {
     return { error: "Image API token is not configured" };
   }
   return null;
+}
+
+async function executeOpenAiBuiltinImageGeneration(args, config, { prompt, images }) {
+  const source = config.sourceLlmProfile;
+  const subscription = source.apiType === API_TYPES.OPENAI_SUBSCRIPTION;
+  const content = [{ type: "input_text", text: prompt }];
+  for (const image of images) {
+    const normalized = await imageSourceToResponsesImage(image);
+    content.push({ type: "input_image", image_url: normalized });
+  }
+  const imageTool = {
+    type: "image_generation",
+    size: String(args.size || "auto"),
+    output_format: normalizeOutputFormat(args.output_format),
+    ...(config.imageGenerationModel ? { model: config.imageGenerationModel } : {})
+  };
+  addNumberField(imageTool, args, "output_compression", { min: 0, max: 100, integer: true });
+  addStringField(imageTool, args, "background");
+  addStringField(imageTool, args, "moderation");
+  addNumberField(imageTool, args, "partial_images", { min: 0, max: 3, integer: true });
+  const body = {
+    model: source.model,
+    instructions: "",
+    input: [{ role: "user", content }],
+    tools: [imageTool],
+    stream: true,
+    store: false
+  };
+  const url = subscription ? OPENAI_SUBSCRIPTION_API_URL : resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, source.baseUrl);
+  const request = async (forceRefresh = false) => {
+    let headers = { "Content-Type": "application/json", Accept: "text/event-stream", ...buildLlmAuthHeaders(source) };
+    if (subscription) {
+      const credential = await requestOpenAiSubscriptionAccess(source.credentialId || source.id, { force: forceRefresh });
+      headers = {
+        ...headers,
+        Authorization: `Bearer ${credential.accessToken}`,
+        "ChatGPT-Account-Id": credential.accountId || source.accountId,
+        originator: "codex_cli_rs"
+      };
+    }
+    return fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  };
+  try {
+    let response = await request();
+    if (subscription && response.status === 401) response = await request(true);
+    if (!response.ok) return { error: `Image API returned HTTP ${response.status}`, detail: await response.text().catch(() => "") };
+    const image = await readOpenAiBuiltinImageStream(response);
+    if (!image?.result) return { error: "OpenAI built-in Image Gen did not return an image" };
+    return buildImageToolResult({ data: [{ b64_json: image.result, revised_prompt: image.revised_prompt }] }, {
+      endpoint: "openai_builtin_image_gen",
+      model: source.model,
+      actualImageModel: image.model,
+      imageModelId: config.imageModelId,
+      imageModelName: config.imageModelName,
+      prompt,
+      inputImageCount: images.length,
+      outputFormat: imageTool.output_format
+    });
+  } catch (error) {
+    return { error: error?.message || String(error) };
+  }
+}
+
+async function readOpenAiBuiltinImageStream(response) {
+  const text = await response.text();
+  let image = null;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    const event = JSON.parse(data);
+    const providerError = event?.error || (event?.type === "response.failed" ? event?.response?.error : null);
+    if (providerError) throw new Error(providerError.message || providerError.code || "OpenAI image generation failed");
+    const item = event?.item;
+    if (event?.type === "response.output_item.done" && item?.type === "image_generation_call" && item.result) image = item;
+    for (const output of event?.response?.output || []) {
+      if (output?.type === "image_generation_call" && output.result) image = output;
+    }
+  }
+  return image;
+}
+
+async function imageSourceToResponsesImage(source) {
+  const content = await imageSourceToChatImageContent(source, "image");
+  return content.image_url.url;
 }
 
 function buildImageRequestBody(args, config, requiredFields) {
@@ -391,6 +501,7 @@ function buildImageToolResult(payload, meta) {
   };
   if (meta.imageModelId) result.imageModelId = meta.imageModelId;
   if (meta.imageModelName) result.imageModelName = meta.imageModelName;
+  if (meta.actualImageModel) result.actualImageModel = meta.actualImageModel;
   if (meta.inputImageCount) result.inputImageCount = meta.inputImageCount;
   if (meta.hasMask) result.maskApplied = true;
   const revisedPrompt = findFirstString(...normalizedImages.map(image => image.revisedPrompt));

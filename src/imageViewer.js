@@ -16,6 +16,7 @@ const state = {
   image: null,
   stage: null,
   zoomLabel: null,
+  dimensionsLabel: null,
   title: null,
   prevButton: null,
   nextButton: null
@@ -76,6 +77,7 @@ function renderViewer() {
     </main>
     <footer class="image-viewer-meta">
       <span class="image-viewer-zoom">100%</span>
+      <span class="image-viewer-dimensions"></span>
       <span>滚轮缩放，按住拖拽查看细节，方向键切换图片</span>
     </footer>
   `;
@@ -85,6 +87,7 @@ function renderViewer() {
   state.stage = shell.querySelector(".image-viewer-stage");
   state.image = shell.querySelector(".image-viewer-img");
   state.zoomLabel = shell.querySelector(".image-viewer-zoom");
+  state.dimensionsLabel = shell.querySelector(".image-viewer-dimensions");
   state.prevButton = shell.querySelector('[data-action="prev"]');
   state.nextButton = shell.querySelector('[data-action="next"]');
   state.image.addEventListener("load", fitToWindow);
@@ -181,6 +184,7 @@ function showImageAt(index, { resetView = false, replaceHistory = false } = {}) 
     state.offset = { x: 0, y: 0 };
   }
   state.image.src = item.src;
+  state.dimensionsLabel.textContent = "";
   state.image.alt = item.ref;
   document.title = item.ref;
   state.title.textContent = `${item.ref} · ${index + 1} / ${state.refs.length}`;
@@ -214,6 +218,7 @@ function fitToWindow() {
   const rect = state.stage.getBoundingClientRect();
   const naturalWidth = state.image.naturalWidth || state.image.width;
   const naturalHeight = state.image.naturalHeight || state.image.height;
+  state.dimensionsLabel.textContent = naturalWidth && naturalHeight ? `${naturalWidth} × ${naturalHeight}` : "";
   if (!naturalWidth || !naturalHeight || !rect.width || !rect.height) {
     setZoom(1);
     return;

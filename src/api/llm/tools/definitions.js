@@ -1494,7 +1494,7 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
       input_schema: t.schema
     }));
   }
-  if (normalizedApiType === API_TYPES.OPENAI_RESPONSES) {
+  if (normalizedApiType === API_TYPES.OPENAI_RESPONSES || normalizedApiType === API_TYPES.OPENAI_SUBSCRIPTION) {
     return allTools.map(t => ({
       type: "function",
       name: t.name,

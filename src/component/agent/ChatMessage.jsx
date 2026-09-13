@@ -1134,6 +1134,7 @@ export function EditableChatImage({
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewFitZoom, setPreviewFitZoom] = useState(1);
   const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
+  const [previewDimensions, setPreviewDimensions] = useState({ width: 0, height: 0 });
   const [uploadState, setUploadState] = useState(() => ({ status: uploadedPath || uploadedUrl ? "uploaded" : "idle", url: uploadedUrl, path: uploadedPath }));
   const previewImageRef = useRef(null);
   const previewStageRef = useRef(null);
@@ -1210,6 +1211,7 @@ export function EditableChatImage({
     setPreviewZoom(1);
     setPreviewFitZoom(1);
     setPreviewOffset({ x: 0, y: 0 });
+    setPreviewDimensions({ width: 0, height: 0 });
     setIsPreviewOpen(true);
   }
 
@@ -1236,6 +1238,7 @@ export function EditableChatImage({
     const updateFitZoom = () => {
       const naturalWidth = image.naturalWidth || image.width || 0;
       const naturalHeight = image.naturalHeight || image.height || 0;
+      setPreviewDimensions({ width: naturalWidth, height: naturalHeight });
       const stageRect = stage.getBoundingClientRect();
       const stageWidth = Math.max(1, stageRect.width - 40);
       const stageHeight = Math.max(1, stageRect.height - 40);
@@ -1482,6 +1485,9 @@ export function EditableChatImage({
             </div>
             <div className="chat-image-preview-meta">
               <span>{Math.round(previewZoom * 100)}%</span>
+              {previewDimensions.width > 0 && previewDimensions.height > 0 && (
+                <span>{previewDimensions.width} × {previewDimensions.height}</span>
+              )}
               <span className="chat-image-preview-hint">滚轮缩放，按住拖拽查看细节</span>
             </div>
             <div

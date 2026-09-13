@@ -6,13 +6,15 @@ import { buildOpenAICacheFields, firstUsageObject } from "./openai-chat-completi
 import { isLongToolArgumentName } from "../core/longToolArgs";
 import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "../core/reasoning";
 import { buildLlmAuthHeaders } from "../core/modelProfiles";
+import { OPENAI_SUBSCRIPTION_API_URL, requestOpenAiSubscriptionAccess } from "./openai-subscription-auth";
 
 export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onNativeWebSearch, onRequestBodySize }, mcpTools = [], options = {}) {
   const tools = [
     ...(config.nativeWebSearch === true ? [{ type: "web_search" }] : []),
     ...getTools(API_TYPES.OPENAI_RESPONSES, mcpTools, options)
   ];
-  const url = resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
+  const subscription = config.apiType === API_TYPES.OPENAI_SUBSCRIPTION;
+  const url = subscription ? OPENAI_SUBSCRIPTION_API_URL : resolveLlmRequestUrl(API_TYPES.OPENAI_RESPONSES, config.baseUrl);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 
   try {
@@ -26,27 +28,29 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       ...(tools.length > 0 ? { tools } : {}),
       stream: true,
       ...buildResponsesMaxOutputTokens(options),
-      ...(instructions ? { instructions } : {}),
+      ...(instructions ? { instructions } : (subscription ? { instructions: "You are a helpful assistant." } : {})),
       ...buildOpenAIResponsesReasoningFields(config),
       ...buildOpenAIResponsesIncludeFields(config, options),
-      ...buildOpenAICacheFields(options)
+      ...buildOpenAICacheFields(options),
+      ...(subscription ? { store: false } : {})
     };
     const requestBodyText = JSON.stringify(requestBody);
     onRequestBodySize?.({
       bytes: measureUtf8Bytes(requestBodyText),
-      apiType: API_TYPES.OPENAI_RESPONSES,
+      apiType: subscription ? API_TYPES.OPENAI_SUBSCRIPTION : API_TYPES.OPENAI_RESPONSES,
       model: config.model || ""
     });
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildLlmAuthHeaders(config)
-      },
-      body: requestBodyText,
-      signal: timeoutState.signal
-    });
+    const request = async (forceRefresh = false) => fetch(url, {
+        method: "POST",
+        headers: subscription
+          ? await buildSubscriptionHeaders(config, forceRefresh)
+          : { "Content-Type": "application/json", ...buildLlmAuthHeaders(config) },
+        body: requestBodyText,
+        signal: timeoutState.signal
+      });
+    let res = await request();
+    if (subscription && res.status === 401) res = await request(true);
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
@@ -207,6 +211,20 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
   } finally {
     timeoutState.cleanup();
   }
+}
+
+async function buildSubscriptionHeaders(config, forceRefresh) {
+  const credential = await requestOpenAiSubscriptionAccess(config.credentialId || config.activeLlmModelId, { force: forceRefresh });
+  return {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${credential.accessToken}`,
+    ...(credential.accountId || config.accountId ? { "ChatGPT-Account-Id": credential.accountId || config.accountId } : {}),
+    originator: "codex_cli_rs",
+    "OpenAI-Beta": "responses_websockets=2026-02-06",
+    "x-openai-internal-codex-residency": "us",
+    "x-client-request-id": crypto.randomUUID()
+  };
 }
 
 function createResponsesEventError(event) {
