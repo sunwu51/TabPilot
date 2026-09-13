@@ -134,6 +134,7 @@ import {
 import {
   SLASH_COMMANDS,
   shouldOpenSlashCommand,
+  shouldBlockSlashCommand,
   filterSlashCommands,
   buildMemoryCommandPrompt,
   buildRecallMemoryCommandPrompt
@@ -692,7 +693,7 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
-    const slashOpen = shouldOpenSlashCommand(input);
+    const slashOpen = !loading && !pendingApproval && shouldOpenSlashCommand(input);
     setSlashCommandOpen(slashOpen);
     if (slashOpen) setSlashCommandIndex(0);
 
@@ -700,7 +701,7 @@ export default function AgentPanel() {
     setTabMentionOpen(!!mentionState);
     setTabMentionQuery(mentionState?.query || "");
     if (mentionState) setTabMentionIndex(0);
-  }, [input]);
+  }, [input, loading, pendingApproval]);
 
   useEffect(() => {
     if (!tabMentionOpen) return;
@@ -4138,6 +4139,10 @@ export default function AgentPanel() {
     if (handleInputCompletionKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      if (shouldBlockSlashCommand(input, loading || pendingApproval)) {
+        toast(t("slashCommandsUnavailableWhileGenerating"), { duration: 2200 });
+        return;
+      }
       sendMessage();
     }
   }

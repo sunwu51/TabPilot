@@ -36,6 +36,10 @@ export function shouldOpenSlashCommand(input) {
   return /^\/[a-zA-Z0-9_-]*$/.test(String(input || "").trimStart());
 }
 
+export function shouldBlockSlashCommand(input, unavailable) {
+  return Boolean(unavailable) && shouldOpenSlashCommand(input);
+}
+
 export function filterSlashCommands(commands, skills, selectedSkills, input, translate = key => key) {
   const query = String(input || "").trimStart().replace(/^\//, "").toLowerCase();
   const selectedSkillPaths = new Set((selectedSkills || []).map(skill => skill.path));

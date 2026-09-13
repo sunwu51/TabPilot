@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { SLASH_COMMANDS, buildMemoryCommandPrompt, buildRecallMemoryCommandPrompt, filterSlashCommands } from "./slashCommand";
+import {
+  SLASH_COMMANDS,
+  buildMemoryCommandPrompt,
+  buildRecallMemoryCommandPrompt,
+  filterSlashCommands,
+  shouldBlockSlashCommand
+} from "./slashCommand";
 
 describe("memory slash command prompts", () => {
   it("exposes manual context compaction", () => {
@@ -15,6 +21,12 @@ describe("memory slash command prompts", () => {
     expect(commands).toEqual([
       expect.objectContaining({ name: "/compact", title: "Compact context", description: "Summarize older history" })
     ]);
+  });
+
+  it("blocks slash-like input while commands are unavailable", () => {
+    expect(shouldBlockSlashCommand("/comp", true)).toBe(true);
+    expect(shouldBlockSlashCommand("normal message", true)).toBe(false);
+    expect(shouldBlockSlashCommand("/comp", false)).toBe(false);
   });
 
   it("routes /mem to the built-in upsert tool", () => {
