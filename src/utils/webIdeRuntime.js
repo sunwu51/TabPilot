@@ -90,9 +90,16 @@ export async function buildWebIdeModules({ files, entry, dependencies = {}, tran
 export async function transformWithEsmSh({ path, code, lang }) {
   const response = await fetch("https://esm.sh/transform", {
     method: "POST",
+    redirect: "error",
+    credentials: "omit",
+    referrerPolicy: "no-referrer",
     body: JSON.stringify({ filename: path, code, lang, target: "es2022", minify: false })
   });
   if (!response.ok) throw new Error(`esm.sh transform failed (${response.status}) for ${path}`);
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(`esm.sh transform returned unexpected content-type for ${path}: ${contentType}`);
+  }
   const result = await response.json();
   if (result?.error) throw new Error(`esm.sh transform failed for ${path}: ${result.error.message || result.error}`);
   if (typeof result?.code !== "string") throw new Error(`esm.sh transform returned no code for ${path}`);
