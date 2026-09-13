@@ -41,14 +41,30 @@ describe("llm tool definitions", () => {
     expect(names).toContain("run_macro");
   });
 
-  it("groups playground, VFS, and stash tools under storage", () => {
+  it("groups storage and memory tools", () => {
     expect(getBuiltinToolGroup("html_playground")).toBe("storage");
     expect(getBuiltinToolGroup("vfs_read_file")).toBe("storage");
     expect(getBuiltinToolGroup("vfs_write_file")).toBe("storage");
     expect(getBuiltinToolGroup("vfs_edit_file")).toBe("storage");
     expect(getBuiltinToolGroup("stash_in_browser")).toBe("storage");
     expect(getBuiltinToolGroup("webide_project")).toBe("storage");
+    expect(getBuiltinToolGroup("memory_search")).toBe("memory");
+    expect(getBuiltinToolGroup("memory_save")).toBe("memory");
     expect(getBuiltinToolGroup("list_macros")).toBe("automation");
+  });
+
+  it("exposes built-in long-term memory tools by default", () => {
+    const names = namesFor(API_TYPES.OPENAI_RESPONSES);
+
+    expect(names).toEqual(expect.arrayContaining([
+      "memory_search",
+      "memory_save",
+      "memory_update",
+      "memory_delete"
+    ]));
+    const search = getTools(API_TYPES.OPENAI_RESPONSES).find(tool => tool.name === "memory_search");
+    expect(search.parameters.required).toEqual(["query"]);
+    expect(search.description).toContain("score at least 6");
   });
 
   it("exposes React and Vanilla WebIDE project creation", () => {

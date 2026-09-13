@@ -2622,17 +2622,15 @@ export default function AgentPanel() {
       `- If a built-in page scripting tool such as tab_extract, tab_snapshot, dom_query, dom_click, dom_hover, dom_focus, dom_set_value, dom_select_option, dom_check, dom_wait, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tools.tab_focus(...) in exec to switch to and reactivate the tab, then retry the original tool.\n` +
       `Long-term memory rules:
 ` +
-      `- Some connected MCP servers may provide long-term memory capabilities, such as searching/recalling memories, returning a user profile summary, saving memories, or forgetting outdated memories. Use the MCP server summaries and discovery functions in exec to identify them.
-` +
-      `- Follow each memory tool's own description and exclusivity rules. If a tool says it is the only memory or recall tool to use, obey that tool description.
+      `- Built-in long-term memory tools are available: memory_search recalls relevant information saved from earlier conversations; memory_save creates or upserts durable memories; memory_update edits a recalled memory by exact id; memory_delete removes an outdated or unwanted memory by exact id.
 ` +
       `- Before answering a non-trivial request, briefly decide whether long-term memory could help.
 ` +
-      `- Use a memory recall/search tool when the user asks about prior context, previous decisions, preferences, recurring projects or topics, configurations, workflows, people/entities, or phrases such as "last time", "again", "as before", "my usual way", "之前", "上次", "还是按以前".
+      `- Use memory_search when the user asks about prior context, previous decisions, preferences, recurring projects or topics, configurations, workflows, people/entities, or phrases such as "do you remember", "last time", "again", "as before", "my usual way", "你还记得", "之前", "上次", "还是按以前".
 ` +
-      `- For complex multi-step tasks, ambiguous requests, research, comparisons, report writing, drafting/copywriting, planning, recurring topics, or requests involving user preferences, you should normally perform one focused memory recall at the beginning unless it is clearly irrelevant.
+      `- You may also search memory for a complex or recurring task when prior decisions or preferences are likely to materially affect the result, but do not search merely because a request is long or non-trivial.
 ` +
-      `- The recall query should be concise and include the user's request plus key entities such as project/topic names, websites, products, tools, people, preferences, constraints, or decisions.
+      `- Write a concise search query with distinctive entities and likely retrieval phrases, such as project/topic names, websites, products, tools, people, error codes, symptoms, preferences, constraints, or decisions. Avoid vague queries such as only "last time".
 ` +
       `- If the first recall result is clearly insufficient but memory is still likely relevant, one follow-up recall is allowed.
 ` +
@@ -2646,7 +2644,7 @@ export default function AgentPanel() {
 ` +
       `- If no relevant memory is found, continue normally without claiming remembered context.
 ` +
-      `- Use a memory save/write tool when the user states a durable preference, correction, stable personal/project/topic fact, recurring workflow, tool/configuration choice, writing style preference, research preference, or decision that is likely to help future conversations.
+      `- Use memory_save selectively when the user states a durable preference, correction, stable personal/project/topic fact, recurring workflow, tool/configuration choice, writing style preference, research preference, or decision that is likely to help future conversations.
 ` +
       `- If the user rejects your current approach and provides a new guideline, preference, constraint, or correction, treat it as high-value memory and save a concise note so future responses follow it.
 ` +
@@ -2654,9 +2652,11 @@ export default function AgentPanel() {
 ` +
       `- Save concise, self-contained summaries. Prefer stable conclusions over raw transcripts.
 ` +
+      `- memory_save upserts by scope, type, and subject. Reuse a stable subject for the same fact so repeated saves update rather than duplicate it. Entities are specific named objects; keywords are alternative phrases, symptoms, actions, and use cases that may retrieve the memory later.
+` +
       `- Do not save secrets, API keys, passwords, private raw content, temporary browser/page state, one-off task details, or speculative guesses.
 ` +
-      `- If the user corrects an old preference/fact or asks to remove something, use an appropriate memory forget/delete capability for outdated or unwanted memory.
+      `- If the user corrects a recalled preference or fact, use memory_update with its exact id. If the user asks to forget something, search first when necessary and use memory_delete with the exact id.
 ` +
       `- Be proactive but not noisy. Recall is encouraged for meaningful contextual work, but do not call memory tools on every casual message.
 ` +

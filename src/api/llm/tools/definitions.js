@@ -64,6 +64,10 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "webide_project",
   "image_gen",
   "image_edit",
+  "memory_search",
+  "memory_save",
+  "memory_update",
+  "memory_delete",
   "stash_in_browser",
   "unstash_in_browser",
   "list_stashes_in_browser",
@@ -80,6 +84,7 @@ export const BUILTIN_TOOL_GROUPS = {
   downloads: "Download management",
   automation: "Browser macros and recorded automation",
   storage: "Browser VFS files, stashes, and temporary HTML playgrounds",
+  memory: "Local long-term memories recalled across conversations",
   schedule: "Scheduled tasks and reminders",
   images: "Image generation and editing",
   postdog: "HTTP request management"
@@ -852,8 +857,86 @@ export const TOOLS = [
     }
   },
   {
+    name: "memory_search",
+    description: "Search built-in long-term memory when the user refers to earlier conversations, prior decisions, established preferences, recurring workflows, or asks whether you remember something. Search only when historical context could materially help. The search is local and lexical; write a concise query containing distinctive project names, products, people, error codes, decisions, symptoms, and likely alternative wording. Results must score at least 6. A zero-result response means no sufficiently relevant memory was found; continue normally and do not claim to remember.",
+    schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Focused retrieval query. Include distinctive entities and phrases from the user's request rather than vague text such as 'last time'." },
+        limit: { type: "number", description: "Maximum results from 1 to 10. Defaults to 5." },
+        type: { type: "string", enum: ["preference", "correction", "decision", "workflow", "entity", "reference"], description: "Optional memory type filter." },
+        scope: {
+          type: "object",
+          description: "Optional exact scope filter. Omit unless the relevant scope is known.",
+          properties: {
+            kind: { type: "string", description: "Scope kind, for example global, topic, project, domain, or person." },
+            value: { type: "string", description: "Scope value. Leave empty only for global scope." }
+          },
+          required: ["kind"]
+        },
+        minScore: { type: "number", description: "Optional stricter score threshold. Values below the built-in minimum of 6 are ignored." }
+      },
+      required: ["query"]
+    }
+  },
+  {
+    name: "memory_save",
+    description: "Selectively save a durable long-term memory, or update an existing memory with the same scope, type, and subject. Use for explicit user preferences, corrections, stable decisions, recurring workflows, durable entity facts, and useful references. Do not save raw transcripts, secrets, temporary browser state, one-off task details, speculation, or facts readily derived from current code/page content. Choose a stable subject so repeated saves upsert instead of creating duplicates. Entities are specific named objects; keywords are alternative phrases, symptoms, actions, and use cases the user may later search for.",
+    schema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["preference", "correction", "decision", "workflow", "entity", "reference"], description: "Kind of durable memory." },
+        subject: { type: "string", description: "Stable, concise identity of this memory. Reuse the same subject to update it later." },
+        summary: { type: "string", description: "Short self-contained retrieval summary, preferably under 150 Chinese characters or comparable length." },
+        content: { type: "string", description: "Complete durable conclusion and essential rationale, not a raw transcript." },
+        keywords: { type: "array", items: { type: "string" }, description: "5-12 likely future search phrases, including alternate wording, symptoms, actions, and use cases. Do not merely repeat subject or entities." },
+        entities: { type: "array", items: { type: "string" }, description: "Specific named projects, products, people, organizations, websites, repositories, models, providers, versions, or error identifiers." },
+        scope: {
+          type: "object",
+          properties: {
+            kind: { type: "string", description: "Scope kind, for example global, topic, project, domain, or person." },
+            value: { type: "string", description: "Scope value. Leave empty only for global scope." }
+          },
+          required: ["kind"]
+        },
+        importance: { type: "number", description: "Importance from 0 to 1. Defaults to 0.5; reserve high values for durable behavior-changing information." }
+      },
+      required: ["type", "subject", "summary", "content", "keywords", "entities", "scope"]
+    }
+  },
+  {
+    name: "memory_update",
+    description: "Update a memory by exact id after recalling it. Omitted fields keep their current values. Prefer memory_save with the same stable subject for normal upserts; use this tool when correcting or restructuring a specific recalled memory.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Exact memory id returned by memory_search." },
+        type: { type: "string", enum: ["preference", "correction", "decision", "workflow", "entity", "reference"] },
+        subject: { type: "string" },
+        summary: { type: "string" },
+        content: { type: "string" },
+        keywords: { type: "array", items: { type: "string" } },
+        entities: { type: "array", items: { type: "string" } },
+        scope: { type: "object", properties: { kind: { type: "string" }, value: { type: "string" } }, required: ["kind"] },
+        importance: { type: "number" }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "memory_delete",
+    description: "Delete one outdated or unwanted long-term memory by exact id. Search first when the id is not already known. Never guess an id or delete merely because a current instruction temporarily differs from memory.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Exact memory id returned by memory_search." }
+      },
+      required: ["id"]
+    }
+  },
+  {
     name: "stash_in_browser",
-    description: "Stash information in the browser virtual filesystem with an optional expiration time. A stash is like a personal memory vault — use it to remember facts, user preferences, context, or notes that should persist across conversations. Stashes are stored per-extension and shared across all tabs. Not related to browser history or browsing records.",
+    description: "Stash arbitrary user-requested content or notes in the browser virtual filesystem with an optional expiration time. Stashes are stored per-extension and shared across all tabs. Use the dedicated memory tools instead for Agent long-term preferences, corrections, decisions, and cross-conversation recall. Not related to browser history or browsing records.",
     schema: {
       type: "object",
       properties: {
@@ -1254,6 +1337,7 @@ export function getBuiltinToolGroup(toolName) {
   if (name.startsWith("download")) return "downloads";
   if (name.startsWith("postdog_")) return "postdog";
   if (IMAGE_TOOL_NAMES.has(name)) return "images";
+  if (name.startsWith("memory_")) return "memory";
   if (name === "schedule_tool" || name === "list_scheduled" || name === "cancel_scheduled" || name === "clear_completed_scheduled" || name === "get_current_time" || name === "sleep") return "schedule";
   if (name === "html_playground" || name === "webide_project" || name.startsWith("vfs_") || name.includes("stash")) return "storage";
   if (name.includes("macro")) return "automation";
