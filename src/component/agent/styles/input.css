@@ -142,9 +142,15 @@
 }
 
 .chat-input-model-caret {
-  flex: 0 0 auto;
+  display: none;
   font-size: 10px;
   line-height: 1;
+}
+
+.chat-input-model-button:hover .chat-input-model-caret,
+.chat-input-model-button:focus .chat-input-model-caret,
+.chat-input-model-button-open .chat-input-model-caret {
+  display: inline;
 }
 
 .chat-input-model-menu {

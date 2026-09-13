@@ -25,6 +25,7 @@ export default defineConfig({
         postdog: "postdog.html",
         imageViewer: "image-viewer.html",
         hooks: "hooks.html",
+        oauthComplete: "oauth-complete.html",
       },
       output: {
         entryFileNames: "[name].js",

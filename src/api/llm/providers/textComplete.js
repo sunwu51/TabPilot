@@ -22,6 +22,9 @@ export async function textComplete(config, messages, options = {}) {
   if (apiType === API_TYPES.ANTHROPIC) {
     return _anthropicComplete(config, messages, options);
   }
+  if (apiType === API_TYPES.OPENAI_SUBSCRIPTION) {
+    return streamTextComplete(config, messages, {}, options).promise;
+  }
   if (apiType === API_TYPES.OPENAI_RESPONSES) {
     return _openaiResponsesComplete(config, messages, options);
   }

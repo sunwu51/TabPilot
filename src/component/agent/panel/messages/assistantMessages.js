@@ -7,7 +7,7 @@ export function buildFinalAssistantMessage(apiType, model, textContent, doneMsg 
 
   const message = {
     role: "assistant",
-    content: normalizeApiType(apiType) === API_TYPES.OPENAI_RESPONSES
+    content: [API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(normalizeApiType(apiType))
       ? (doneMsg.content || textContent || "")
       : (textContent || doneMsg.content || "")
   };

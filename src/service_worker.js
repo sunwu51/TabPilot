@@ -56,7 +56,15 @@ import {
     MCP_OAUTH_ALARM_PREFIX,
     refreshMcpServerToken
 } from "./api/mcp/oauth";
-import { buildLlmAuthHeaders } from "./api/llm/core/modelProfiles";
+import {
+    ensureOpenAiSubscriptionAccess,
+    handleOpenAiSubscriptionNavigation,
+    listOpenAiSubscriptionModels,
+    OPENAI_SUBSCRIPTION_ALARM_PREFIX,
+    refreshOpenAiSubscriptionCredential,
+    removeOpenAiSubscriptionCredential,
+    startOpenAiSubscriptionOAuth
+} from "./api/llm/providers/openai-subscription-auth";
 import {
     chromeStorageVfs,
     VFS_CLEANUP_ALARM_NAME,
@@ -900,6 +908,27 @@ async function handlePostdogManagerMessage(action, payload = {}) {
  * communicates with the auto-injected content script (no host_permissions needed).
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === "openai_subscription_oauth") {
+        let operation;
+        if (msg.action === "authorize") {
+            operation = startOpenAiSubscriptionOAuth({ profileId: msg.profileId, model: msg.model });
+        } else if (msg.action === "access") {
+            operation = ensureOpenAiSubscriptionAccess(msg.profileId, { force: msg.force === true });
+        } else if (msg.action === "models") {
+            operation = listOpenAiSubscriptionModels(msg.credentialId, { refresh: msg.refresh === true });
+        } else if (msg.action === "refresh") {
+            operation = refreshOpenAiSubscriptionCredential(msg.profileId);
+        } else if (msg.action === "remove") {
+            operation = removeOpenAiSubscriptionCredential(msg.profileId);
+        } else {
+            sendResponse({ success: false, error: "Unknown OpenAI Subscription OAuth action" });
+            return false;
+        }
+        operation
+            .then(result => sendResponse({ success: true, result }))
+            .catch(error => sendResponse({ success: false, error: error?.message || String(error) }));
+        return true;
+    }
     if (msg?.type === "mcp_oauth" && (msg.action === "authorize" || msg.action === "refresh")) {
         const operation = msg.action === "refresh"
             ? refreshMcpServerToken(msg.serverUrl)
@@ -1418,6 +1447,15 @@ if (chrome.alarms) {
     });
 
     chrome.alarms.onAlarm.addListener(async (alarm) => {
+        if (alarm.name.startsWith(OPENAI_SUBSCRIPTION_ALARM_PREFIX)) {
+            const profileId = alarm.name.slice(OPENAI_SUBSCRIPTION_ALARM_PREFIX.length);
+            try {
+                await refreshOpenAiSubscriptionCredential(profileId);
+            } catch (error) {
+                console.warn(`[openai-subscription] token refresh failed for ${profileId}:`, error?.message || error);
+            }
+            return;
+        }
         if (alarm.name === VFS_CLEANUP_ALARM_NAME) {
             try {
                 await chromeStorageVfs.cleanupExpiredFiles();
@@ -1451,3 +1489,9 @@ if (chrome.alarms) {
         await ensureWsBridgeHealthy();
     });
 }
+
+chrome.webNavigation?.onBeforeNavigate?.addListener((details) => {
+    void handleOpenAiSubscriptionNavigation(details);
+}, {
+    url: [{ schemes: ["http"], hostEquals: "localhost", ports: [1455], pathEquals: "/auth/callback" }]
+});

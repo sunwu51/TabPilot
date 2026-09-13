@@ -1,6 +1,7 @@
 export const API_TYPES = {
   OPENAI_CHAT_COMPLETIONS: "openai-chat-completions",
   OPENAI_RESPONSES: "openai-responses",
+  OPENAI_SUBSCRIPTION: "openai-subscription",
   ANTHROPIC: "anthropic"
 };
 
@@ -18,6 +19,7 @@ export function normalizeApiType(apiType) {
   if (raw === "openai") return API_TYPES.OPENAI_CHAT_COMPLETIONS;
   if (raw === API_TYPES.OPENAI_CHAT_COMPLETIONS) return API_TYPES.OPENAI_CHAT_COMPLETIONS;
   if (raw === API_TYPES.OPENAI_RESPONSES) return API_TYPES.OPENAI_RESPONSES;
+  if (raw === API_TYPES.OPENAI_SUBSCRIPTION) return API_TYPES.OPENAI_SUBSCRIPTION;
   if (raw === API_TYPES.ANTHROPIC) return API_TYPES.ANTHROPIC;
   return API_TYPES.OPENAI_CHAT_COMPLETIONS;
 }

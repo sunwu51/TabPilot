@@ -88,15 +88,6 @@ describe("settings backup", () => {
           activeLlmModelId: "llm_legacy",
           llmModels: [
             expect.objectContaining({
-              id: "llm_opencode_zen_big_pickle",
-              name: "OpenCode Zen Big Pickle",
-              apiType: "openai-chat-completions",
-              baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-              apiKey: "",
-              model: "big-pickle",
-              requiresApiKey: false
-            }),
-            expect.objectContaining({
               id: "llm_legacy",
               name: "old-model",
               apiType: "anthropic",
@@ -176,16 +167,6 @@ describe("settings backup", () => {
         activeLlmModelId: "llm_new",
         llmModels: [
           {
-            id: "llm_opencode_zen_big_pickle",
-            name: "OpenCode Zen Big Pickle",
-            apiType: "openai-chat-completions",
-            baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-            apiKey: "",
-            model: "big-pickle",
-            nativeWebSearch: false,
-            requiresApiKey: false
-          },
-          {
             id: "llm_new",
             name: "new-model",
             apiType: "openai-responses",
@@ -202,7 +183,7 @@ describe("settings backup", () => {
         reasoningEffort: "default",
         omitThinkingFromRequests: false,
         keywordSummaryUseCustomModel: false,
-        keywordSummaryModelId: "llm_opencode_zen_big_pickle",
+        keywordSummaryModelId: "llm_new",
         activeImageModelId: "",
         imageModels: []
       },

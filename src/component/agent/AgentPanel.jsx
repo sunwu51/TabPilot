@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
+  MODEL_CONTEXT_LIMIT_OPTIONS,
   IMAGE_API_PROTOCOLS,
   getDefaultApiType,
   isLlmConfigUsable,
@@ -134,6 +135,7 @@ import {
 import {
   SLASH_COMMANDS,
   shouldOpenSlashCommand,
+  shouldBlockSlashCommand,
   filterSlashCommands,
   buildMemoryCommandPrompt,
   buildRecallMemoryCommandPrompt
@@ -692,7 +694,7 @@ export default function AgentPanel() {
   }, []);
 
   useEffect(() => {
-    const slashOpen = shouldOpenSlashCommand(input);
+    const slashOpen = !loading && !pendingApproval && shouldOpenSlashCommand(input);
     setSlashCommandOpen(slashOpen);
     if (slashOpen) setSlashCommandIndex(0);
 
@@ -700,7 +702,7 @@ export default function AgentPanel() {
     setTabMentionOpen(!!mentionState);
     setTabMentionQuery(mentionState?.query || "");
     if (mentionState) setTabMentionIndex(0);
-  }, [input]);
+  }, [input, loading, pendingApproval]);
 
   useEffect(() => {
     if (!tabMentionOpen) return;
@@ -1415,6 +1417,17 @@ export default function AgentPanel() {
     setPendingAttachments([]);
     setSelectedMentionTabs([]);
     setSelectedMentionSkills([]);
+    closeInputCompletions();
+  }
+
+  function consumeComposerCommandText(targetSessionId) {
+    const draft = { ...getCurrentComposerDraft(), text: "" };
+    setInput("");
+    if (targetSessionId && (draft.attachments.length > 0 || draft.selectedTabs.length > 0 || draft.selectedSkills.length > 0)) {
+      sessionDraftsRef.current.set(targetSessionId, draft);
+    } else if (targetSessionId) {
+      sessionDraftsRef.current.delete(targetSessionId);
+    }
     closeInputCompletions();
   }
 
@@ -2622,17 +2635,15 @@ export default function AgentPanel() {
       `- If a built-in page scripting tool such as tab_extract, tab_snapshot, dom_query, dom_click, dom_hover, dom_focus, dom_set_value, dom_select_option, dom_check, dom_wait, dom_style, dom_get_html, dom_highlight, tab_scroll, or eval_js times out, the tab may have been discarded or frozen by Chrome and cannot receive injected scripts. In that case, use tools.tab_focus(...) in exec to switch to and reactivate the tab, then retry the original tool.\n` +
       `Long-term memory rules:
 ` +
-      `- Some connected MCP servers may provide long-term memory capabilities, such as searching/recalling memories, returning a user profile summary, saving memories, or forgetting outdated memories. Use the MCP server summaries and discovery functions in exec to identify them.
-` +
-      `- Follow each memory tool's own description and exclusivity rules. If a tool says it is the only memory or recall tool to use, obey that tool description.
+      `- Built-in long-term memory tools are available: memory_search recalls relevant information saved from earlier conversations; memory_save creates or upserts durable memories; memory_update edits a recalled memory by exact id; memory_delete removes an outdated or unwanted memory by exact id.
 ` +
       `- Before answering a non-trivial request, briefly decide whether long-term memory could help.
 ` +
-      `- Use a memory recall/search tool when the user asks about prior context, previous decisions, preferences, recurring projects or topics, configurations, workflows, people/entities, or phrases such as "last time", "again", "as before", "my usual way", "之前", "上次", "还是按以前".
+      `- Use memory_search when the user asks about prior context, previous decisions, preferences, recurring projects or topics, configurations, workflows, people/entities, or phrases such as "do you remember", "last time", "again", "as before", "my usual way", "你还记得", "之前", "上次", "还是按以前".
 ` +
-      `- For complex multi-step tasks, ambiguous requests, research, comparisons, report writing, drafting/copywriting, planning, recurring topics, or requests involving user preferences, you should normally perform one focused memory recall at the beginning unless it is clearly irrelevant.
+      `- You may also search memory for a complex or recurring task when prior decisions or preferences are likely to materially affect the result, but do not search merely because a request is long or non-trivial.
 ` +
-      `- The recall query should be concise and include the user's request plus key entities such as project/topic names, websites, products, tools, people, preferences, constraints, or decisions.
+      `- Write a concise search query with distinctive entities and likely retrieval phrases, such as project/topic names, websites, products, tools, people, error codes, symptoms, preferences, constraints, or decisions. Avoid vague queries such as only "last time".
 ` +
       `- If the first recall result is clearly insufficient but memory is still likely relevant, one follow-up recall is allowed.
 ` +
@@ -2646,7 +2657,7 @@ export default function AgentPanel() {
 ` +
       `- If no relevant memory is found, continue normally without claiming remembered context.
 ` +
-      `- Use a memory save/write tool when the user states a durable preference, correction, stable personal/project/topic fact, recurring workflow, tool/configuration choice, writing style preference, research preference, or decision that is likely to help future conversations.
+      `- Use memory_save selectively when the user states a durable preference, correction, stable personal/project/topic fact, recurring workflow, tool/configuration choice, writing style preference, research preference, or decision that is likely to help future conversations.
 ` +
       `- If the user rejects your current approach and provides a new guideline, preference, constraint, or correction, treat it as high-value memory and save a concise note so future responses follow it.
 ` +
@@ -2654,9 +2665,11 @@ export default function AgentPanel() {
 ` +
       `- Save concise, self-contained summaries. Prefer stable conclusions over raw transcripts.
 ` +
+      `- memory_save upserts by scope, type, and subject. Reuse a stable subject for the same fact so repeated saves update rather than duplicate it. Entities are specific named objects; keywords are alternative phrases, symptoms, actions, and use cases that may retrieve the memory later.
+` +
       `- Do not save secrets, API keys, passwords, private raw content, temporary browser/page state, one-off task details, or speculative guesses.
 ` +
-      `- If the user corrects an old preference/fact or asks to remove something, use an appropriate memory forget/delete capability for outdated or unwanted memory.
+      `- If the user corrects a recalled preference or fact, use memory_update with its exact id. If the user asks to forget something, search first when necessary and use memory_delete with the exact id.
 ` +
       `- Be proactive but not noisy. Recall is encouraged for meaningful contextual work, but do not call memory tools on every casual message.
 ` +
@@ -2805,6 +2818,18 @@ export default function AgentPanel() {
     const nextConfig = normalizeStoredModelConfig({ ...llmConfig, reasoningEffort: normalizeReasoningEffort(value) });
     await chrome.storage.local.set({ llmConfig: nextConfig });
     setLlmConfigInfo(current => ({ ...current, reasoningEffort: nextConfig.reasoningEffort }));
+    setModelMenuOpen(null);
+  }
+
+  async function switchModelContextLimit(value) {
+    await ensureSettingsMigrated();
+    const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const nextConfig = normalizeStoredModelConfig({
+      ...llmConfig,
+      modelContextLimitTokens: normalizeModelContextLimitTokens(value)
+    });
+    await chrome.storage.local.set({ llmConfig: nextConfig });
+    setLlmConfigInfo(current => ({ ...current, modelContextLimitTokens: nextConfig.modelContextLimitTokens }));
     setModelMenuOpen(null);
   }
 
@@ -3159,10 +3184,41 @@ export default function AgentPanel() {
     }
     if (command.id === "recall_mem") {
       await sendMessage({ text: buildRecallMemoryCommandPrompt(), attachments: [], selectedTabs: [], selectedSkills: [] });
+      return;
+    }
+    if (command.id === "compact") {
+      const targetSessionId = activeSessionIdRef.current;
+      if (!targetSessionId) return;
+      consumeComposerCommandText(targetSessionId);
+      const config = await getLLMConfig();
+      if (!isLlmConfigUsable(config)) {
+        toast.error("请先在设置中配置 LLM API");
+        return;
+      }
+      const runtime = getSessionRuntime(targetSessionId);
+      const previousSummary = getSessionContextSummary(targetSessionId);
+      const sessionMessages = getSessionMessages(targetSessionId);
+      const cutIndex = findContextSummaryCutIndex(sessionMessages, { limitTokens: config.modelContextLimitTokens });
+      if (cutIndex < 0 || getMessagesToSummarize(sessionMessages, previousSummary, cutIndex).length === 0) {
+        toast("没有新的早期上下文可压缩", { duration: 1800 });
+        return;
+      }
+      setSessionRuntime(targetSessionId, { loading: true, abort: null });
+      try {
+        await maybeCompactContextBeforeRequest(
+          config,
+          targetSessionId,
+          sessionMessages,
+          runtime.runId,
+          { force: true }
+        );
+      } finally {
+        setSessionRuntime(targetSessionId, { loading: false, abort: null, contextCompaction: null });
+      }
     }
   }
 
-  async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId) {
+  async function maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId, options = {}) {
     const hooks = await loadAgentHooks();
     const existingSummary = getSessionContextSummary(targetSessionId);
     const latestUsage = getSessionRuntime(targetSessionId).contextUsage ||
@@ -3170,12 +3226,14 @@ export default function AgentPanel() {
     const cutIndex = findContextSummaryCutIndex(conversationMessages, {
       limitTokens: config.modelContextLimitTokens
     });
-    const shouldCompact = shouldAutoCompactContext({
-      contextUsage: latestUsage,
-      limitTokens: config.modelContextLimitTokens,
-      messages: conversationMessages,
-      contextSummary: existingSummary
-    });
+    const shouldCompact = options.force === true
+      ? cutIndex >= 0 && (!existingSummary || existingSummary.coveredMessageIndex < cutIndex)
+      : shouldAutoCompactContext({
+        contextUsage: latestUsage,
+        limitTokens: config.modelContextLimitTokens,
+        messages: conversationMessages,
+        contextSummary: existingSummary
+      });
     console.debug("[context-summary]", "auto compact check", {
       shouldCompact,
       messageCount: conversationMessages.length,
@@ -3200,7 +3258,7 @@ export default function AgentPanel() {
           displayMessageIndex
         }
       });
-      toast("上下文较长，正在压缩早期历史...", { duration: 1800 });
+      toast(options.force === true ? "正在主动压缩早期上下文..." : "上下文较长，正在压缩早期历史...", { duration: 1800 });
       const prompt = buildContextSummaryPrompt({
         oldSummary: existingSummary?.summary || "",
         messages: messagesToSummarize
@@ -3300,13 +3358,16 @@ export default function AgentPanel() {
 
     setSessionMessages(targetSessionId, conversationMessages);
     void autoSave(targetSessionId, conversationMessages);
-    setStreamingContent("");
-    setStreamingThinking(null);
-    setStreamingToolArgs(null);
-    setStreamingWebSearches([]);
+    sessionStreamingRef.current.set(targetSessionId, "");
     sessionStreamingThinkingRef.current.delete(targetSessionId);
     sessionStreamingToolArgsRef.current.delete(targetSessionId);
     sessionStreamingWebSearchesRef.current.set(targetSessionId, []);
+    if (activeSessionIdRef.current === targetSessionId) {
+      setStreamingContent("");
+      setStreamingThinking(null);
+      setStreamingToolArgs(null);
+      setStreamingWebSearches([]);
+    }
 
     const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
     const agentHooks = await loadAgentHooks();
@@ -3373,21 +3434,26 @@ export default function AgentPanel() {
         streamedContent = "";
         streamedThinking = "";
         streamedToolArgs = null;
-        sessionStreamingRef.current.delete(targetSessionId);
+        sessionStreamingRef.current.set(targetSessionId, "");
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
-        setStreamingContent("");
-        setStreamingThinking(null);
-        setStreamingToolArgs(null);
-        setStreamingWebSearches(null);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingContent("");
+          setStreamingThinking(null);
+          setStreamingToolArgs(null);
+          setStreamingWebSearches(null);
+        }
         toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
       },
 
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
-        setStreamingContent(null);
-        setStreamingThinking(null);
-        setStreamingToolArgs(null);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingContent(null);
+          setStreamingThinking(null);
+          setStreamingToolArgs(null);
+          setStreamingWebSearches(null);
+        }
         sessionStreamingRef.current.delete(targetSessionId);
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
@@ -3727,10 +3793,12 @@ export default function AgentPanel() {
 
       onError: (err) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
-        setStreamingContent(null);
-        setStreamingThinking(null);
-        setStreamingToolArgs(null);
-        setStreamingWebSearches(null);
+        if (activeSessionIdRef.current === targetSessionId) {
+          setStreamingContent(null);
+          setStreamingThinking(null);
+          setStreamingToolArgs(null);
+          setStreamingWebSearches(null);
+        }
         sessionStreamingRef.current.delete(targetSessionId);
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
@@ -4094,6 +4162,10 @@ export default function AgentPanel() {
     if (handleInputCompletionKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      if (shouldBlockSlashCommand(input, loading || pendingApproval)) {
+        toast(t("slashCommandsUnavailableWhileGenerating"), { duration: 2200 });
+        return;
+      }
       sendMessage();
     }
   }
@@ -4165,7 +4237,7 @@ export default function AgentPanel() {
   }
 
   function getFilteredSlashCommands(inputText = input) {
-    return filterSlashCommands(SLASH_COMMANDS, agentSkills.skills, selectedMentionSkills, inputText);
+    return filterSlashCommands(SLASH_COMMANDS, agentSkills.skills, selectedMentionSkills, inputText, t);
   }
 
   function selectMentionTab(tab) {
@@ -5120,7 +5192,7 @@ export default function AgentPanel() {
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"
-                    className="chat-input-model-button"
+                    className={`chat-input-model-button${modelMenuOpen === "llm" ? " chat-input-model-button-open" : ""}`}
                     onClick={() => toggleModelMenu("llm")}
                     title={formatModelName(llmConfigInfo.model)}
                   >
@@ -5148,7 +5220,32 @@ export default function AgentPanel() {
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"
-                    className="chat-input-model-button"
+                    className={`chat-input-model-button${modelMenuOpen === "context" ? " chat-input-model-button-open" : ""}`}
+                    onClick={() => toggleModelMenu("context")}
+                    title={t("modelContextLimit")}
+                  >
+                    {MODEL_CONTEXT_LIMIT_OPTIONS.find(item => item.value === llmConfigInfo.modelContextLimitTokens)?.label || "200K"}
+                    <span className="chat-input-model-caret">⌃</span>
+                  </button>
+                  {modelMenuOpen === "context" && (
+                    <div className="chat-input-model-menu">
+                      {MODEL_CONTEXT_LIMIT_OPTIONS.map(item => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          className={`chat-input-model-menu-item${item.value === llmConfigInfo.modelContextLimitTokens ? " chat-input-model-menu-item-active" : ""}`}
+                          onClick={() => void switchModelContextLimit(item.value)}
+                        >
+                          <span>{t("contextOption", { limit: item.label })}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="chat-input-model-switcher">
+                  <button
+                    type="button"
+                    className={`chat-input-model-button${modelMenuOpen === "reasoning" ? " chat-input-model-button-open" : ""}`}
                     onClick={() => toggleModelMenu("reasoning")}
                     title={t("reasoningEffort")}
                   >
@@ -5173,7 +5270,7 @@ export default function AgentPanel() {
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"
-                    className="chat-input-model-button chat-input-image-model-button"
+                    className={`chat-input-model-button chat-input-image-model-button${modelMenuOpen === "image" ? " chat-input-model-button-open" : ""}`}
                     onClick={() => toggleModelMenu("image")}
                     title={formatModelName(llmConfigInfo.imageModel)}
                   >

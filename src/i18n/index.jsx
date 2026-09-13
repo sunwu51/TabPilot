@@ -31,6 +31,10 @@ const MESSAGES = {
     reasoningShortMedium: "中",
     reasoningShortHigh: "高",
     reasoningShortXhigh: "超高",
+    modelContextLimit: "模型上下文大小（用于上下文告警）",
+    contextOption: "上下文 {limit}",
+    imageGenerationModelAccountHint: "指定图片模型受账号和服务端权限限制，未必生效，建议使用 Auto。",
+    openAiBuiltinImageGenHint: "通过所选模型调用 Responses 内置 image_generation 工具。",
     modelOutput: "模型正在输出... (Enter 加入队列, Shift+Enter 换行)",
     messagePlaceholder: "输入消息... (Enter 发送, Shift+Enter 换行；{shortcut} 搜索)",
     imageAttachment: "图片",
@@ -42,6 +46,18 @@ const MESSAGES = {
     chinese: "中文",
     english: "English",
     languageHint: "默认根据浏览器语言选择；保存后使用手动选择。"
+    ,slashMemoryTitle: "总结到记忆"
+    ,slashMemoryDescription: "提炼当前对话中对未来有用的信息，并保存或更新到内置记忆。"
+    ,slashRecallMemoryTitle: "召回相关记忆"
+    ,slashRecallMemoryDescription: "根据当前对话搜索内置长期记忆，并把相关信息加入当前上下文。"
+    ,slashCompactTitle: "压缩上下文"
+    ,slashCompactDescription: "立即把较早的会话历史压缩成续作摘要，保留最近消息。"
+    ,slashClearTitle: "清空当前会话"
+    ,slashClearDescription: "与工具栏清空按钮相同，会清空消息、计划和关键词。"
+    ,slashCommandsLabel: "内置指令"
+    ,slashCommandsEmpty: "没有匹配的内置指令"
+    ,slashCommandBuiltin: "内置指令"
+    ,slashCommandsUnavailableWhileGenerating: "模型输出期间不能执行内置指令，请等待当前输出完成。"
     ,supabaseStorageSync: "Supabase 存储与手动同步"
     ,supabaseProjectUrl: "项目 URL"
     ,supabaseBucket: "存储 Bucket"
@@ -124,6 +140,10 @@ const MESSAGES = {
     reasoningShortMedium: "Medium",
     reasoningShortHigh: "High",
     reasoningShortXhigh: "XHigh",
+    modelContextLimit: "Model context size (for context warnings)",
+    contextOption: "Context {limit}",
+    imageGenerationModelAccountHint: "The selected image model may not take effect due to account and server-side restrictions. Auto is recommended.",
+    openAiBuiltinImageGenHint: "Use the selected model to call the built-in Responses image_generation tool.",
     modelOutput: "Model is responding... (Enter to queue, Shift+Enter for newline)",
     messagePlaceholder: "Enter a message... (Enter to send, Shift+Enter for newline; {shortcut} to search)",
     imageAttachment: "Image",
@@ -135,6 +155,18 @@ const MESSAGES = {
     chinese: "Chinese",
     english: "English",
     languageHint: "Defaults to your browser language until you choose a language."
+    ,slashMemoryTitle: "Save to memory"
+    ,slashMemoryDescription: "Extract durable information from this conversation and save or update it in built-in memory."
+    ,slashRecallMemoryTitle: "Recall memory"
+    ,slashRecallMemoryDescription: "Search built-in long-term memory for this conversation and add relevant context."
+    ,slashCompactTitle: "Compact context"
+    ,slashCompactDescription: "Immediately summarize older conversation history while retaining recent messages."
+    ,slashClearTitle: "Clear conversation"
+    ,slashClearDescription: "Same as the toolbar action; clears messages, plans, and keywords."
+    ,slashCommandsLabel: "Built-in commands"
+    ,slashCommandsEmpty: "No matching built-in commands"
+    ,slashCommandBuiltin: "Built-in"
+    ,slashCommandsUnavailableWhileGenerating: "Built-in commands are unavailable while the model is responding. Wait for the current response to finish."
     ,supabaseStorageSync: "Supabase Storage and Manual Sync"
     ,supabaseProjectUrl: "Project URL"
     ,supabaseBucket: "Storage Bucket"
@@ -280,6 +312,17 @@ const UI_TEXT = {
   "导入": "Import",
   "导出": "Export",
   "编辑": "Edit",
+  "取消编辑": "Cancel editing",
+  "保存修改": "Save changes",
+  "启用 OpenAI 内置 Web Search": "Enable OpenAI built-in Web Search",
+  "可用订阅模型": "Available subscription models",
+  "正在读取模型列表...": "Loading model list...",
+  "暂时没有读取到模型列表，可刷新后重试。": "No models were returned. Refresh the list to try again.",
+  "刷新列表": "Refresh list",
+  "添加所选模型": "Add selected models",
+  "等待登录...": "Waiting for login...",
+  "登录并添加": "Log in and add",
+  "重新登录": "Log in again",
   "暂无宏": "No macros",
   "回放速度": "Playback speed",
   "慢速": "Slow",

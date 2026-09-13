@@ -5,21 +5,15 @@ import {
   normalizeModelContextLimitTokens
 } from "./config";
 
-export const DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID = "llm_opencode_zen_big_pickle";
-const LEGACY_BUILTIN_LLM_MODEL_IDS = new Set(["llm_opencode_zen_deepseek_v4_flash_free"]);
-export const DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE = Object.freeze({
-  id: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
-  name: "OpenCode Zen Big Pickle",
-  apiType: API_TYPES.OPENAI_CHAT_COMPLETIONS,
-  baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-  apiKey: "",
-  model: "big-pickle",
-  requiresApiKey: false
-});
-export const DEFAULT_LLM_MODEL_PROFILES = Object.freeze([DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE]);
+const RETIRED_BUILTIN_LLM_MODEL_IDS = new Set([
+  "llm_opencode_zen_big_pickle",
+  "llm_opencode_zen_deepseek_v4_flash_free"
+]);
+export const DEFAULT_LLM_MODEL_PROFILES = Object.freeze([]);
 export const DEFAULT_IMAGE_MODEL_PROFILE = "gpt-image-2";
 export const DEFAULT_IMAGE_API_PROTOCOL = "generate";
 export const IMAGE_CHAT_COMPLETIONS_PROTOCOL = "chat_completions";
+export const IMAGE_OPENAI_BUILTIN_PROTOCOL = "openai_builtin_image_gen";
 
 export function createModelProfileId(prefix = "model") {
   return `${prefix}_${generateHex()}`;
@@ -51,23 +45,19 @@ function generateHex() {
 }
 
 export function normalizeImageProfileProtocol(value) {
+  if (value === IMAGE_OPENAI_BUILTIN_PROTOCOL) return IMAGE_OPENAI_BUILTIN_PROTOCOL;
   return value === IMAGE_CHAT_COMPLETIONS_PROTOCOL ? IMAGE_CHAT_COMPLETIONS_PROTOCOL : DEFAULT_IMAGE_API_PROTOCOL;
 }
 
 export function normalizeLlmModelProfiles(llmConfig = {}) {
   const rawProfiles = Array.isArray(llmConfig.llmModels) ? llmConfig.llmModels : [];
-  const sourceProfiles = [
-    DEFAULT_OPENCODE_ZEN_FREE_LLM_PROFILE,
-    ...rawProfiles.filter(item => !isBuiltinLlmModelProfileId(item?.id))
-  ];
+  const sourceProfiles = rawProfiles.filter(item => !isRetiredBuiltinLlmModelProfileId(item?.id));
   const profiles = sourceProfiles
     .map((item, index) => normalizeLlmModelProfile(item, index))
     .filter(Boolean)
     .filter(dedupeProfileById());
 
-  const fallbackProfile = rawProfiles.length > 0
-    ? (profiles.find(item => !isBuiltinLlmModelProfileId(item.id)) || profiles[0])
-    : profiles[0];
+  const fallbackProfile = profiles[0];
   const activeId = profiles.some(item => item.id === llmConfig.activeLlmModelId)
     ? llmConfig.activeLlmModelId
     : (fallbackProfile?.id || "");
@@ -97,6 +87,8 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
     apiKey: activeProfile?.apiKey ?? "",
     model: activeProfile?.model ?? "",
     nativeWebSearch: activeProfile?.nativeWebSearch === true,
+    credentialId: activeProfile?.credentialId || "",
+    accountId: activeProfile?.accountId || "",
     requiresApiKey: activeProfile?.requiresApiKey !== false,
     modelContextLimitTokens: normalizeModelContextLimitTokens(llmConfig.modelContextLimitTokens),
     firstPacketTimeoutSeconds: Math.max(1, Number(llmConfig.firstPacketTimeoutSeconds) || 20),
@@ -109,22 +101,22 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
 }
 
 export function resolveKeywordSummaryLlmConfig(llmConfig = {}) {
-  const { profiles } = normalizeLlmModelProfiles(llmConfig);
+  const { profiles, activeProfile } = normalizeLlmModelProfiles(llmConfig);
   const requestedId = llmConfig.keywordSummaryUseCustomModel === true
     ? String(llmConfig.keywordSummaryModelId || "").trim()
-    : DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID;
-  const profile = profiles.find(item => item.id === requestedId) ||
-    profiles.find(item => item.id === DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID) ||
-    null;
+    : "";
+  const profile = profiles.find(item => item.id === requestedId) || activeProfile || null;
   return {
     ...llmConfig,
     keywordSummaryUseCustomModel: llmConfig.keywordSummaryUseCustomModel === true,
-    keywordSummaryModelId: profile?.id || DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+    keywordSummaryModelId: profile?.id || "",
     apiType: normalizeApiType(profile?.apiType || getDefaultApiType()),
     baseUrl: profile?.baseUrl ?? "",
     apiKey: profile?.apiKey ?? "",
     model: profile?.model ?? "",
     nativeWebSearch: false,
+    credentialId: profile?.credentialId || "",
+    accountId: profile?.accountId || "",
     requiresApiKey: profile?.requiresApiKey !== false
   };
 }
@@ -152,6 +144,7 @@ export function resolveActiveImageConfig(llmConfig = {}, imageModelId = "") {
     imageApiKey: profile?.imageApiKey || "",
     imageApiProtocol: normalizeImageProfileProtocol(profile?.imageApiProtocol),
     imageModel: profile ? (profile.imageModel || DEFAULT_IMAGE_MODEL_PROFILE) : "",
+    sourceLlmModelId: profile?.sourceLlmModelId || "",
     selectedImageProfile: profile || null
   };
 }
@@ -185,13 +178,16 @@ export function normalizeStoredModelConfig(llmConfig = {}) {
     keywordSummaryUseCustomModel: llmConfig.keywordSummaryUseCustomModel === true,
     keywordSummaryModelId: llmConfig.keywordSummaryUseCustomModel === true && llmProfiles.profiles.some(item => item.id === llmConfig.keywordSummaryModelId)
       ? llmConfig.keywordSummaryModelId
-      : DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
+      : llmProfiles.activeId,
     activeImageModelId: imageProfiles.activeId,
     imageModels: imageProfiles.profiles
   };
 }
 
 export function isConfiguredImageProfile(profile = {}) {
+  if (normalizeImageProfileProtocol(profile.imageApiProtocol) === IMAGE_OPENAI_BUILTIN_PROTOCOL) {
+    return !!String(profile.sourceLlmModelId || "").trim();
+  }
   return !!String(profile.imageBaseUrl || "").trim() && !!String(profile.imageApiKey || "").trim();
 }
 
@@ -209,7 +205,13 @@ function normalizeLlmModelProfile(item, index) {
     baseUrl,
     apiKey,
     model,
-    nativeWebSearch: item.nativeWebSearch === true,
+    nativeWebSearch: apiType === API_TYPES.OPENAI_SUBSCRIPTION ? item.nativeWebSearch !== false : item.nativeWebSearch === true,
+    ...(apiType === API_TYPES.OPENAI_SUBSCRIPTION ? {
+      credentialId: String(item.credentialId || item.id || "").trim(),
+      accountId: String(item.accountId || "").trim(),
+      email: String(item.email || "").trim(),
+      planType: String(item.planType || "").trim()
+    } : {}),
     ...(item.requiresApiKey === false ? { requiresApiKey: false } : {})
   };
 }
@@ -217,6 +219,9 @@ function normalizeLlmModelProfile(item, index) {
 export function isLlmConfigUsable(config = {}) {
   const activeConfig = Array.isArray(config.llmModels) ? resolveActiveLlmConfig(config) : config;
   const requiresApiKey = activeConfig.requiresApiKey !== false;
+  if (normalizeApiType(activeConfig.apiType) === API_TYPES.OPENAI_SUBSCRIPTION) {
+    return !!String(activeConfig.model || "").trim() && !!String(activeConfig.credentialId || activeConfig.activeLlmModelId || "").trim();
+  }
   return !!String(activeConfig.baseUrl || "").trim() &&
     !!String(activeConfig.model || "").trim() &&
     (!requiresApiKey || !!String(activeConfig.apiKey || "").trim());
@@ -229,9 +234,9 @@ export function buildLlmAuthHeaders(config = {}, headerName = "Authorization") {
   return { [headerName]: `Bearer ${apiKey}` };
 }
 
-export function isBuiltinLlmModelProfileId(id) {
+function isRetiredBuiltinLlmModelProfileId(id) {
   const normalizedId = String(id || "").trim();
-  return normalizedId === DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID || LEGACY_BUILTIN_LLM_MODEL_IDS.has(normalizedId);
+  return RETIRED_BUILTIN_LLM_MODEL_IDS.has(normalizedId);
 }
 
 function dedupeProfileById() {
@@ -255,6 +260,8 @@ function normalizeImageModelProfile(item, index) {
     imageBaseUrl,
     imageApiKey,
     imageApiProtocol: normalizeImageProfileProtocol(item.imageApiProtocol),
-    imageModel
+    imageModel,
+    ...(String(item.sourceLlmModelId || "").trim() ? { sourceLlmModelId: String(item.sourceLlmModelId).trim() } : {}),
+    ...(String(item.imageGenerationModel || "").trim() ? { imageGenerationModel: String(item.imageGenerationModel).trim() } : {})
   };
 }

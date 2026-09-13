@@ -45,15 +45,6 @@ describe("settings migrations", () => {
         activeLlmModelId: "llm_legacy",
         llmModels: [
           expect.objectContaining({
-            id: "llm_opencode_zen_big_pickle",
-            name: "OpenCode Zen Big Pickle",
-            apiType: "openai-chat-completions",
-            baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-            apiKey: "",
-            model: "big-pickle",
-            requiresApiKey: false
-          }),
-          expect.objectContaining({
             id: "llm_legacy",
             name: "claude-test",
             apiType: "anthropic",
@@ -91,16 +82,34 @@ describe("settings migrations", () => {
       imageApiKey: "img-token",
       imageModel: "image-test"
     })).toMatchObject({
-      activeLlmModelId: "llm_opencode_zen_big_pickle",
-      llmModels: [
-        expect.objectContaining({
-          id: "llm_opencode_zen_big_pickle",
-          model: "big-pickle",
-          requiresApiKey: false
-        })
-      ],
+      activeLlmModelId: "",
+      llmModels: [],
       activeImageModelId: "",
       imageModels: []
     });
+  });
+
+  it("removes the retired OpenCode profile from existing v2 settings", async () => {
+    getChrome().storage.local.get.mockResolvedValueOnce({
+      [SETTINGS_SCHEMA_VERSION_KEY]: 2,
+      llmConfig: {
+        activeLlmModelId: "llm_opencode_zen_big_pickle",
+        llmModels: [
+          { id: "llm_opencode_zen_big_pickle", name: "OpenCode Zen Big Pickle", baseUrl: "https://opencode.ai/zen/v1/chat/completions", model: "big-pickle", requiresApiKey: false },
+          { id: "llm_custom", name: "Custom", baseUrl: "https://api.example.com/v1", apiKey: "secret", model: "custom-model" }
+        ],
+        keywordSummaryUseCustomModel: true,
+        keywordSummaryModelId: "llm_opencode_zen_big_pickle"
+      }
+    });
+
+    await expect(ensureSettingsMigrated()).resolves.toEqual({ migrated: true, version: SETTINGS_SCHEMA_VERSION });
+    expect(getChrome().storage.local.set).toHaveBeenCalledWith(expect.objectContaining({
+      llmConfig: expect.objectContaining({
+        activeLlmModelId: "llm_custom",
+        llmModels: [expect.objectContaining({ id: "llm_custom" })],
+        keywordSummaryModelId: "llm_custom"
+      })
+    }));
   });
 });

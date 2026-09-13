@@ -92,9 +92,9 @@ describe("textComplete", () => {
     await textComplete(
       {
         apiType: "openai-chat-completions",
-        baseUrl: "https://opencode.ai/zen/v1/chat/completions",
+        baseUrl: "http://localhost:11434/v1/chat/completions",
         apiKey: "",
-        model: "big-pickle",
+        model: "local-model",
         requiresApiKey: false
       },
       [{ role: "user", content: "hello" }]
@@ -179,9 +179,9 @@ describe("textComplete", () => {
     const { promise } = streamTextComplete(
       {
         apiType: "openai-chat-completions",
-        baseUrl: "https://opencode.ai/zen/v1/chat/completions",
+        baseUrl: "http://localhost:11434/v1/chat/completions",
         apiKey: "",
-        model: "big-pickle",
+        model: "local-model",
         requiresApiKey: false
       },
       [{ role: "user", content: "hello" }]

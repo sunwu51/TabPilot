@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
   buildLlmAuthHeaders,
   isLlmConfigUsable,
   normalizeImageModelProfiles,
@@ -13,35 +12,19 @@ import {
 import { isImageApiConfigured } from "../tools/builtins/imageApi";
 
 describe("modelProfiles", () => {
-  it("provides the OpenCode Zen Big Pickle LLM profile by default", () => {
+  it("keeps the LLM profile list empty until the user configures a model", () => {
     const normalized = normalizeLlmModelProfiles({ llmModels: [] });
 
-    expect(normalized).toMatchObject({
-      activeId: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
-      activeProfile: {
-        id: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
-        name: "OpenCode Zen Big Pickle",
-        apiType: "openai-chat-completions",
-        baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-        apiKey: "",
-        model: "big-pickle",
-        requiresApiKey: false
-      }
-    });
-    expect(resolveActiveLlmConfig({ llmModels: [] })).toMatchObject({
-      activeLlmModelId: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
-      baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-      apiKey: "",
-      model: "big-pickle",
-      requiresApiKey: false
-    });
-    expect(isLlmConfigUsable({ llmModels: [] })).toBe(true);
+    expect(normalized).toEqual({ profiles: [], activeId: "", activeProfile: null });
+    expect(resolveActiveLlmConfig({ llmModels: [] })).toMatchObject({ activeLlmModelId: "", baseUrl: "", model: "" });
+    expect(isLlmConfigUsable({ llmModels: [] })).toBe(false);
   });
 
-  it("keeps the built-in OpenCode Zen model first when custom profiles exist", () => {
+  it("removes retired OpenCode profiles and falls back to the first configured model", () => {
     const normalized = normalizeLlmModelProfiles({
-      activeLlmModelId: "llm_custom",
+      activeLlmModelId: "llm_opencode_zen_big_pickle",
       llmModels: [
+        { id: "llm_opencode_zen_big_pickle", model: "big-pickle", baseUrl: "https://opencode.ai/zen/v1/chat/completions" },
         {
           id: "llm_custom",
           name: "Custom",
@@ -53,36 +36,63 @@ describe("modelProfiles", () => {
       ]
     });
 
-    expect(normalized.profiles.map(item => item.id)).toEqual([
-      DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
-      "llm_custom"
-    ]);
+    expect(normalized.profiles.map(item => item.id)).toEqual(["llm_custom"]);
     expect(normalized.activeId).toBe("llm_custom");
   });
 
-  it("uses the OpenCode free model for keyword summaries until explicitly overridden", () => {
+  it("uses the active model for keyword summaries until explicitly overridden", () => {
     const config = {
       activeLlmModelId: "llm_custom",
-      llmModels: [{ id: "llm_custom", name: "Custom", apiType: "openai-chat-completions", baseUrl: "https://api.example.com/v1", apiKey: "sk-test", model: "custom-model" }]
+      llmModels: [
+        { id: "llm_custom", name: "Custom", apiType: "openai-chat-completions", baseUrl: "https://api.example.com/v1", apiKey: "sk-test", model: "custom-model" },
+        { id: "llm_summary", name: "Summary", apiType: "openai-chat-completions", baseUrl: "https://summary.example.com/v1", apiKey: "sk-summary", model: "summary-model" }
+      ]
     };
 
     expect(resolveKeywordSummaryLlmConfig(config)).toMatchObject({
-      keywordSummaryModelId: DEFAULT_OPENCODE_ZEN_FREE_LLM_MODEL_ID,
-      model: "big-pickle"
-    });
-    expect(resolveKeywordSummaryLlmConfig({ ...config, keywordSummaryUseCustomModel: true, keywordSummaryModelId: "llm_custom" })).toMatchObject({
       keywordSummaryModelId: "llm_custom",
       model: "custom-model"
+    });
+    expect(resolveKeywordSummaryLlmConfig({ ...config, keywordSummaryUseCustomModel: true, keywordSummaryModelId: "llm_summary" })).toMatchObject({
+      keywordSummaryModelId: "llm_summary",
+      model: "summary-model"
     });
   });
 
   it("omits authorization headers when an LLM profile has no API key", () => {
     expect(buildLlmAuthHeaders({
-      baseUrl: "https://opencode.ai/zen/v1/chat/completions",
-      model: "big-pickle",
+      baseUrl: "http://localhost:11434/v1/chat/completions",
+      model: "local-model",
       apiKey: "",
       requiresApiKey: false
     })).toEqual({});
+  });
+
+  it("keeps OpenAI Subscription identity fields without requiring a URL or API key", () => {
+    const config = {
+      activeLlmModelId: "llm_subscription",
+      llmModels: [{
+        id: "llm_subscription",
+        name: "OpenAI Subscription",
+        apiType: "openai-subscription",
+        model: "gpt-5-codex",
+        credentialId: "llm_subscription",
+        accountId: "account-123",
+        email: "user@example.com",
+        planType: "plus",
+        requiresApiKey: false
+      }]
+    };
+
+    expect(resolveActiveLlmConfig(config)).toMatchObject({
+      apiType: "openai-subscription",
+      baseUrl: "",
+      apiKey: "",
+      credentialId: "llm_subscription",
+      accountId: "account-123",
+      nativeWebSearch: true
+    });
+    expect(isLlmConfigUsable(config)).toBe(true);
   });
 
   it("keeps explicitly cleared image model profiles empty", () => {

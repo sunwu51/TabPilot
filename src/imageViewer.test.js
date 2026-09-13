@@ -51,6 +51,7 @@ describe("image viewer page", () => {
     const image = await screen.findByRole("img", { name: "img_1" });
     fireEvent.load(image);
     await waitFor(() => expect(screen.getByText("74%")).toBeInTheDocument());
+    expect(screen.getByText("1200 × 800")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "下一张" }));
     expect(screen.getByRole("img", { name: "img_2" })).toHaveAttribute("src", "data:image/png;base64,dHdv");

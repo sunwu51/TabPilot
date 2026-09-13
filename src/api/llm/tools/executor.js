@@ -79,6 +79,12 @@ import {
   _execListStashesInBrowser,
   _execRemoveStashInBrowser
 } from "./builtins/stash";
+import {
+  _execMemorySearch,
+  _execMemorySave,
+  _execMemoryUpdate,
+  _execMemoryDelete
+} from "./builtins/memory";
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
 import {
@@ -221,6 +227,11 @@ const BUILTIN_TOOL_HANDLERS = {
   unstash_in_browser: (args) => _execUnstashInBrowser(args),
   list_stashes_in_browser: () => _execListStashesInBrowser(),
   remove_stash_in_browser: (args) => _execRemoveStashInBrowser(args),
+
+  memory_search: (args) => _execMemorySearch(args),
+  memory_save: (args) => _execMemorySave(args),
+  memory_update: (args) => _execMemoryUpdate(args),
+  memory_delete: (args) => _execMemoryDelete(args),
 
   download: (args) => _execDownload(args),
   download_list: (args) => _execDownloadList(args),
