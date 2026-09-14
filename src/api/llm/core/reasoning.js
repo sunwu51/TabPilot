@@ -5,6 +5,7 @@ export function normalizeReasoningEffort(value) {
 }
 
 export function buildOpenAIChatReasoningFields(config = {}) {
+  if (config.supportsReasoning === false) return {};
   const effort = normalizeReasoningEffort(config.reasoningEffort);
   return effort ? { reasoning_effort: effort, reasoning: { effort } } : {};
 }

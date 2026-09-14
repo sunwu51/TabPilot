@@ -13,6 +13,8 @@ export {
   createImageModelProfileId,
   IMAGE_OPENAI_BUILTIN_PROTOCOL,
   DEFAULT_LLM_MODEL_PROFILES,
+  DEFAULT_LLM7_FREE_LLM_MODEL_ID,
+  DEFAULT_LLM7_FREE_LLM_PROFILE,
   isLlmConfigUsable,
   isConfiguredImageProfile,
   normalizeImageModelProfiles,

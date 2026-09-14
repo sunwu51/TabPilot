@@ -339,6 +339,10 @@ function buildLlmConfigInfo(llmConfig = {}) {
   };
 }
 
+export function isBuiltinImageEditMaskSupported(imageApiProtocol) {
+  return normalizeImageApiProtocol(imageApiProtocol) === IMAGE_API_PROTOCOLS.GENERATE;
+}
+
 export function buildImageModelSystemPrompt(llmConfig = {}) {
   const syncedConfig = syncActiveModelFields(llmConfig);
   if (!isImageApiConfigured(syncedConfig)) return "";
@@ -1060,7 +1064,7 @@ export default function AgentPanel() {
   const builtinImageEditTool = llmConfigInfo.imageToolsEnabled ? { name: "image_edit", _toolCallName: "image_edit" } : null;
   const imageEditTool = externalImageEditTool || builtinImageEditTool;
   const imageEditingEnabled = !!imageEditTool;
-  const imageEditMaskSupported = !!externalImageEditTool || llmConfigInfo.imageApiProtocol !== IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS;
+  const imageEditMaskSupported = !!externalImageEditTool || isBuiltinImageEditMaskSupported(llmConfigInfo.imageApiProtocol);
 
   function openImageEditDialog(image) {
     const currentSessionId = activeSessionIdRef.current;

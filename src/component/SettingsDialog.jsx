@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llm/core/endpoint";
 import {
   API_TYPES,
+  DEFAULT_LLM7_FREE_LLM_MODEL_ID,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
   IMAGE_API_PROTOCOLS,
@@ -980,46 +981,50 @@ function SettingsDialogBody() {
                 title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
               >
                 <span className="settings-model-badge-name">{item.name}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="settings-model-badge-remove"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleRemoveLlmModel(item.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleRemoveLlmModel(item.id);
-                  }}
-                  aria-label={`删除 ${item.name}`}
-                  title="删除"
-                >
-                  ×
-                </span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="settings-model-badge-edit"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleEditLlmModel(item);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleEditLlmModel(item);
-                  }}
-                  aria-label={`编辑 ${item.name}`}
-                  title="编辑"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
-                  </svg>
-                </span>
+                {item.id !== DEFAULT_LLM7_FREE_LLM_MODEL_ID && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="settings-model-badge-remove"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleRemoveLlmModel(item.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleRemoveLlmModel(item.id);
+                    }}
+                    aria-label={`删除 ${item.name}`}
+                    title="删除"
+                  >
+                    ×
+                  </span>
+                )}
+                {item.id !== DEFAULT_LLM7_FREE_LLM_MODEL_ID && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    className="settings-model-badge-edit"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleEditLlmModel(item);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleEditLlmModel(item);
+                    }}
+                    aria-label={`编辑 ${item.name}`}
+                    title="编辑"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                    </svg>
+                  </span>
+                )}
               </button>
             ))}
           </div>

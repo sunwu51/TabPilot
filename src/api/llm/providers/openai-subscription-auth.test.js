@@ -72,7 +72,7 @@ describe("OpenAI Subscription OAuth", () => {
       email: "user@example.com",
       planType: "plus"
     });
-    expect(stored.llmConfig.llmModels[0]).toMatchObject({
+    expect(stored.llmConfig.llmModels.find(profile => profile.id === "llm_subscription")).toMatchObject({
       id: "llm_subscription",
       apiType: "openai-subscription",
       credentialId: "llm_subscription",

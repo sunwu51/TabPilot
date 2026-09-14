@@ -29,7 +29,7 @@ vi.mock("./McpConfig", () => ({ default: () => null }));
 vi.mock("./UserProfilePanel", () => ({ default: () => null }));
 vi.mock("./SkillsConfig", () => ({ default: () => null }));
 
-import AgentPanel, { buildImageModelSystemPrompt, buildToolExecutionBatches, finalizeInterruptedToolMessages, runToolExecutionBatches } from "./AgentPanel";
+import AgentPanel, { buildImageModelSystemPrompt, buildToolExecutionBatches, finalizeInterruptedToolMessages, isBuiltinImageEditMaskSupported, runToolExecutionBatches } from "./AgentPanel";
 import { getChromeStorageSnapshot, resetChromeMock } from "../../../test/setup";
 
 describe("AgentPanel initial session restore", () => {
@@ -41,6 +41,12 @@ describe("AgentPanel initial session restore", () => {
     Element.prototype.scrollIntoView = vi.fn();
     globalThis.requestAnimationFrame = (callback) => setTimeout(() => callback(0), 0);
     globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+  });
+
+  it("only enables masks for the standard Images edit protocol", () => {
+    expect(isBuiltinImageEditMaskSupported("generate")).toBe(true);
+    expect(isBuiltinImageEditMaskSupported("chat_completions")).toBe(false);
+    expect(isBuiltinImageEditMaskSupported("openai_builtin_image_gen")).toBe(false);
   });
 
   it("builds image model profile guidance for the system prompt", () => {

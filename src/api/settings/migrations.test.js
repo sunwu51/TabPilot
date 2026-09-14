@@ -45,6 +45,12 @@ describe("settings migrations", () => {
         activeLlmModelId: "llm_legacy",
         llmModels: [
           expect.objectContaining({
+            id: "llm_llm7_default",
+            baseUrl: "https://api.llm7.io",
+            model: "default",
+            requiresApiKey: false
+          }),
+          expect.objectContaining({
             id: "llm_legacy",
             name: "claude-test",
             apiType: "anthropic",
@@ -82,8 +88,8 @@ describe("settings migrations", () => {
       imageApiKey: "img-token",
       imageModel: "image-test"
     })).toMatchObject({
-      activeLlmModelId: "",
-      llmModels: [],
+      activeLlmModelId: "llm_llm7_default",
+      llmModels: [expect.objectContaining({ id: "llm_llm7_default" })],
       activeImageModelId: "",
       imageModels: []
     });
@@ -107,8 +113,35 @@ describe("settings migrations", () => {
     expect(getChrome().storage.local.set).toHaveBeenCalledWith(expect.objectContaining({
       llmConfig: expect.objectContaining({
         activeLlmModelId: "llm_custom",
-        llmModels: [expect.objectContaining({ id: "llm_custom" })],
-        keywordSummaryModelId: "llm_custom"
+        llmModels: [
+          expect.objectContaining({ id: "llm_llm7_default" }),
+          expect.objectContaining({ id: "llm_custom" })
+        ],
+        keywordSummaryModelId: "llm_llm7_default"
+      })
+    }));
+  });
+
+  it("adds LLM7 to existing v3 settings", async () => {
+    getChrome().storage.local.get.mockResolvedValueOnce({
+      [SETTINGS_SCHEMA_VERSION_KEY]: 3,
+      llmConfig: {
+        activeLlmModelId: "llm_custom",
+        llmModels: [
+          { id: "llm_custom", name: "Custom", baseUrl: "https://api.example.com/v1", apiKey: "secret", model: "custom-model" }
+        ]
+      }
+    });
+
+    await expect(ensureSettingsMigrated()).resolves.toEqual({ migrated: true, version: SETTINGS_SCHEMA_VERSION });
+    expect(getChrome().storage.local.set).toHaveBeenCalledWith(expect.objectContaining({
+      llmConfig: expect.objectContaining({
+        activeLlmModelId: "llm_custom",
+        keywordSummaryModelId: "llm_llm7_default",
+        llmModels: [
+          expect.objectContaining({ id: "llm_llm7_default" }),
+          expect.objectContaining({ id: "llm_custom" })
+        ]
       })
     }));
   });

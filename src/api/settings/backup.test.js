@@ -88,6 +88,12 @@ describe("settings backup", () => {
           activeLlmModelId: "llm_legacy",
           llmModels: [
             expect.objectContaining({
+              id: "llm_llm7_default",
+              baseUrl: "https://api.llm7.io",
+              model: "default",
+              requiresApiKey: false
+            }),
+            expect.objectContaining({
               id: "llm_legacy",
               name: "old-model",
               apiType: "anthropic",
@@ -167,6 +173,17 @@ describe("settings backup", () => {
         activeLlmModelId: "llm_new",
         llmModels: [
           {
+            id: "llm_llm7_default",
+            name: "Free",
+            apiType: "openai-chat-completions",
+            baseUrl: "https://api.llm7.io",
+            apiKey: "",
+            model: "default",
+            nativeWebSearch: false,
+            requiresApiKey: false,
+            supportsReasoning: false
+          },
+          {
             id: "llm_new",
             name: "new-model",
             apiType: "openai-responses",
@@ -183,7 +200,7 @@ describe("settings backup", () => {
         reasoningEffort: "default",
         omitThinkingFromRequests: false,
         keywordSummaryUseCustomModel: false,
-        keywordSummaryModelId: "llm_new",
+        keywordSummaryModelId: "llm_llm7_default",
         activeImageModelId: "",
         imageModels: []
       },
