@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 /* global chrome */
 import { Button, Card, Dialog } from "@sunwu51/camel-ui";
+import SubscriptionUsage from "../SubscriptionUsage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_IMAGE_MODEL,
@@ -5189,6 +5190,7 @@ export default function AgentPanel() {
             />
             <div className="chat-input-status-line">
               <div className="chat-input-model-switchers" ref={modelMenuRef}>
+                <SubscriptionUsage compact profile={llmConfigInfo.llmModels.find(item => item.id === llmConfigInfo.activeLlmModelId)} />
                 <div className="chat-input-model-switcher">
                   <button
                     type="button"

@@ -1,0 +1,21 @@
+.subscription-usage { position: relative; min-width: 0; color: #374151; font-size: 12px; }
+.subscription-usage-compact { flex: 0 1 auto; min-width: 0; max-width: 50%; }
+.subscription-usage-trigger { max-width: 100%; white-space: nowrap; cursor: pointer; color: inherit; }
+.subscription-usage-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subscription-usage-card { padding: 12px; border: 1px solid #d1d5db; border-radius: 10px; background: var(--w-bg, #fff); color: #374151; }
+.subscription-usage-compact .subscription-usage-card { position: absolute; bottom: calc(100% + 8px); left: 0; width: min(290px, calc(100vw - 40px)); z-index: 60; box-shadow: 0 8px 24px #0002; }
+.subscription-usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.subscription-usage-heading button { border: 1px solid #d1d5db; border-radius: 5px; padding: 2px 8px; cursor: pointer; }
+.subscription-usage-heading button:disabled { opacity: .5; cursor: default; }
+.subscription-usage-window { margin: 10px 0; }
+.subscription-usage-window progress { display: block; width: 100%; height: 8px; margin: 6px 0; accent-color: #6366f1; }
+.subscription-usage-meta { color: #6b7280; font-size: 11px; margin-top: 4px; }
+.subscription-usage-warning { color: #b45309; }
+.subscription-usage-warning progress { accent-color: #d97706; }
+.subscription-usage-danger, .subscription-usage-error { color: #dc2626; }
+.subscription-usage-danger progress { accent-color: #dc2626; }
+.subscription-usage-short { display: none; }
+@media (max-width: 600px) {
+  .subscription-usage-summary { display: none; }
+  .subscription-usage-short { display: inline; }
+}

@@ -1,4 +1,5 @@
 /* global chrome */
+import { readSubscriptionUsage } from "./api/llm/providers/openai-subscription-usage";
 import {
     focusReusableTab,
     isTabReuseEnabled,
@@ -908,6 +909,12 @@ async function handlePostdogManagerMessage(action, payload = {}) {
  * communicates with the auto-injected content script (no host_permissions needed).
  */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type === "openai_subscription_usage") {
+        readSubscriptionUsage(msg.credentialId, { cacheOnly: msg.cacheOnly === true, force: msg.force === true, maxAge: msg.maxAge })
+            .then(result => sendResponse({ success: true, result }))
+            .catch(error => sendResponse({ success: false, error: error?.message || "用量查询失败" }));
+        return true;
+    }
     if (msg?.type === "openai_subscription_oauth") {
         let operation;
         if (msg.action === "authorize") {

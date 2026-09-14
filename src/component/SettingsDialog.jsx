@@ -1,6 +1,8 @@
 /* global chrome */
 import { Button, Checkbox, Dialog, Input, Select } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
+import SubscriptionUsage from "./SubscriptionUsage";
+import MemoryManager from "./MemoryManager";
 import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llm/core/endpoint";
 import {
@@ -1197,6 +1199,9 @@ function SettingsDialogBody() {
                 </div>
               )}
               {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && (
+                <SubscriptionUsage profile={llmModels.find(item => item.id === editingLlmModelId)} />
+              )}
+              {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && (
                 <Button
                   className="settings-model-add-button"
                   isDisabled={openAiLoginPending}
@@ -1520,6 +1525,14 @@ function SettingsDialogBody() {
             <Checkbox isSelected={betaFeaturesEnabled} onChange={setBetaFeaturesEnabled}>
               <span className="text-sm">开启 Beta 功能</span>
             </Checkbox>
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-title">{t("memoryTitle")}</div>
+          <div className="settings-reuse-memory-row">
+            <span className="text-xs text-gray-500">{t("memorySettingsHint")}</span>
+            <MemoryManager />
           </div>
         </div>
 
