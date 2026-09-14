@@ -10,6 +10,13 @@ describe("OpenAI chat completions reasoning helpers", () => {
     });
   });
 
+  it("omits reasoning fields when the selected profile disables reasoning", () => {
+    expect(buildOpenAIChatReasoningFields({
+      reasoningEffort: "medium",
+      supportsReasoning: false
+    })).toEqual({});
+  });
+
   it("extracts reasoning from compatible delta fields", () => {
     expect(extractOpenAIReasoningDeltas({ reasoning: "step 1" })).toEqual({ reasoning: "step 1" });
     expect(extractOpenAIReasoningDeltas({ reasoning_content: "step 2" })).toEqual({ reasoning_content: "step 2" });

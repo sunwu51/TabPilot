@@ -12,12 +12,24 @@ import {
 import { isImageApiConfigured } from "../tools/builtins/imageApi";
 
 describe("modelProfiles", () => {
-  it("keeps the LLM profile list empty until the user configures a model", () => {
+  it("provides the LLM7 default selector without requiring an API key", () => {
     const normalized = normalizeLlmModelProfiles({ llmModels: [] });
 
-    expect(normalized).toEqual({ profiles: [], activeId: "", activeProfile: null });
-    expect(resolveActiveLlmConfig({ llmModels: [] })).toMatchObject({ activeLlmModelId: "", baseUrl: "", model: "" });
-    expect(isLlmConfigUsable({ llmModels: [] })).toBe(false);
+    expect(normalized).toMatchObject({
+      activeId: "llm_llm7_default",
+      activeProfile: {
+        name: "Free",
+        baseUrl: "https://api.llm7.io",
+        model: "default",
+        requiresApiKey: false,
+        supportsReasoning: false
+      }
+    });
+    expect(resolveActiveLlmConfig({ llmModels: [], reasoningEffort: "medium" })).toMatchObject({
+      supportsReasoning: false,
+      reasoningEffort: "medium"
+    });
+    expect(isLlmConfigUsable({ llmModels: [] })).toBe(true);
   });
 
   it("removes retired OpenCode profiles and falls back to the first configured model", () => {
@@ -36,11 +48,11 @@ describe("modelProfiles", () => {
       ]
     });
 
-    expect(normalized.profiles.map(item => item.id)).toEqual(["llm_custom"]);
+    expect(normalized.profiles.map(item => item.id)).toEqual(["llm_llm7_default", "llm_custom"]);
     expect(normalized.activeId).toBe("llm_custom");
   });
 
-  it("uses the active model for keyword summaries until explicitly overridden", () => {
+  it("uses LLM7 for keyword summaries until explicitly overridden", () => {
     const config = {
       activeLlmModelId: "llm_custom",
       llmModels: [
@@ -50,8 +62,9 @@ describe("modelProfiles", () => {
     };
 
     expect(resolveKeywordSummaryLlmConfig(config)).toMatchObject({
-      keywordSummaryModelId: "llm_custom",
-      model: "custom-model"
+      keywordSummaryModelId: "llm_llm7_default",
+      model: "default",
+      supportsReasoning: false
     });
     expect(resolveKeywordSummaryLlmConfig({ ...config, keywordSummaryUseCustomModel: true, keywordSummaryModelId: "llm_summary" })).toMatchObject({
       keywordSummaryModelId: "llm_summary",
