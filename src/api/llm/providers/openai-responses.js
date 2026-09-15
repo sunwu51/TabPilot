@@ -77,6 +77,29 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
     const outputItems = new Map();
     const toolCallsById = new Map();
 
+    const processDataLine = line => {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith("data:")) return;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") return;
+
+      let event;
+      try {
+        event = JSON.parse(data);
+      } catch (error) {
+        throw createLlmStreamError({
+          code: "STREAM_PARSE_ERROR",
+          message: "解析 OpenAI Responses 流式响应失败",
+          detail: error?.message || String(error)
+        });
+      }
+      const eventError = createResponsesEventError(event);
+      if (eventError) throw eventError;
+      if (event?.response?.id) responseId = event.response.id;
+      usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
+      applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone, onNativeWebSearch });
+    };
+
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -87,32 +110,11 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
 
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-
-        let event;
-        try {
-          event = JSON.parse(data);
-        } catch (error) {
-          throw createLlmStreamError({
-            code: "STREAM_PARSE_ERROR",
-            message: "解析 OpenAI Responses 流式响应失败",
-            detail: error?.message || String(error)
-          });
-        }
-        const eventError = createResponsesEventError(event);
-        if (eventError) throw eventError;
-        if (event?.response?.id) {
-          responseId = event.response.id;
-        }
-        usage = mergeUsage(usage, extractOpenAIResponsesUsage(event));
-        applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, onThinking, onToolArgsDelta, onToolArgsDone, onNativeWebSearch });
-      }
+      for (const line of lines) processDataLine(line);
     }
+
+    // A valid SSE stream may end without a trailing newline. Process that final event.
+    if (buffer) processDataLine(buffer);
 
 
     const orderedItems = [...outputItems.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));

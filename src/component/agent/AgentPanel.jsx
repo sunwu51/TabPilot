@@ -2623,7 +2623,7 @@ export default function AgentPanel() {
     return (
       `You are a browser assistant running inside a browser environment.\n\n` +
       `The current date is ${new Date().toLocaleDateString()}.\n\n` +
-      `Built-in browser capabilities and connected MCP tools are available through the exec JavaScript runtime. Use tools.listDomains/listTools/describeTool to discover both sources. Call built-ins through tools.tool_name(args), call MCP tools through tools.mcp.server_name.tool_name(args), and return the final value explicitly.\n\n` +
+      `Built-in browser capabilities and connected MCP tools are available through the exec JavaScript runtime. Use tools.listDomains/listTools/describeTool to discover both sources. Call built-ins through tools.tool_name(args), call MCP tools through tools.mcp.server_name.tool_name(args), and use bracket notation such as tools.mcp['server-name']['tool-name'](args) whenever a server or tool name contains a hyphen or another character that is not valid in a JavaScript identifier, because dot notation would parse the hyphen as subtraction. Return the final value explicitly.\n\n` +
       platformBlock +
       `Important rules:\n` +
       `- Do not assume you already know the current browser state. Tabs and windows can change at any time.\n` +
