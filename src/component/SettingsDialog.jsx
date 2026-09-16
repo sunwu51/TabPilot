@@ -139,6 +139,7 @@ function SettingsDialogBody() {
   const [openAiLoginPending, setOpenAiLoginPending] = useState(false);
   const [subscriptionAvailableModels, setSubscriptionAvailableModels] = useState([]);
   const [selectedSubscriptionModels, setSelectedSubscriptionModels] = useState([]);
+  const [subscriptionCredential, setSubscriptionCredential] = useState(null);
   const [subscriptionModelsLoading, setSubscriptionModelsLoading] = useState(false);
   const [subscriptionModelManagerOpen, setSubscriptionModelManagerOpen] = useState(false);
   const [firstPacketTimeoutSeconds, setFirstPacketTimeoutSeconds] = useState(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds);
@@ -218,14 +219,18 @@ function SettingsDialogBody() {
         toast.error(`OpenAI Subscription 登录失败: ${message.error || "未知错误"}`);
         return;
       }
-      await loadDraft();
       setApiType(API_TYPES.OPENAI_SUBSCRIPTION);
-      setEditingLlmModelId(message.profileId);
-      setModel(message.model || "");
+      setEditingLlmModelId("");
+      setSubscriptionCredential({
+        credentialId: message.profileId,
+        accountId: message.accountId || "",
+        email: message.email || "",
+        planType: message.planType || ""
+      });
       setNativeWebSearch(true);
       setLlmModelFormOpen(true);
       setSubscriptionAvailableModels(message.availableModels || []);
-      setSelectedSubscriptionModels((message.availableModels || []).map(item => item.id));
+      setSelectedSubscriptionModels([]);
       setSubscriptionModelManagerOpen(true);
       toast.success("OpenAI Subscription 登录成功");
     };
@@ -315,6 +320,7 @@ function SettingsDialogBody() {
       setEditingImageModelId("");
       setSubscriptionAvailableModels([]);
       setSelectedSubscriptionModels([]);
+      setSubscriptionCredential(null);
       setSubscriptionModelManagerOpen(false);
       setMcpToolTimeoutSeconds(Math.max(1, Number(res.mcpToolTimeoutSeconds) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
       setReuse(!!res.reuse);
@@ -507,6 +513,7 @@ function SettingsDialogBody() {
       setEditingLlmModelId("");
       setSubscriptionAvailableModels([]);
       setSelectedSubscriptionModels([]);
+      setSubscriptionCredential(null);
       if (nextOpen) {
         const activeProfile = llmModels.find(item => item.id === activeLlmModelId);
         if (activeProfile) {
@@ -547,6 +554,12 @@ function SettingsDialogBody() {
     setModel(profile.model || "");
     setNativeWebSearch(profile.nativeWebSearch === true);
     setEditingLlmModelId(profile.id);
+    setSubscriptionCredential(normalizeApiType(profile.apiType) === API_TYPES.OPENAI_SUBSCRIPTION ? {
+      credentialId: profile.credentialId || profile.id,
+      accountId: profile.accountId || "",
+      email: profile.email || "",
+      planType: profile.planType || ""
+    } : null);
     setLlmModelFormOpen(true);
     setSubscriptionModelManagerOpen(false);
     setLlmFormKey(prev => prev + 1);
@@ -582,15 +595,17 @@ function SettingsDialogBody() {
 
   async function handleAddSelectedSubscriptionModels() {
     const sourceProfile = llmModels.find(item => item.id === editingLlmModelId);
-    if (!sourceProfile) return;
+    const source = sourceProfile || subscriptionCredential;
+    if (!source) return;
     const selected = subscriptionAvailableModels.filter(item => selectedSubscriptionModels.includes(item.id));
     if (selected.length === 0) {
       toast.error("请至少选择一个模型");
       return;
     }
-    const credentialId = sourceProfile.credentialId || sourceProfile.id;
-    const existingModels = new Set(llmModels
-      .filter(item => (item.credentialId || item.id) === credentialId)
+    const credentialId = source.credentialId || source.id;
+    const accountProfiles = llmModels.filter(item =>
+      item.apiType === API_TYPES.OPENAI_SUBSCRIPTION && (item.credentialId || item.id) === credentialId);
+    const existingModels = new Set(accountProfiles
       .map(item => item.model));
     const additions = selected.filter(item => !existingModels.has(item.id)).map(item => ({
       id: createModelProfileId("llm"),
@@ -601,22 +616,27 @@ function SettingsDialogBody() {
       model: item.id,
       nativeWebSearch: true,
       credentialId,
-      accountId: sourceProfile.accountId || "",
-      email: sourceProfile.email || "",
-      planType: sourceProfile.planType || "",
+      accountId: source.accountId || "",
+      email: source.email || "",
+      planType: source.planType || "",
       requiresApiKey: false
     }));
-    if (additions.length === 0) {
-      toast.success("所选模型已经添加");
-      return;
-    }
-    const nextModels = dedupeSubscriptionProfiles([...llmModels, ...additions]);
+    const selectedModelIds = new Set(selected.map(item => item.id));
+    const retainedModels = llmModels.filter(item =>
+      item.apiType !== API_TYPES.OPENAI_SUBSCRIPTION ||
+      (item.credentialId || item.id) !== credentialId ||
+      selectedModelIds.has(item.model));
+    const nextModels = dedupeSubscriptionProfiles([...retainedModels, ...additions]);
     const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
+    const nextActiveLlmModelId = nextModels.some(item => item.id === activeLlmModelId)
+      ? activeLlmModelId
+      : (nextModels.find(item => item.apiType === API_TYPES.OPENAI_SUBSCRIPTION && (item.credentialId || item.id) === credentialId)?.id || nextModels[0]?.id || "");
     await chrome.storage.local.set({
-      llmConfig: normalizeStoredModelConfig({ ...llmConfig, llmModels: nextModels, activeLlmModelId })
+      llmConfig: normalizeStoredModelConfig({ ...llmConfig, llmModels: nextModels, activeLlmModelId: nextActiveLlmModelId })
     });
     setLlmModels(nextModels);
-    toast.success(`已添加 ${additions.length} 个模型`);
+    setActiveLlmModelId(nextActiveLlmModelId);
+    toast.success(`已保存 ${selected.length} 个订阅模型`);
   }
 
   function handleEditImageModel(profile) {
@@ -637,20 +657,19 @@ function SettingsDialogBody() {
     const trimmedModel = String(model || "").trim();
     const normalizedType = normalizeApiType(apiType);
     const subscription = normalizedType === API_TYPES.OPENAI_SUBSCRIPTION;
-    if (!trimmedModel || (!subscription && (!trimmedBaseUrl || !trimmedApiKey))) {
+    if (!subscription && (!trimmedModel || !trimmedBaseUrl || !trimmedApiKey)) {
       toast.error("API 地址、API Key 和模型不能为空");
       return;
     }
     const profileId = editingLlmModelId || createModelProfileId("llm");
     const existingProfile = llmModels.find(item => item.id === editingLlmModelId);
-    if (subscription && !existingProfile?.accountId) {
+    if (subscription && !subscriptionCredential?.credentialId && !existingProfile?.accountId) {
       setOpenAiLoginPending(true);
       try {
         const response = await chrome.runtime.sendMessage({
           type: "openai_subscription_oauth",
           action: "authorize",
-          profileId,
-          model: trimmedModel
+          profileId
         });
         if (!response?.success) throw new Error(response?.error || "无法开始 OAuth 登录");
         toast.success("已打开 OpenAI 登录页面");
@@ -658,6 +677,10 @@ function SettingsDialogBody() {
         setOpenAiLoginPending(false);
         toast.error(`OpenAI 登录失败: ${error?.message || String(error)}`);
       }
+      return;
+    }
+    if (subscription) {
+      toast.error("请从订阅模型列表中勾选要添加的模型");
       return;
     }
     const profile = {
@@ -1147,16 +1170,18 @@ function SettingsDialogBody() {
                 </div>
                 </div>
               </>)}
-              <Input
-                label="模型"
-                labelClassName="!text-sm !font-medium !text-gray-500"
-                inputClassName="!min-h-8"
-                defaultValue={model}
-                onChange={setModel}
-                placeholder={apiType === API_TYPES.ANTHROPIC
-                  ? "claude-sonnet-4-20250514"
-                  : ([API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(apiType) ? "gpt-5-codex" : "deepseek-v4-flash")}
-              />
+              {apiType !== API_TYPES.OPENAI_SUBSCRIPTION && (
+                <Input
+                  label="模型"
+                  labelClassName="!text-sm !font-medium !text-gray-500"
+                  inputClassName="!min-h-8"
+                  defaultValue={model}
+                  onChange={setModel}
+                  placeholder={apiType === API_TYPES.ANTHROPIC
+                    ? "claude-sonnet-4-20250514"
+                    : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-5-codex" : "deepseek-v4-flash")}
+                />
+              )}
               {[API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(apiType) && (
                 <Checkbox isSelected={nativeWebSearch} onChange={setNativeWebSearch}>
                   <span className="text-sm">启用 OpenAI 内置 Web Search</span>
@@ -1172,7 +1197,7 @@ function SettingsDialogBody() {
                   管理此账号的模型
                 </Button>
               )}
-              {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && subscriptionModelManagerOpen && (
+              {apiType === API_TYPES.OPENAI_SUBSCRIPTION && (editingLlmModelId || subscriptionCredential?.credentialId) && subscriptionModelManagerOpen && (
                 <div className="settings-subscription-models">
                   <div className="settings-inline-section-title">可用订阅模型</div>
                   {subscriptionModelsLoading ? (
@@ -1192,13 +1217,13 @@ function SettingsDialogBody() {
                   ))}
                   <div className="settings-model-action-row">
                     <Button className="settings-model-add-button" isDisabled={subscriptionModelsLoading} onPress={() => {
-                      const profile = llmModels.find(item => item.id === editingLlmModelId);
+                      const profile = llmModels.find(item => item.id === editingLlmModelId) || subscriptionCredential;
                       if (profile) void loadSubscriptionModels(profile, true);
                     }}>
                       刷新列表
                     </Button>
                     <Button className="settings-model-add-button bg-[var(--w-indigo)]" isDisabled={subscriptionModelsLoading} onPress={handleAddSelectedSubscriptionModels}>
-                      添加所选模型
+                      保存所选模型
                     </Button>
                   </div>
                 </div>
@@ -1216,8 +1241,7 @@ function SettingsDialogBody() {
                       const response = await chrome.runtime.sendMessage({
                         type: "openai_subscription_oauth",
                         action: "authorize",
-                        profileId: editingLlmModelId,
-                        model: String(model || "").trim()
+                        profileId: subscriptionCredential?.credentialId || editingLlmModelId
                       });
                       if (!response?.success) throw new Error(response?.error || "无法开始 OAuth 登录");
                       toast.success("已打开 OpenAI 登录页面");
@@ -1230,13 +1254,13 @@ function SettingsDialogBody() {
                   重新登录
                 </Button>
               )}
-              <Button className="settings-model-add-button bg-[var(--w-indigo)]" isDisabled={openAiLoginPending} onPress={handleAddLlmModel}>
-                {openAiLoginPending
-                  ? "等待登录..."
-                  : (apiType === API_TYPES.OPENAI_SUBSCRIPTION && !editingLlmModelId
-                    ? "登录并添加"
-                    : (editingLlmModelId ? "保存修改" : "添加"))}
-              </Button>
+              {(apiType !== API_TYPES.OPENAI_SUBSCRIPTION || (!editingLlmModelId && !subscriptionCredential?.credentialId)) && (
+                <Button className="settings-model-add-button bg-[var(--w-indigo)]" isDisabled={openAiLoginPending} onPress={handleAddLlmModel}>
+                  {openAiLoginPending
+                    ? "等待登录..."
+                    : (apiType === API_TYPES.OPENAI_SUBSCRIPTION ? "登录 OpenAI" : (editingLlmModelId ? "保存修改" : "添加"))}
+                </Button>
+              )}
             </div>
           )}
           <Input

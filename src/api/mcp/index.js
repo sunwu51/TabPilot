@@ -142,6 +142,11 @@ function _requestOAuthFromServiceWorker(serverUrl, wwwAuthenticate, action = "au
   });
 }
 
+function _isOAuthChallenge(wwwAuthenticate) {
+  const challenge = String(wwwAuthenticate || "");
+  return /\bbearer\b/i.test(challenge) && /\bresource_metadata\s*=\s*"[^"]+"/i.test(challenge);
+}
+
 async function _rpcCallExtension(extensionId, method, params, timeoutMs) {
   const id = ++_rpcId;
   const response = await _sendExtensionMessage(extensionId, {
@@ -388,7 +393,7 @@ export async function connectMcpServer(url, headers = {}) {
       error: null
     };
   } catch (e) {
-    if (endpoint.type === "http" && e?.status === 401) {
+    if (endpoint.type === "http" && e?.status === 401 && _isOAuthChallenge(e.wwwAuthenticate)) {
       try {
         let token;
         if (endpoint.headers?.Authorization) {

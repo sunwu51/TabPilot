@@ -1,6 +1,4 @@
 /* global chrome */
-import { normalizeStoredModelConfig } from "../core/modelProfiles";
-
 export const OPENAI_SUBSCRIPTION_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const OPENAI_SUBSCRIPTION_API_URL = "https://chatgpt.com/backend-api/codex/responses";
 export const OPENAI_SUBSCRIPTION_API_TYPE = "openai-subscription";
@@ -16,10 +14,9 @@ const PENDING_TTL_MS = 5 * 60 * 1000;
 const CODEX_CLIENT_VERSION = "26.903.71938";
 const refreshTasks = new Map();
 
-export async function startOpenAiSubscriptionOAuth({ profileId, model }) {
+export async function startOpenAiSubscriptionOAuth({ profileId }) {
   const normalizedProfileId = String(profileId || "").trim();
-  const normalizedModel = String(model || "").trim();
-  if (!normalizedProfileId || !normalizedModel) throw new Error("模型不能为空");
+  if (!normalizedProfileId) throw new Error("订阅凭据 ID 不能为空");
 
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
@@ -46,7 +43,6 @@ export async function startOpenAiSubscriptionOAuth({ profileId, model }) {
       state,
       verifier,
       profileId: normalizedProfileId,
-      model: normalizedModel,
       tabId: tab.id,
       createdAt: Date.now()
     }
@@ -97,14 +93,15 @@ export async function handleOpenAiSubscriptionNavigation(details) {
     const availableModels = await fetchAvailableModels(credential).catch(() => []);
     const nextCredential = { ...credential, availableModels };
     await chrome.storage.local.set({ [`${CREDENTIAL_PREFIX}${pending.profileId}`]: nextCredential });
-    await upsertSubscriptionProfile(pending, nextCredential);
     await chrome.storage.session.remove(pendingKey);
     await finishLoginTab(details.tabId, true);
     Promise.resolve(chrome.runtime.sendMessage({
       type: "openai_subscription_oauth_completed",
       success: true,
       profileId: pending.profileId,
-      model: pending.model,
+      accountId: nextCredential.accountId || "",
+      email: nextCredential.email || "",
+      planType: nextCredential.planType || "",
       availableModels
     })).catch(() => {});
   } catch (error) {
@@ -223,35 +220,6 @@ async function getCredential(profileId) {
   const key = `${CREDENTIAL_PREFIX}${profileId}`;
   const stored = await chrome.storage.local.get(key);
   return stored[key] || null;
-}
-
-async function upsertSubscriptionProfile(pending, credential) {
-  const { llmConfig = {} } = await chrome.storage.local.get({ llmConfig: {} });
-  const current = normalizeStoredModelConfig(llmConfig);
-  const profile = {
-    id: pending.profileId,
-    name: `OpenAI · ${pending.model}`,
-    apiType: OPENAI_SUBSCRIPTION_API_TYPE,
-    baseUrl: "",
-    apiKey: "",
-    model: pending.model,
-    nativeWebSearch: true,
-    credentialId: pending.profileId,
-    accountId: credential.accountId || "",
-    email: credential.email || "",
-    planType: credential.planType || "",
-    requiresApiKey: false
-  };
-  const exists = current.llmModels.some(item => item.id === profile.id);
-  await chrome.storage.local.set({
-    llmConfig: normalizeStoredModelConfig({
-      ...current,
-      llmModels: exists
-        ? current.llmModels.map(item => item.id === profile.id ? profile : item)
-        : [...current.llmModels, profile],
-      activeLlmModelId: current.activeLlmModelId || profile.id
-    })
-  });
 }
 
 async function fetchAvailableModels(credential) {

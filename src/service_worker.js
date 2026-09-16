@@ -918,7 +918,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "openai_subscription_oauth") {
         let operation;
         if (msg.action === "authorize") {
-            operation = startOpenAiSubscriptionOAuth({ profileId: msg.profileId, model: msg.model });
+            operation = startOpenAiSubscriptionOAuth({ profileId: msg.profileId });
         } else if (msg.action === "access") {
             operation = ensureOpenAiSubscriptionAccess(msg.profileId, { force: msg.force === true });
         } else if (msg.action === "models") {
