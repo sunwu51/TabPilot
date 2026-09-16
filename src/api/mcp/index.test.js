@@ -209,6 +209,48 @@ describe("MCP Streamable HTTP session handling", () => {
       .rejects.toThrow("MCP error 404: still expired");
     expect(fetch).toHaveBeenCalledTimes(5);
   });
+
+  it("keeps a regular 401 error instead of treating it as an OAuth failure", async () => {
+    const { connectMcpServer } = await import("./index");
+    chrome.runtime.sendMessage = vi.fn();
+    fetch.mockResolvedValueOnce(mockJsonResponse("invalid api key", { status: 401 }));
+
+    await expect(connectMcpServer("https://mcp.example/rpc", {
+      Authorization: "Bearer invalid-api-key"
+    })).resolves.toMatchObject({
+      tools: [],
+      error: "MCP error 401: invalid api key"
+    });
+
+    expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("starts OAuth only for a protected-resource Bearer challenge", async () => {
+    const { connectMcpServer } = await import("./index");
+    chrome.runtime.sendMessage = vi.fn((message, callback) => {
+      callback({ success: false, error: "authorization cancelled" });
+    });
+    fetch.mockResolvedValueOnce(mockJsonResponse("unauthorized", {
+      status: 401,
+      headers: {
+        "WWW-Authenticate": "Bearer resource_metadata=\"https://mcp.example/.well-known/oauth-protected-resource\""
+      }
+    }));
+
+    await expect(connectMcpServer("https://mcp.example/rpc", {})).resolves.toMatchObject({
+      tools: [],
+      error: "OAuth 授权失败: authorization cancelled"
+    });
+
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "mcp_oauth",
+        action: "authorize",
+        serverUrl: "https://mcp.example/rpc"
+      }),
+      expect.any(Function)
+    );
+  });
 });
 
 describe("MCP extension transport", () => {

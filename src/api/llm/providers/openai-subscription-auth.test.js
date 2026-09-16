@@ -41,7 +41,7 @@ describe("OpenAI Subscription OAuth", () => {
     expect(chrome.tabs.update).not.toHaveBeenCalled();
   });
 
-  it("exchanges its PKCE callback and stores credentials outside llmConfig", async () => {
+  it("exchanges its PKCE callback without creating a model profile", async () => {
     chrome.storage.session = chrome.storage.local;
     const accessToken = jwt({
       exp: Math.floor(Date.now() / 1000) + 3600,
@@ -58,7 +58,7 @@ describe("OpenAI Subscription OAuth", () => {
       expires_in: 3600
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
-    const started = await startOpenAiSubscriptionOAuth({ profileId: "llm_subscription", model: "gpt-5-codex" });
+    const started = await startOpenAiSubscriptionOAuth({ profileId: "llm_subscription" });
     await expect(handleOpenAiSubscriptionNavigation({
       tabId: started.tabId,
       url: `http://localhost:1455/auth/callback?code=auth-code&state=${encodeURIComponent(started.state)}`
@@ -72,13 +72,13 @@ describe("OpenAI Subscription OAuth", () => {
       email: "user@example.com",
       planType: "plus"
     });
-    expect(stored.llmConfig.llmModels.find(profile => profile.id === "llm_subscription")).toMatchObject({
-      id: "llm_subscription",
-      apiType: "openai-subscription",
-      credentialId: "llm_subscription",
+    expect(stored.llmConfig).toBeUndefined();
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "openai_subscription_oauth_completed",
+      profileId: "llm_subscription",
       accountId: "account-123",
-      model: "gpt-5-codex"
-    });
-    expect(JSON.stringify(stored.llmConfig)).not.toContain("refresh-token");
+      email: "user@example.com",
+      planType: "plus"
+    }));
   });
 });
