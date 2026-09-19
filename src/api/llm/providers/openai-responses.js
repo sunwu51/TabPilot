@@ -32,7 +32,7 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       ...buildOpenAIResponsesReasoningFields(config),
       ...buildOpenAIResponsesIncludeFields(config, options),
       ...buildOpenAICacheFields(options),
-      ...(subscription ? { store: false } : {})
+      store: false
     };
     const requestBodyText = JSON.stringify(requestBody);
     onRequestBodySize?.({

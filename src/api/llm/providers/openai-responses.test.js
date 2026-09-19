@@ -278,6 +278,7 @@ describe("OpenAI responses reasoning helpers", () => {
     }], new AbortController().signal, {}, [], { includeBuiltins: false });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.store).toBe(false);
     expect(body.input[0]).toEqual({
       id: "ws_123",
       type: "web_search_call",
