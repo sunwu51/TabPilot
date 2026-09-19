@@ -278,6 +278,7 @@ describe("OpenAI responses reasoning helpers", () => {
     }], new AbortController().signal, {}, [], { includeBuiltins: false });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.store).toBe(false);
     expect(body.input[0]).toEqual({
       id: "ws_123",
       type: "web_search_call",
@@ -457,6 +458,28 @@ describe("OpenAI responses reasoning helpers", () => {
 
     expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ content: text }));
     expect(onDone.mock.calls[0][0].response_content).toHaveLength(1);
+  });
+
+  it("processes the final SSE data event when the stream has no trailing newline", async () => {
+    const text = "Final response";
+    const events = [
+      { type: "response.output_text.delta", output_index: 0, item_id: "msg_final", delta: text },
+      { type: "response.completed", response: { id: "resp_final", output: [] } }
+    ];
+    const body = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join("").trimEnd();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    })));
+    const onDone = vi.fn();
+
+    await streamOpenAIResponsesAttempt({
+      baseUrl: "https://api.openai.test/v1/responses",
+      apiKey: "test-key",
+      model: "gpt-test"
+    }, [], new AbortController().signal, { onDone }, [], { includeBuiltins: false });
+
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ content: text, response_id: "resp_final" }));
   });
 
   it("extracts streamed reasoning deltas", () => {
