@@ -8,6 +8,10 @@ import { buildAnthropicReasoningFields } from "../core/reasoning";
 
 // ==================== Anthropic Messages API ====================
 
+// 开启 thinking 后思考会占用输出预算，默认值需留足工具参数的空间
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 32000;
+const MAX_ANTHROPIC_MAX_TOKENS = 128000;
+
 export async function streamAnthropicAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
   const tools = getTools(API_TYPES.ANTHROPIC, mcpTools, options);
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
@@ -35,7 +39,7 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
         system: systemPrompt,
         messages: apiMessages,
         ...(tools.length > 0 ? { tools } : {}),
-        max_tokens: normalizeStreamMaxTokens(options.maxTokens, 4096),
+        max_tokens: normalizeStreamMaxTokens(options.maxTokens, DEFAULT_ANTHROPIC_MAX_TOKENS),
         stream: true,
         ...buildAnthropicReasoningFields(config)
       }),
@@ -68,6 +72,7 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
     let buffer = "";
     let sawToolUseBlock = false;
     let usage = {};
+    let stopReason = null;
 
     for (;;) {
       const { done, value } = await reader.read();
@@ -89,6 +94,9 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
         try {
           const json = JSON.parse(data);
           usage = mergeAnthropicUsage(usage, extractAnthropicStreamUsage(json));
+          if (json.type === "message_delta" && json.delta?.stop_reason) {
+            stopReason = json.delta.stop_reason;
+          }
 
           if (json.type === "content_block_start") {
             const index = getAnthropicEventIndex(json);
@@ -159,6 +167,11 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
       }
     }
 
+    const truncatedByMaxTokens = stopReason === "max_tokens";
+    const hasUnclosedToolUse = [...activeContentBlocks.values()].some(block => block.type === "tool_use");
+    if (truncatedByMaxTokens && hasUnclosedToolUse) {
+      throw createMaxTokensTruncatedError(usage);
+    }
 
     const parseFailures = [];
     const parsedToolUsesByBlock = new Map();
@@ -181,6 +194,7 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
       .filter(Boolean);
 
     if (parseFailures.length > 0) {
+      if (truncatedByMaxTokens) throw createMaxTokensTruncatedError(usage);
       throw createLlmStreamError({
         code: "TOOL_CALL_PARSE_ERROR",
         message: "工具调用参数解析失败",
@@ -226,7 +240,15 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
 function normalizeStreamMaxTokens(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return fallback;
-  return Math.min(8192, Math.floor(number));
+  return Math.min(MAX_ANTHROPIC_MAX_TOKENS, Math.floor(number));
+}
+
+function createMaxTokensTruncatedError(usage) {
+  return createLlmStreamError({
+    code: "MAX_TOKENS_TRUNCATED",
+    message: "模型输出达到 max_tokens 上限，工具调用被截断",
+    detail: { stopReason: "max_tokens", usage }
+  });
 }
 
 function getAnthropicEventIndex(event) {
