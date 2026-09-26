@@ -721,7 +721,7 @@ export const TOOLS = [
   {
     name: "tab_screenshot",
     description:
-      "Capture a screenshot of a browser tab. By default captures only the visible viewport using Chrome's captureVisibleTab (requires that tab to be active in its window). Set fullPage: true to capture the full scrollable page by stitching multiple viewport screenshots. In full-page mode, sticky headers (position:fixed/sticky elements near the top) are automatically hidden after the first frame to prevent content obstruction. Output is width-capped JPEG for readability.",
+      "Capture a screenshot of a browser tab. By default captures only the visible viewport using Chrome's captureVisibleTab (requires that tab to be active in its window). Set fullPage: true to capture the full scrollable page by stitching multiple viewport screenshots. In full-page mode, sticky headers (position:fixed/sticky elements near the top) are automatically hidden after the first frame to prevent content obstruction. Output is width-capped JPEG for readability. Also works on this extension's own Playground / Web IDE tabs (viewport only; fullPage is ignored there), so use it to visually verify frontend code you wrote.",
     schema: {
       type: "object",
       properties: {

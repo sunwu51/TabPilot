@@ -2043,6 +2043,12 @@ export default function AgentPanel() {
       void releaseSessionLock(previousSessionId, currentWindowIdRef.current);
     }
     activeSessionIdRef.current = id;
+    // Re-sync after the await: the previous session's stream callbacks may have
+    // written into the shared streaming UI state while the ref still pointed at it.
+    setStreamingContent(sessionStreamingRef.current.get(id) ?? null);
+    setStreamingThinking(sessionStreamingThinkingRef.current.get(id) ?? null);
+    setStreamingToolArgs(sessionStreamingToolArgsRef.current.get(id) ?? null);
+    setStreamingWebSearches(sessionStreamingWebSearchesRef.current.get(id) ?? null);
     setSessionQueuedMessages(id, meta.queuedMessages);
     perf.mark("before-setSessionMessages");
     setSessionMessages(id, msgs);

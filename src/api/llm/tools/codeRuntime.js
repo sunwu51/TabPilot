@@ -3,7 +3,7 @@ import { BUILTIN_TOOL_GROUPS, getBuiltinToolGroup, getCodeRuntimeToolDefinitions
 import { getBuiltinToolOutputSchema } from "./outputExamples";
 import { findMcpRuntimeTool, groupMcpToolsByServer } from "./mcpRuntime";
 
-const MAX_CODE_CHARS = 20000;
+const MAX_CODE_CHARS = 200000;
 const MAX_LOG_ENTRIES = 100;
 const MAX_RUNTIME_CALL_SUMMARY_CHARS = 200;
 const JS_IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
