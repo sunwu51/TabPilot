@@ -513,6 +513,16 @@ async function _loadImageFromDataUrl(dataUrl) {
 
   throw new Error("No browser image decoder is available in this context");
 }
+async function _resolveOwnExtensionTab(tabId) {
+  let tab = null;
+  try {
+    tab = tabId != null ? await chrome.tabs.get(tabId) : await _getActiveTabInCurrentExtensionWindow();
+  } catch {
+    return null;
+  }
+  const url = tab?.url || tab?.pendingUrl || "";
+  return tab && url.startsWith(chrome.runtime.getURL("")) ? { tab } : null;
+}
 const FULL_PAGE_MAX_STITCH_PX = 16000;
 /** When true, draws a 2px red bar at each new tile boundary (top of stitched segment) for debugging. */
 const FULL_PAGE_STITCH_DEBUG_BORDER = false;
@@ -525,7 +535,9 @@ export async function _execTabScreenshot(args = {}) {
     settleMs: settleMsRaw
   } = args;
 
-  const resolved = await _resolveControllableTab(tabId, "screenshot");
+  // Own extension pages (Playground / Web IDE) can't be scripted, but captureVisibleTab still works on them.
+  const ownPage = await _resolveOwnExtensionTab(tabId);
+  const resolved = ownPage || await _resolveControllableTab(tabId, "screenshot");
   if (resolved.error) return { error: resolved.error };
 
   const tab = resolved.tab;
@@ -534,11 +546,13 @@ export async function _execTabScreenshot(args = {}) {
   const maxScreens = Number.isFinite(maxScreensRaw) ? Math.max(1, Math.min(100, Math.floor(maxScreensRaw))) : 40;
   const settleMs = Number.isFinite(settleMsRaw) ? Math.max(0, Math.min(5000, settleMsRaw)) : 250;
 
-  const isFullPage = fullPage === true;
+  const isFullPage = fullPage === true && !ownPage;
 
   const baseNote = isFullPage
     ? "Full-page stitch: tab window was focused; scroll position restored when possible."
-    : "Optimized screenshot of the visible tab.";
+    : ownPage && fullPage === true
+      ? "Extension page: fullPage is not supported, captured the visible viewport only."
+      : "Optimized screenshot of the visible tab.";
 
   if (!isFullPage) {
     try {
