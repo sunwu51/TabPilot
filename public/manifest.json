@@ -2,7 +2,7 @@
   "name": "TabPilot - AI Tab Manager",
   "short_name": "TabPilot",
   "description": "TabPilot is an AI-powered tab manager for Chrome.\nTabPilot 是 AI 驱动的 Chrome 标签页管理助手。",
-  "version": "1.5.6.19",
+  "version": "1.5.6.20",
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"
@@ -26,7 +26,8 @@
     "history",
     "storage",
     "scripting",
-    "identity"
+    "identity",
+    "declarativeNetRequestWithHostAccess"
   ],
   "optional_permissions": [
     "downloads"
