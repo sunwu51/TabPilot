@@ -1,4 +1,5 @@
 /* global chrome */
+import { CODEX_SUBSCRIPTION_ORIGINATOR, CODEX_SUBSCRIPTION_USER_AGENT, CODEX_SUBSCRIPTION_VERSION, ensureCodexSubscriptionUserAgent } from "./openai-subscription-headers";
 export const OPENAI_SUBSCRIPTION_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const OPENAI_SUBSCRIPTION_API_URL = "https://chatgpt.com/backend-api/codex/responses";
 export const OPENAI_SUBSCRIPTION_API_TYPE = "openai-subscription";
@@ -31,7 +32,7 @@ export async function startOpenAiSubscriptionOAuth({ profileId }) {
     id_token_add_organizations: "true",
     codex_cli_simplified_flow: "true",
     state,
-    originator: "codex_cli_rs"
+    originator: CODEX_SUBSCRIPTION_ORIGINATOR
   };
   const authUrl = `${AUTHORIZE_URL}?${Object.entries(authParams)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
@@ -223,11 +224,14 @@ async function getCredential(profileId) {
 }
 
 async function fetchAvailableModels(credential) {
+  await ensureCodexSubscriptionUserAgent();
   const headers = {
     Accept: "application/json",
     Authorization: `Bearer ${credential.accessToken}`,
     "ChatGPT-Account-Id": credential.accountId,
-    originator: "codex_cli_rs"
+    originator: CODEX_SUBSCRIPTION_ORIGINATOR,
+    "User-Agent": CODEX_SUBSCRIPTION_USER_AGENT,
+    version: CODEX_SUBSCRIPTION_VERSION
   };
   const endpoints = [
     `https://chatgpt.com/backend-api/codex/models?client_version=${encodeURIComponent(CODEX_CLIENT_VERSION)}`,

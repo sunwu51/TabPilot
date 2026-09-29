@@ -4,6 +4,7 @@ import { buildLlmAuthHeaders, isConfiguredImageProfile, normalizeLlmModelProfile
 import { API_TYPES } from "../../core/config";
 import { resolveLlmRequestUrl } from "../../core/endpoint";
 import { OPENAI_SUBSCRIPTION_API_URL, requestOpenAiSubscriptionAccess } from "../../providers/openai-subscription-auth";
+import { buildCodexSubscriptionHeaders, ensureCodexSubscriptionUserAgent } from "../../providers/openai-subscription-headers";
 import { ensureSettingsMigrated } from "../../../settings/migrations";
 
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
@@ -243,12 +244,8 @@ async function executeOpenAiBuiltinImageGeneration(args, config, { prompt, image
     let headers = { "Content-Type": "application/json", Accept: "text/event-stream", ...buildLlmAuthHeaders(source) };
     if (subscription) {
       const credential = await requestOpenAiSubscriptionAccess(source.credentialId || source.id, { force: forceRefresh });
-      headers = {
-        ...headers,
-        Authorization: `Bearer ${credential.accessToken}`,
-        "ChatGPT-Account-Id": credential.accountId || source.accountId,
-        originator: "codex_cli_rs"
-      };
+      await ensureCodexSubscriptionUserAgent();
+      headers = buildCodexSubscriptionHeaders(credential, body, source.accountId);
     }
     return fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   };

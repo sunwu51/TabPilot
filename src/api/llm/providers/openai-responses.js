@@ -7,6 +7,7 @@ import { isLongToolArgumentName } from "../core/longToolArgs";
 import { buildOpenAIResponsesReasoningFields, normalizeReasoningEffort } from "../core/reasoning";
 import { buildLlmAuthHeaders } from "../core/modelProfiles";
 import { OPENAI_SUBSCRIPTION_API_URL, requestOpenAiSubscriptionAccess } from "./openai-subscription-auth";
+import { buildCodexSubscriptionHeaders, ensureCodexSubscriptionUserAgent } from "./openai-subscription-headers";
 
 export async function streamOpenAIResponsesAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onNativeWebSearch, onRequestBodySize }, mcpTools = [], options = {}) {
   const tools = [
@@ -41,14 +42,17 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
       model: config.model || ""
     });
 
-    const request = async (forceRefresh = false) => fetch(url, {
+    const request = async (forceRefresh = false) => {
+      if (subscription) await ensureCodexSubscriptionUserAgent();
+      return fetch(url, {
         method: "POST",
         headers: subscription
-          ? await buildSubscriptionHeaders(config, forceRefresh)
+          ? await buildSubscriptionHeaders(config, requestBody, forceRefresh)
           : { "Content-Type": "application/json", ...buildLlmAuthHeaders(config) },
         body: requestBodyText,
         signal: timeoutState.signal
       });
+    };
     let res = await request();
     if (subscription && res.status === 401) res = await request(true);
 
@@ -215,17 +219,12 @@ export async function streamOpenAIResponsesAttempt(config, messages, signal, { o
   }
 }
 
-async function buildSubscriptionHeaders(config, forceRefresh) {
+async function buildSubscriptionHeaders(config, body, forceRefresh) {
   const credential = await requestOpenAiSubscriptionAccess(config.credentialId || config.activeLlmModelId, { force: forceRefresh });
   return {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-    Authorization: `Bearer ${credential.accessToken}`,
-    ...(credential.accountId || config.accountId ? { "ChatGPT-Account-Id": credential.accountId || config.accountId } : {}),
-    originator: "codex_cli_rs",
+    ...buildCodexSubscriptionHeaders(credential, body, config.accountId),
     "OpenAI-Beta": "responses_websockets=2026-02-06",
-    "x-openai-internal-codex-residency": "us",
-    "x-client-request-id": crypto.randomUUID()
+    "x-openai-internal-codex-residency": "us"
   };
 }
 

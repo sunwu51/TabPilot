@@ -1,4 +1,5 @@
 import { deflateStringToQueryParam, inflateStringFromQueryParam } from "./utils/playgroundCodec";
+import { createShortLink } from "./utils/shortLink";
 import { javascript } from "@codemirror/lang-javascript";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
@@ -17,7 +18,7 @@ const shareButton = document.createElement("button");
 const exportButton = document.createElement("button");
 const controlBar = document.createElement("div");
 const root = document.getElementById("root");
-const PUBLIC_PLAYGROUND_BASE_URL = "https://sunwu51.github.io/HtmlPlaygroud/";
+const PUBLIC_PLAYGROUND_BASE_URL = "https://sunwu51.github.io/HtmlPlayground/";
 
 let expanded = parseExpanded(params.get("expanded"));
 const embedded = params.get("embedded") === "1" && window.parent !== window;
@@ -51,7 +52,7 @@ exportButton.title = "导出当前预览源码为 HTML 文件";
 shareButton.id = "share-url";
 shareButton.type = "button";
 shareButton.textContent = "分享";
-shareButton.title = "复制可公开访问的 GitHub Pages playground 链接";
+shareButton.title = "复制可公开访问的 playground 短链接（7 天有效）";
 
 controlBar.className = "control-bar";
 controlBar.append(toggleButton, shareButton, exportButton);
@@ -163,29 +164,39 @@ function downloadHtml() {
   }
 }
 
-function serializeQueryString({ forceCollapsed = false } = {}) {
+// HtmlPlayground reads share data from the URL hash, which is never sent to the server,
+// so long payloads are not cut off by the host's URL length limit.
+function serializeShareHash({ forceCollapsed = false } = {}) {
   const next = new URLSearchParams();
   next.set("html", deflateStringToQueryParam(valueOf(htmlInput)));
   next.set("css", deflateStringToQueryParam(valueOf(cssInput)));
   next.set("js", deflateStringToQueryParam(valueOf(jsInput)));
   next.set("expanded", forceCollapsed ? "0" : (expanded ? "1" : "0"));
-  return `?${next.toString()}`;
+  return `#${next.toString()}`;
 }
 
 function buildShareUrl() {
   const publicUrl = new URL(PUBLIC_PLAYGROUND_BASE_URL);
-  publicUrl.search = serializeQueryString({ forceCollapsed: true });
+  publicUrl.hash = serializeShareHash({ forceCollapsed: true });
   return publicUrl.toString();
 }
 
 async function copyShareUrl() {
-  const shareUrl = buildShareUrl();
+  if (shareButton.disabled) return;
+  const longUrl = buildShareUrl();
+  shareButton.disabled = true;
+  shareButton.textContent = "生成中…";
+  // Falls back to the full link if the short link service is unavailable.
+  const shortUrl = await createShortLink(longUrl);
+  const shareUrl = shortUrl || longUrl;
+  shareButton.disabled = false;
+  const doneText = shortUrl ? "已复制" : "已复制长链";
   try {
     await navigator.clipboard.writeText(shareUrl);
-    flashShareButton("已复制");
+    flashShareButton(doneText);
   } catch (error) {
     fallbackCopyText(shareUrl);
-    flashShareButton("已复制");
+    flashShareButton(doneText);
   }
 }
 
@@ -202,10 +213,9 @@ function fallbackCopyText(text) {
 }
 
 function flashShareButton(text) {
-  const originalText = shareButton.textContent;
   shareButton.textContent = text;
   setTimeout(() => {
-    shareButton.textContent = originalText;
+    shareButton.textContent = "分享";
   }, 1200);
 }
 
