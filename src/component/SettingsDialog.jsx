@@ -1072,7 +1072,7 @@ function SettingsDialogBody() {
             <div className="settings-api-url-hint">关键词总结默认使用当前聊天模型</div>
           )}
           {llmModelFormOpen && (
-            <div key={llmFormKey} className="settings-model-form">
+            <div key={`llm-form-${llmFormKey}`} className="settings-model-form">
               <Select
                 label="API 类型"
                 items={["OpenAI Chat Completions", "OpenAI Responses", "OpenAI Subscription", "Anthropic"]}
@@ -1371,7 +1371,7 @@ function SettingsDialogBody() {
             {imageModelFormOpen ? (editingImageModelId ? "取消编辑" : "收起添加图片模型") : "添加图片模型"}
           </Button>
           {imageModelFormOpen && (
-            <div key={imageFormKey} className="settings-model-form">
+            <div key={`image-form-${imageFormKey}`} className="settings-model-form">
               <Select
                 label="Image API 规范"
                 items={imageProtocolOptions.map((item) => item.label)}
