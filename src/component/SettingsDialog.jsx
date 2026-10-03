@@ -7,7 +7,6 @@ import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llm/core/endpoint";
 import {
   API_TYPES,
-  DEFAULT_LLM7_FREE_LLM_MODEL_ID,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_MODEL_CONTEXT_LIMIT_TOKENS,
   IMAGE_API_PROTOCOLS,
@@ -1004,50 +1003,46 @@ function SettingsDialogBody() {
                 title={`${item.name}\n${item.apiType}\n${item.baseUrl}`}
               >
                 <span className="settings-model-badge-name">{item.name}</span>
-                {item.id !== DEFAULT_LLM7_FREE_LLM_MODEL_ID && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="settings-model-badge-remove"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleRemoveLlmModel(item.id);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleRemoveLlmModel(item.id);
-                    }}
-                    aria-label={`删除 ${item.name}`}
-                    title="删除"
-                  >
-                    ×
-                  </span>
-                )}
-                {item.id !== DEFAULT_LLM7_FREE_LLM_MODEL_ID && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="settings-model-badge-edit"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      handleEditLlmModel(item);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      event.stopPropagation();
-                      handleEditLlmModel(item);
-                    }}
-                    aria-label={`编辑 ${item.name}`}
-                    title="编辑"
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
-                    </svg>
-                  </span>
-                )}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="settings-model-badge-remove"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleRemoveLlmModel(item.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleRemoveLlmModel(item.id);
+                  }}
+                  aria-label={`删除 ${item.name}`}
+                  title="删除"
+                >
+                  ×
+                </span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="settings-model-badge-edit"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    handleEditLlmModel(item);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleEditLlmModel(item);
+                  }}
+                  aria-label={`编辑 ${item.name}`}
+                  title="编辑"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                  </svg>
+                </span>
               </button>
             ))}
           </div>
@@ -1077,7 +1072,7 @@ function SettingsDialogBody() {
             <div className="settings-api-url-hint">关键词总结默认使用当前聊天模型</div>
           )}
           {llmModelFormOpen && (
-            <div key={llmFormKey} className="settings-model-form">
+            <div key={`llm-form-${llmFormKey}`} className="settings-model-form">
               <Select
                 label="API 类型"
                 items={["OpenAI Chat Completions", "OpenAI Responses", "OpenAI Subscription", "Anthropic"]}
@@ -1376,7 +1371,7 @@ function SettingsDialogBody() {
             {imageModelFormOpen ? (editingImageModelId ? "取消编辑" : "收起添加图片模型") : "添加图片模型"}
           </Button>
           {imageModelFormOpen && (
-            <div key={imageFormKey} className="settings-model-form">
+            <div key={`image-form-${imageFormKey}`} className="settings-model-form">
               <Select
                 label="Image API 规范"
                 items={imageProtocolOptions.map((item) => item.label)}

@@ -12,31 +12,29 @@ import {
 import { isImageApiConfigured } from "../tools/builtins/imageApi";
 
 describe("modelProfiles", () => {
-  it("provides the LLM7 default selector without requiring an API key", () => {
+  it("has no built-in LLM profile when nothing is configured", () => {
     const normalized = normalizeLlmModelProfiles({ llmModels: [] });
 
-    expect(normalized).toMatchObject({
-      activeId: "llm_llm7_default",
-      activeProfile: {
-        name: "Free",
-        baseUrl: "https://api.llm7.io",
-        model: "default",
-        requiresApiKey: false,
-        supportsReasoning: false
-      }
-    });
-    expect(resolveActiveLlmConfig({ llmModels: [], reasoningEffort: "medium" })).toMatchObject({
+    expect(normalized).toEqual({ profiles: [], activeId: "", activeProfile: null });
+    expect(isLlmConfigUsable({ llmModels: [] })).toBe(false);
+  });
+
+  it("keeps supportsReasoning=false from a profile", () => {
+    expect(resolveActiveLlmConfig({
+      llmModels: [{ id: "llm_a", baseUrl: "https://api.example.com/v1", apiKey: "sk", model: "m", supportsReasoning: false }],
+      reasoningEffort: "medium"
+    })).toMatchObject({
       supportsReasoning: false,
       reasoningEffort: "medium"
     });
-    expect(isLlmConfigUsable({ llmModels: [] })).toBe(true);
   });
 
-  it("removes retired OpenCode profiles and falls back to the first configured model", () => {
+  it("removes retired built-in profiles and falls back to the first configured model", () => {
     const normalized = normalizeLlmModelProfiles({
-      activeLlmModelId: "llm_opencode_zen_big_pickle",
+      activeLlmModelId: "llm_llm7_default",
       llmModels: [
         { id: "llm_opencode_zen_big_pickle", model: "big-pickle", baseUrl: "https://opencode.ai/zen/v1/chat/completions" },
+        { id: "llm_llm7_default", model: "default", baseUrl: "https://api.llm7.io", requiresApiKey: false },
         {
           id: "llm_custom",
           name: "Custom",
@@ -48,11 +46,11 @@ describe("modelProfiles", () => {
       ]
     });
 
-    expect(normalized.profiles.map(item => item.id)).toEqual(["llm_llm7_default", "llm_custom"]);
+    expect(normalized.profiles.map(item => item.id)).toEqual(["llm_custom"]);
     expect(normalized.activeId).toBe("llm_custom");
   });
 
-  it("uses LLM7 for keyword summaries until explicitly overridden", () => {
+  it("uses the active model for keyword summaries until explicitly overridden", () => {
     const config = {
       activeLlmModelId: "llm_custom",
       llmModels: [
@@ -62,9 +60,8 @@ describe("modelProfiles", () => {
     };
 
     expect(resolveKeywordSummaryLlmConfig(config)).toMatchObject({
-      keywordSummaryModelId: "llm_llm7_default",
-      model: "default",
-      supportsReasoning: false
+      keywordSummaryModelId: "llm_custom",
+      model: "custom-model"
     });
     expect(resolveKeywordSummaryLlmConfig({ ...config, keywordSummaryUseCustomModel: true, keywordSummaryModelId: "llm_summary" })).toMatchObject({
       keywordSummaryModelId: "llm_summary",

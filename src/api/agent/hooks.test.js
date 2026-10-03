@@ -60,7 +60,6 @@ describe("agent hooks", () => {
       activeLlmModelId: "profile_a"
     });
     expect(runtime.profiles()).toEqual([
-      expect.objectContaining({ id: "llm_llm7_default", model: "default", requiresApiKey: false }),
       expect.objectContaining({ id: "profile_a", model: "memory-model" })
     ]);
     expect(JSON.stringify(runtime.profiles())).not.toContain("secret");
