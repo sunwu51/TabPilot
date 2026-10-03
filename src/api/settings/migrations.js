@@ -13,7 +13,7 @@ import {
   createImageModelProfileId
 } from "../llm/core/modelProfiles";
 
-export const SETTINGS_SCHEMA_VERSION = 4;
+export const SETTINGS_SCHEMA_VERSION = 5;
 export const SETTINGS_SCHEMA_VERSION_KEY = "settingsSchemaVersion";
 
 const LEGACY_LLM_CONFIG_KEYS = [
@@ -39,6 +39,8 @@ const LEGACY_LLM_CONFIG_KEYS = [
  * v3 removes the retired built-in OpenCode profiles and points keyword
  * summaries at the active user-configured model.
  * v4 adds the keyless LLM7 default selector and uses it for keyword summaries.
+ * v5 retires the LLM7 selector (frequent 429s) and points keyword summaries
+ * back at the active user-configured model.
  * Keep SETTINGS_SCHEMA_VERSION_KEY for future storage migrations.
  */
 export async function ensureSettingsMigrated() {
@@ -61,7 +63,7 @@ export async function ensureSettingsMigrated() {
   const migratedLlmConfig = currentVersion < 2
     ? migrateModelProfilesV2(values.llmConfig || {})
     : values.llmConfig || {};
-  if (currentVersion < 4) patch.llmConfig = normalizeStoredModelConfig(migratedLlmConfig);
+  if (currentVersion < 5) patch.llmConfig = normalizeStoredModelConfig(migratedLlmConfig);
 
   await chrome.storage.local.set(patch);
   return { migrated: true, version: SETTINGS_SCHEMA_VERSION };

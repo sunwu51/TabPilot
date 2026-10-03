@@ -7,20 +7,10 @@ import {
 
 const RETIRED_BUILTIN_LLM_MODEL_IDS = new Set([
   "llm_opencode_zen_big_pickle",
-  "llm_opencode_zen_deepseek_v4_flash_free"
+  "llm_opencode_zen_deepseek_v4_flash_free",
+  "llm_llm7_default"
 ]);
-export const DEFAULT_LLM7_FREE_LLM_MODEL_ID = "llm_llm7_default";
-export const DEFAULT_LLM7_FREE_LLM_PROFILE = Object.freeze({
-  id: DEFAULT_LLM7_FREE_LLM_MODEL_ID,
-  name: "Free",
-  apiType: API_TYPES.OPENAI_CHAT_COMPLETIONS,
-  baseUrl: "https://api.llm7.io",
-  apiKey: "",
-  model: "default",
-  requiresApiKey: false,
-  supportsReasoning: false
-});
-export const DEFAULT_LLM_MODEL_PROFILES = Object.freeze([DEFAULT_LLM7_FREE_LLM_PROFILE]);
+export const DEFAULT_LLM_MODEL_PROFILES = Object.freeze([]);
 export const DEFAULT_IMAGE_MODEL_PROFILE = "gpt-image-2";
 export const DEFAULT_IMAGE_API_PROTOCOL = "generate";
 export const IMAGE_CHAT_COMPLETIONS_PROTOCOL = "chat_completions";
@@ -62,18 +52,13 @@ export function normalizeImageProfileProtocol(value) {
 
 export function normalizeLlmModelProfiles(llmConfig = {}) {
   const rawProfiles = Array.isArray(llmConfig.llmModels) ? llmConfig.llmModels : [];
-  const sourceProfiles = [
-    DEFAULT_LLM7_FREE_LLM_PROFILE,
-    ...rawProfiles.filter(item => !isBuiltinLlmModelProfileId(item?.id))
-  ];
+  const sourceProfiles = rawProfiles.filter(item => !isRetiredBuiltinLlmModelProfileId(item?.id));
   const profiles = sourceProfiles
     .map((item, index) => normalizeLlmModelProfile(item, index))
     .filter(Boolean)
     .filter(dedupeProfileById());
 
-  const fallbackProfile = rawProfiles.length > 0
-    ? (profiles.find(item => item.id !== DEFAULT_LLM7_FREE_LLM_MODEL_ID) || profiles[0])
-    : profiles[0];
+  const fallbackProfile = profiles[0];
   const activeId = profiles.some(item => item.id === llmConfig.activeLlmModelId)
     ? llmConfig.activeLlmModelId
     : (fallbackProfile?.id || "");
@@ -118,17 +103,15 @@ export function resolveActiveLlmConfig(llmConfig = {}) {
 }
 
 export function resolveKeywordSummaryLlmConfig(llmConfig = {}) {
-  const { profiles } = normalizeLlmModelProfiles(llmConfig);
+  const { profiles, activeProfile } = normalizeLlmModelProfiles(llmConfig);
   const requestedId = llmConfig.keywordSummaryUseCustomModel === true
     ? String(llmConfig.keywordSummaryModelId || "").trim()
-    : DEFAULT_LLM7_FREE_LLM_MODEL_ID;
-  const profile = profiles.find(item => item.id === requestedId) ||
-    profiles.find(item => item.id === DEFAULT_LLM7_FREE_LLM_MODEL_ID) ||
-    null;
+    : "";
+  const profile = profiles.find(item => item.id === requestedId) || activeProfile || null;
   return {
     ...llmConfig,
     keywordSummaryUseCustomModel: llmConfig.keywordSummaryUseCustomModel === true,
-    keywordSummaryModelId: profile?.id || DEFAULT_LLM7_FREE_LLM_MODEL_ID,
+    keywordSummaryModelId: profile?.id || "",
     apiType: normalizeApiType(profile?.apiType || getDefaultApiType()),
     baseUrl: profile?.baseUrl ?? "",
     apiKey: profile?.apiKey ?? "",
@@ -198,7 +181,7 @@ export function normalizeStoredModelConfig(llmConfig = {}) {
     keywordSummaryUseCustomModel: llmConfig.keywordSummaryUseCustomModel === true,
     keywordSummaryModelId: llmConfig.keywordSummaryUseCustomModel === true && llmProfiles.profiles.some(item => item.id === llmConfig.keywordSummaryModelId)
       ? llmConfig.keywordSummaryModelId
-      : DEFAULT_LLM7_FREE_LLM_MODEL_ID,
+      : llmProfiles.activeId,
     activeImageModelId: imageProfiles.activeId,
     imageModels: imageProfiles.profiles
   };
@@ -255,9 +238,9 @@ export function buildLlmAuthHeaders(config = {}, headerName = "Authorization") {
   return { [headerName]: `Bearer ${apiKey}` };
 }
 
-function isBuiltinLlmModelProfileId(id) {
+function isRetiredBuiltinLlmModelProfileId(id) {
   const normalizedId = String(id || "").trim();
-  return normalizedId === DEFAULT_LLM7_FREE_LLM_MODEL_ID || RETIRED_BUILTIN_LLM_MODEL_IDS.has(normalizedId);
+  return RETIRED_BUILTIN_LLM_MODEL_IDS.has(normalizedId);
 }
 
 function dedupeProfileById() {
