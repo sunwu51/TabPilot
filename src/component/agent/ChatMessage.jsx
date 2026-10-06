@@ -182,8 +182,19 @@ const ChatMessage = memo(function ChatMessage({
   // Assistant message
   if (role === "assistant") {
     const rendered = [];
-    if (Array.isArray(msg.web_searches) && msg.web_searches.length > 0) {
-      rendered.push(<AssistantWebSearchBubble key="web-searches" actions={msg.web_searches} />);
+    const webSearches = (Array.isArray(msg.web_searches) && msg.web_searches.length > 0)
+      ? msg.web_searches
+      : (Array.isArray(content)
+          ? content.filter(b => b?.type === "server_tool_use" && (b.name === "web_search" || b.name?.includes("search")))
+              .map(b => {
+                const input = b.input || {};
+                const q = input.query || input.queries || input.search_query || input.q || "";
+                return { type: "search", query: q };
+              })
+          : []);
+
+    if (webSearches.length > 0) {
+      rendered.push(<AssistantWebSearchBubble key="web-searches" actions={webSearches} />);
     }
 
     // Anthropic format: content is array of blocks
@@ -191,21 +202,33 @@ const ChatMessage = memo(function ChatMessage({
       for (let i = 0; i < content.length; i++) {
         const block = content[i];
         if (!block) continue;
-        if (block.type === "text" && hasVisibleText(block.text)) {
-          rendered.push(
-            <AssistantTextBubble
-              key={`t${i}`}
-              text={block.text}
-              searchState={messageSearchState}
-              imageEditingEnabled={imageEditingEnabled}
-              onImageEditRequest={onImageEditRequest}
-              imageSrcResolver={imageSrcResolver}
-              imageRefNavigator={imageRefNavigator}
-              sessionId={sessionId}
-            />
-          );
+        if (block.type === "text") {
+          let mergedText = block.text || "";
+          let nextIdx = i + 1;
+          while (nextIdx < content.length && content[nextIdx]?.type === "text") {
+            mergedText += content[nextIdx].text || "";
+            nextIdx++;
+          }
+          i = nextIdx - 1;
+
+          if (hasVisibleText(mergedText)) {
+            rendered.push(
+              <AssistantTextBubble
+                key={`t${i}`}
+                text={mergedText}
+                searchState={messageSearchState}
+                imageEditingEnabled={imageEditingEnabled}
+                onImageEditRequest={onImageEditRequest}
+                imageSrcResolver={imageSrcResolver}
+                imageRefNavigator={imageRefNavigator}
+                sessionId={sessionId}
+              />
+            );
+          }
         } else if (block.type === "thinking" || block.type === "redacted_thinking") {
-          rendered.push(<ThinkingBlock key={`th${i}`} block={block} />);
+          if (block.type === "redacted_thinking" || hasVisibleText(block.thinking)) {
+            rendered.push(<ThinkingBlock key={`th${i}`} block={block} />);
+          }
         } else if (block.type === "tool_use") {
           rendered.push(<ToolCallBlock key={`tc${i}`} name={block.name} input={block.input} />);
         }
@@ -264,6 +287,10 @@ const ChatMessage = memo(function ChatMessage({
       );
     }
 
+    if (Array.isArray(msg.citations) && msg.citations.length > 0) {
+      rendered.push(<AssistantCitationsBubble key="citations" citations={msg.citations} />);
+    }
+
     // If we rendered something from array/tool_calls, return it
     if (rendered.length > 0) return <>{rendered}</>;
 
@@ -301,6 +328,37 @@ function AssistantWebSearchBubble({ actions = [] }) {
             <div key={`${action?.type || "action"}-${index}-${labelIndex}`}>✓ {label}</div>
           ));
         })}
+      </div>
+    </div>
+  );
+}
+
+function AssistantCitationsBubble({ citations = [] }) {
+  if (!Array.isArray(citations) || citations.length === 0) return null;
+  return (
+    <div className="chat-msg chat-msg-assistant">
+      <div className="chat-bubble chat-bubble-assistant native-citations-bubble">
+        <strong className="chat-citations-title">参考来源</strong>
+        <div className="chat-citations-list">
+          {citations.map((item, index) => {
+            const url = item.url || "";
+            const title = item.title || url;
+            return (
+              <div key={`${url}-${index}`} className="chat-citation-item">
+                <span className="chat-citation-index">[{index + 1}]</span>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="chat-citation-link"
+                  title={item.citedText ? `${title}\n\n${item.citedText}` : title}
+                >
+                  {title}
+                </a>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -701,6 +759,8 @@ function ThinkingBlock({ block }) {
   const redactedData = typeof block?.data === "string" ? block.data : "";
   const summary = isRedacted ? "内容已脱敏" : buildThinkingSummary(thinkingText);
 
+  if (!isRedacted && !hasVisibleText(thinkingText)) return null;
+
   return (
     <div className="tool-result-msg thinking-result-msg" onClick={() => setExpanded(!expanded)}>
       <div className="tool-result-header">
@@ -917,7 +977,7 @@ function extractThinkingBlocksFromMessage(msg) {
 function isRenderableThinkingBlock(block) {
   if (!block || typeof block !== "object") return false;
   if (block.type === "thinking") {
-    return hasVisibleText(block.thinking) || hasVisibleText(block.signature);
+    return hasVisibleText(block.thinking);
   }
   if (block.type === "redacted_thinking") {
     return typeof block.data === "string" && block.data.length > 0;

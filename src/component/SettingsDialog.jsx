@@ -689,7 +689,7 @@ function SettingsDialogBody() {
       baseUrl: subscription ? "" : trimmedBaseUrl,
       apiKey: subscription ? "" : trimmedApiKey,
       model: trimmedModel,
-      nativeWebSearch: [API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(normalizedType) && nativeWebSearch,
+      nativeWebSearch: [API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION, API_TYPES.ANTHROPIC].includes(normalizedType) && nativeWebSearch,
       ...(subscription ? {
         credentialId: existingProfile.credentialId || existingProfile.id,
         accountId: existingProfile.accountId || "",
@@ -1177,9 +1177,13 @@ function SettingsDialogBody() {
                     : (apiType === API_TYPES.OPENAI_RESPONSES ? "gpt-5-codex" : "deepseek-v4-flash")}
                 />
               )}
-              {[API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION].includes(apiType) && (
+              {[API_TYPES.OPENAI_RESPONSES, API_TYPES.OPENAI_SUBSCRIPTION, API_TYPES.ANTHROPIC].includes(apiType) && (
                 <Checkbox isSelected={nativeWebSearch} onChange={setNativeWebSearch}>
-                  <span className="text-sm">启用 OpenAI 内置 Web Search</span>
+                  <span className="text-sm">
+                    {apiType === API_TYPES.ANTHROPIC
+                      ? t("启用 Claude 内置 Web Search")
+                      : t("启用 OpenAI 内置 Web Search")}
+                  </span>
                 </Checkbox>
               )}
               {apiType === API_TYPES.OPENAI_SUBSCRIPTION && editingLlmModelId && !subscriptionModelManagerOpen && (

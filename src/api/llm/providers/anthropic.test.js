@@ -87,4 +87,101 @@ describe("streamAnthropicAttempt", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("injects web_search_20250305 tool when config.nativeWebSearch is true", async () => {
+    const fetchMock = vi.fn(async () => createStreamResponse([
+      sse({ type: "content_block_start", index: 0, content_block: { type: "text", text: "done" } }),
+      sse({ type: "content_block_stop", index: 0 })
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await streamAnthropicAttempt(
+      { apiType: "anthropic", baseUrl: "https://api.example.com/v1", apiKey: "sk-test", model: "claude-test", nativeWebSearch: true },
+      [{ role: "user", content: "what's the weather today?" }],
+      new AbortController().signal,
+      { onDone: vi.fn() }
+    );
+
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "web_search_20250305", name: "web_search" })
+    ]));
+
+    vi.unstubAllGlobals();
+  });
+
+  it("streams server_tool_use and triggers onNativeWebSearch and extracts citations", async () => {
+    const fetchMock = vi.fn(async () => createStreamResponse([
+      sse({
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "server_tool_use",
+          id: "srvtool_1",
+          name: "web_search",
+          input: { query: "weather in Tokyo" }
+        }
+      }),
+      sse({ type: "content_block_stop", index: 0 }),
+      sse({
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "web_search_tool_result",
+          tool_use_id: "srvtool_1",
+          content: [{ url: "https://example.com/tokyo-weather", title: "Tokyo Weather" }]
+        }
+      }),
+      sse({ type: "content_block_stop", index: 1 }),
+      sse({
+        type: "content_block_start",
+        index: 2,
+        content_block: { type: "text", text: "The weather in Tokyo is sunny." }
+      }),
+      sse({
+        type: "content_block_delta",
+        index: 2,
+        delta: {
+          type: "citations_delta",
+          citation: {
+            type: "web_search_result_location",
+            url: "https://example.com/tokyo-weather",
+            title: "Tokyo Weather",
+            cited_text: "sunny"
+          }
+        }
+      }),
+      sse({ type: "content_block_stop", index: 2 }),
+      sse({ type: "message_stop" })
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const onNativeWebSearch = vi.fn();
+    const onDone = vi.fn();
+
+    await streamAnthropicAttempt(
+      { apiType: "anthropic", baseUrl: "https://api.example.com/v1", apiKey: "sk-test", model: "claude-test", nativeWebSearch: true },
+      [{ role: "user", content: "tokyo weather" }],
+      new AbortController().signal,
+      { onNativeWebSearch, onDone }
+    );
+
+    expect(onNativeWebSearch).toHaveBeenCalledWith({
+      id: "srvtool_1",
+      status: "completed",
+      action: { type: "search", query: "weather in Tokyo" }
+    });
+
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({
+      role: "assistant",
+      web_searches: [{ type: "search", query: "weather in Tokyo" }],
+      citations: [expect.objectContaining({
+        url: "https://example.com/tokyo-weather",
+        title: "Tokyo Weather",
+        citedText: "sunny"
+      })]
+    }));
+
+    vi.unstubAllGlobals();
+  });
 });

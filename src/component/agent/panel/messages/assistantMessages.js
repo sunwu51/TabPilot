@@ -1,8 +1,11 @@
 import { API_TYPES, normalizeApiType } from "../../../../api/llm";
 
 export function buildFinalAssistantMessage(apiType, model, textContent, doneMsg = {}) {
-  if (apiType === "anthropic" && Array.isArray(doneMsg.content)) {
-    return copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
+  if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC && Array.isArray(doneMsg.content)) {
+    const msg = copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
+    if (Array.isArray(doneMsg?.citations) && doneMsg.citations.length > 0) msg.citations = doneMsg.citations;
+    if (Array.isArray(doneMsg?.web_searches) && doneMsg.web_searches.length > 0) msg.web_searches = doneMsg.web_searches;
+    return msg;
   }
 
   const message = {
@@ -30,7 +33,10 @@ export function buildFinalAssistantMessage(apiType, model, textContent, doneMsg 
 }
 export function buildAssistantToolCallMessage(apiType, model, textContent, doneMsg) {
   if (normalizeApiType(apiType) === API_TYPES.ANTHROPIC) {
-    return copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
+    const msg = copyAssistantUsageFields(apiType, model, doneMsg, copyAnthropicThinkingFields(doneMsg, { role: "assistant", content: doneMsg.content }));
+    if (Array.isArray(doneMsg?.citations) && doneMsg.citations.length > 0) msg.citations = doneMsg.citations;
+    if (Array.isArray(doneMsg?.web_searches) && doneMsg.web_searches.length > 0) msg.web_searches = doneMsg.web_searches;
+    return msg;
   }
 
   const message = {

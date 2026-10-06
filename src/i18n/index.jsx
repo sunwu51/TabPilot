@@ -420,6 +420,7 @@ const UI_TEXT = {
   "取消编辑": "Cancel editing",
   "保存修改": "Save changes",
   "启用 OpenAI 内置 Web Search": "Enable OpenAI built-in Web Search",
+  "启用 Claude 内置 Web Search": "Enable Claude built-in Web Search",
   "可用订阅模型": "Available subscription models",
   "正在读取模型列表...": "Loading model list...",
   "暂时没有读取到模型列表，可刷新后重试。": "No models were returned. Refresh the list to try again.",
