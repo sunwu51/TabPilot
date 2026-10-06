@@ -556,3 +556,47 @@
 .tool-group-content .tool-result-msg {
   margin: 0;
 }
+
+/* ========== Citations bubble ========== */
+.native-citations-bubble {
+  font-size: 12px;
+}
+
+.chat-citations-title {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #4b5563;
+}
+
+.chat-citations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-citation-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  line-height: 1.4;
+}
+
+.chat-citation-index {
+  color: #9ca3af;
+  font-size: 11px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.chat-citation-link {
+  color: #2563eb;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-citation-link:hover {
+  text-decoration: underline;
+}

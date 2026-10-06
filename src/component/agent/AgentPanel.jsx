@@ -1243,6 +1243,7 @@ export default function AgentPanel() {
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     activeSessionIdRef.current = id;
+    setSessionRuntime(id, { loading: false, abort: null, runId: 0, pendingApproval: null, requestBodySize: null });
     await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(newConversationTitle);
@@ -2512,8 +2513,10 @@ export default function AgentPanel() {
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     setSessionContextSummary(id, null);
-    setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
+    // Sync the new session's runtime after changing the active ID so an approval
+    // arriving during creation cannot remain visible in the new session.
+    setSessionRuntime(id, { loading: false, abort: null, runId: 0, pendingApproval: null, requestBodySize: null });
     await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(newConversationTitle);
@@ -3428,8 +3431,10 @@ export default function AgentPanel() {
       onNativeWebSearch: (event) => {
         if (!isCurrentRun(targetSessionId, runId) || !event?.action) return;
         const previous = sessionStreamingWebSearchesRef.current.get(targetSessionId) || [];
-        if (previous.some(item => item.id === event.id)) return;
-        const next = [...previous, event];
+        const existingIndex = previous.findIndex(item => item.id === event.id);
+        const next = existingIndex >= 0
+          ? previous.map((item, i) => i === existingIndex ? { ...item, ...event } : item)
+          : [...previous, event];
         sessionStreamingWebSearchesRef.current.set(targetSessionId, next);
         if (activeSessionIdRef.current === targetSessionId) setStreamingWebSearches(next);
       },
@@ -3459,6 +3464,12 @@ export default function AgentPanel() {
 
       onDone: async (msg) => {
         if (!isCurrentRun(targetSessionId, runId)) return;
+        const streamedSearches = (sessionStreamingWebSearchesRef.current.get(targetSessionId) || [])
+          .map(item => item.action || item)
+          .filter(Boolean);
+        const resolvedMsg = ((!msg?.web_searches || msg.web_searches.length === 0) && streamedSearches.length > 0)
+          ? { ...msg, web_searches: streamedSearches }
+          : msg;
         if (activeSessionIdRef.current === targetSessionId) {
           setStreamingContent(null);
           setStreamingThinking(null);
@@ -3477,12 +3488,12 @@ export default function AgentPanel() {
             setSessionRuntime(targetSessionId, { contextUsage: nextContextUsage });
           }
 
-          if (!msg.toolCalls) {
+          if (!resolvedMsg.toolCalls) {
             // Final response — stamp duration on last user message
             const stampedMessages = stampLastUserDuration(conversationMessages);
             const finalMessages = [
               ...stampedMessages,
-              buildFinalAssistantMessage(config.apiType, config.model, streamedContent, msg)
+              buildFinalAssistantMessage(config.apiType, config.model, streamedContent, resolvedMsg)
             ];
             await completeSessionRun(targetSessionId, finalMessages);
             completion?.resolve();
@@ -3490,7 +3501,7 @@ export default function AgentPanel() {
           }
 
           // Show assistant message + pending placeholders immediately
-          const assistantMsg = buildAssistantToolCallMessage(config.apiType, config.model, streamedContent, msg);
+          const assistantMsg = buildAssistantToolCallMessage(config.apiType, config.model, streamedContent, resolvedMsg);
           const pendingToolMsgs = msg.toolCalls.map(tc => ({
             role: "tool",
             tool_call_id: tc.id,

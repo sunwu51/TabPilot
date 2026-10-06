@@ -57,6 +57,18 @@ export function normalizeAnthropicAssistantContentBlock(block) {
     };
   }
 
+  if (block.type === "server_tool_use") {
+    if (!block.name) return null;
+    return {
+      ...block,
+      input: normalizeAnthropicToolUseInput(block.input)
+    };
+  }
+
+  if (block.type === "web_search_tool_result") {
+    return { ...block };
+  }
+
   if (block.type === "thinking") {
     const signature = typeof block.signature === "string" ? block.signature : "";
     if (!signature) return null;

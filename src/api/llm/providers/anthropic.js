@@ -12,8 +12,14 @@ import { buildAnthropicReasoningFields } from "../core/reasoning";
 const DEFAULT_ANTHROPIC_MAX_TOKENS = 32000;
 const MAX_ANTHROPIC_MAX_TOKENS = 128000;
 
-export async function streamAnthropicAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone }, mcpTools = [], options = {}) {
-  const tools = getTools(API_TYPES.ANTHROPIC, mcpTools, options);
+export async function streamAnthropicAttempt(config, messages, signal, { onText, onThinking, onDone, onToolArgsDelta, onToolArgsDone, onNativeWebSearch }, mcpTools = [], options = {}) {
+  const tools = [
+    ...(config.nativeWebSearch === true ? [{
+      type: "web_search_20250305",
+      name: "web_search"
+    }] : []),
+    ...getTools(API_TYPES.ANTHROPIC, mcpTools, options)
+  ];
   const timeoutState = createFirstPacketTimeoutState(signal, getFirstPacketTimeoutMs(config));
 
   try {
@@ -109,6 +115,13 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
                 onText?.(block.text);
               } else if (block.type === "thinking" && block.thinking) {
                 onThinking?.(block.thinking, { field: "thinking", provider: API_TYPES.ANTHROPIC });
+              } else if (block.type === "server_tool_use" && (block.name === "web_search" || block.name?.includes("search"))) {
+                const query = block.input?.query || block.input?.queries || block.input?.search_query || block.input?.q || "";
+                onNativeWebSearch?.({
+                  id: block.id || `server_tool_${index}`,
+                  status: query ? "completed" : "in_progress",
+                  action: { type: "search", query }
+                });
               }
             }
           } else if (json.type === "content_block_delta") {
@@ -119,10 +132,15 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
               fullContent += text;
               if (block?.type === "text") block.text += text;
               onText?.(text);
-            } else if (json.delta?.type === "input_json_delta" && block?.type === "tool_use") {
+            } else if (json.delta?.type === "citations_delta") {
+              if (block?.type === "text" && json.delta.citation) {
+                block.citations = block.citations || [];
+                block.citations.push(json.delta.citation);
+              }
+            } else if (json.delta?.type === "input_json_delta" && (block?.type === "tool_use" || block?.type === "server_tool_use")) {
               const delta = json.delta.partial_json || "";
               block.inputJson += delta;
-              if (delta && isLongToolArgumentName(block.name)) {
+              if (delta && block.type === "tool_use" && isLongToolArgumentName(block.name)) {
                 onToolArgsDelta?.({
                   id: block.id || `tooluse_${index}`,
                   index,
@@ -151,6 +169,21 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
                   index,
                   name: block.name,
                   arguments: block.inputJson
+                });
+              }
+              if (block.type === "server_tool_use" && (block.name === "web_search" || block.name?.includes("search"))) {
+                if (block.inputJson) {
+                  try {
+                    block.input = { ...(block.input || {}), ...JSON.parse(block.inputJson) };
+                  } catch (e) {
+                    block.input = block.input || { query: block.inputJson };
+                  }
+                }
+                const query = block.input?.query || block.input?.queries || block.input?.search_query || block.input?.q || "";
+                onNativeWebSearch?.({
+                  id: block.id || `server_tool_${index}`,
+                  status: "completed",
+                  action: { type: "search", query }
                 });
               }
               rawContentBlocks.push(block);
@@ -216,11 +249,15 @@ export async function streamAnthropicAttempt(config, messages, signal, { onText,
       contentBlocks.push({ type: "text", text: fullContent });
     }
     const thinkingBlocks = contentBlocks.filter(isAnthropicThinkingContentBlock);
+    const citations = extractAnthropicCitations(contentBlocks);
+    const webSearches = extractAnthropicWebSearches(contentBlocks);
 
     onDone?.({
       role: "assistant",
       content: contentBlocks.length > 0 ? contentBlocks : null,
       ...(thinkingBlocks.length > 0 ? { thinking_blocks: thinkingBlocks } : {}),
+      ...(citations.length > 0 ? { citations } : {}),
+      ...(webSearches.length > 0 ? { web_searches: webSearches } : {}),
       ...(Object.keys(usage).length > 0 ? { usage } : {}),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined
     });
@@ -259,7 +296,11 @@ function normalizeAnthropicContentBlockStart(contentBlock) {
   if (!contentBlock || typeof contentBlock !== "object") return null;
 
   if (contentBlock.type === "text") {
-    return { type: "text", text: contentBlock.text || "" };
+    return {
+      type: "text",
+      text: contentBlock.text || "",
+      ...(Array.isArray(contentBlock.citations) ? { citations: [...contentBlock.citations] } : {})
+    };
   }
 
   if (contentBlock.type === "tool_use") {
@@ -268,6 +309,25 @@ function normalizeAnthropicContentBlockStart(contentBlock) {
       id: contentBlock.id,
       name: contentBlock.name,
       inputJson: ""
+    };
+  }
+
+  if (contentBlock.type === "server_tool_use") {
+    return {
+      type: "server_tool_use",
+      id: contentBlock.id,
+      name: contentBlock.name,
+      inputJson: "",
+      input: contentBlock.input || null
+    };
+  }
+
+  if (contentBlock.type === "web_search_tool_result") {
+    return {
+      type: "web_search_tool_result",
+      tool_use_id: contentBlock.tool_use_id,
+      content: contentBlock.content || contentBlock.output || [],
+      ...contentBlock
     };
   }
 
@@ -293,7 +353,12 @@ function buildAnthropicContentBlock(block, parsedToolUsesByBlock) {
   if (!block || typeof block !== "object") return null;
 
   if (block.type === "text") {
-    return block.text ? { type: "text", text: block.text } : null;
+    if (!block.text) return null;
+    return {
+      type: "text",
+      text: block.text,
+      ...(Array.isArray(block.citations) && block.citations.length > 0 ? { citations: block.citations } : {})
+    };
   }
 
   if (block.type === "tool_use") {
@@ -305,6 +370,23 @@ function buildAnthropicContentBlock(block, parsedToolUsesByBlock) {
       name: parsed.name,
       input: parsed.input
     };
+  }
+
+  if (block.type === "server_tool_use") {
+    let input = block.input;
+    if (block.inputJson) {
+      try { input = { ...(input || {}), ...JSON.parse(block.inputJson) }; } catch (e) { input = input || { raw: block.inputJson }; }
+    }
+    return {
+      type: "server_tool_use",
+      id: block.id,
+      name: block.name,
+      input: input || {}
+    };
+  }
+
+  if (block.type === "web_search_tool_result") {
+    return { ...block };
   }
 
   if (block.type === "thinking") {
@@ -338,4 +420,48 @@ function extractAnthropicStreamUsage(event) {
 
 function mergeAnthropicUsage(current = {}, next) {
   return mergeUsage(current, next);
+}
+
+export function extractAnthropicCitations(contentBlocks = []) {
+  const citations = [];
+  for (const block of Array.isArray(contentBlocks) ? contentBlocks : []) {
+    if (Array.isArray(block?.citations)) {
+      for (const item of block.citations) {
+        if (!item || typeof item !== "object") continue;
+        const url = String(item.url || item.uri || "").trim();
+        if (!url) continue;
+        citations.push({
+          type: item.type || "url_citation",
+          title: String(item.title || item.document_title || url).trim(),
+          url,
+          citedText: item.cited_text || item.text || "",
+          ...(Number.isInteger(item.start_char_index) ? { startIndex: item.start_char_index } : {}),
+          ...(Number.isInteger(item.end_char_index) ? { endIndex: item.end_char_index } : {}),
+          ...(item.encrypted_index ? { encryptedIndex: item.encrypted_index } : {})
+        });
+      }
+    }
+  }
+  return citations.filter((item, index, all) => all.findIndex(other => other.url === item.url) === index);
+}
+
+export function extractAnthropicWebSearches(contentBlocks = []) {
+  const webSearches = [];
+  for (const block of Array.isArray(contentBlocks) ? contentBlocks : []) {
+    if (block?.type === "server_tool_use" && (block.name === "web_search" || block.name?.includes("search"))) {
+      const input = block.input || {};
+      const rawQueries = Array.isArray(input.queries)
+        ? input.queries
+        : (input.query ? [input.query] : (input.search_query ? [input.search_query] : (input.q ? [input.q] : [])));
+      const filtered = rawQueries.map(q => String(q || "").trim()).filter(Boolean);
+      if (filtered.length > 0) {
+        for (const q of filtered) {
+          webSearches.push({ type: "search", query: q });
+        }
+      } else {
+        webSearches.push({ type: "search", query: "" });
+      }
+    }
+  }
+  return webSearches;
 }

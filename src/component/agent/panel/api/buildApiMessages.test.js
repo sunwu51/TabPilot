@@ -529,4 +529,60 @@ describe("buildApiMessages image options", () => {
       }]
     }]);
   });
+
+  it("preserves Anthropic server_tool_use, web_search_tool_result, and citations in multi-turn history", () => {
+    const assistantMessage = {
+      role: "assistant",
+      content: [
+        {
+          type: "server_tool_use",
+          id: "srvtool_1",
+          name: "web_search",
+          input: { query: "Anthropic Claude" }
+        },
+        {
+          type: "web_search_tool_result",
+          tool_use_id: "srvtool_1",
+          content: [{ url: "https://anthropic.com", title: "Anthropic" }]
+        },
+        {
+          type: "text",
+          text: "Claude is made by Anthropic.",
+          citations: [{
+            type: "web_search_result_location",
+            url: "https://anthropic.com",
+            title: "Anthropic"
+          }]
+        }
+      ]
+    };
+
+    const result = buildApiMessages(API_TYPES.ANTHROPIC, [assistantMessage]);
+
+    expect(result).toEqual([{
+      role: "assistant",
+      content: [
+        {
+          type: "server_tool_use",
+          id: "srvtool_1",
+          name: "web_search",
+          input: { query: "Anthropic Claude" }
+        },
+        {
+          type: "web_search_tool_result",
+          tool_use_id: "srvtool_1",
+          content: [{ url: "https://anthropic.com", title: "Anthropic" }]
+        },
+        {
+          type: "text",
+          text: "Claude is made by Anthropic.",
+          citations: [{
+            type: "web_search_result_location",
+            url: "https://anthropic.com",
+            title: "Anthropic"
+          }]
+        }
+      ]
+    }]);
+  });
 });
