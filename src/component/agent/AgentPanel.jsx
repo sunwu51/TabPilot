@@ -1243,6 +1243,7 @@ export default function AgentPanel() {
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     activeSessionIdRef.current = id;
+    setSessionRuntime(id, { loading: false, abort: null, runId: 0, pendingApproval: null, requestBodySize: null });
     await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(newConversationTitle);
@@ -2512,8 +2513,10 @@ export default function AgentPanel() {
     setSessionMessages(id, []);
     sessionPlansRef.current.set(id, []);
     setSessionContextSummary(id, null);
-    setSessionRuntime(id, { loading: false, abort: null, runId: 0, requestBodySize: null });
     activeSessionIdRef.current = id;
+    // Sync the new session's runtime after changing the active ID so an approval
+    // arriving during creation cannot remain visible in the new session.
+    setSessionRuntime(id, { loading: false, abort: null, runId: 0, pendingApproval: null, requestBodySize: null });
     await saveActiveSessionForWindow(id);
     setSessionId(id);
     setSessionTitle(newConversationTitle);
