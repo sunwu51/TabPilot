@@ -258,4 +258,19 @@ Service worker 使用 `vfs-expired-file-cleanup` alarm 每 60 分钟扫描 VFS �
 
 Playground 创建时会给 `.project.json`、`index.html`、`style.css` 和 `script.js` 设置同一个过期时间，默认创建后 24 小时。Stash 文件也把自身的 `expireAt` 写入 VFS metadata。因此两者由相同的 VFS alarm 主动清理；其他文件默认永久，除非写入时显式设置过期时间。
 
-WebIDE 项目的 metadata、HTML、package.json 和源文件同样使用统一的项目过期时间。React 和 Vanilla JavaScript 项目由 sandbox 页面中的 `esbuild-wasm` 构建；相对导入从项目 VFS 解析，package.json 中固定版本的 npm 依赖通过 esm.sh 解析。
+WebIDE 项目的 metadata、HTML、package.json 和源文件同样使用统一的项目过期时间。React 和 Vanilla JavaScript 项目在 sandbox 页面中通过 esm.sh transform 编译；相对导入从项目 VFS 解析，package.json 中固定版本的 npm 依赖通过 esm.sh 解析。
+
+## WebIDE 项目分享
+
+WebIDE 工具栏的「分享」按钮编译点击时的当前编辑内容，生成运行效果的独立快照。源码模块、CSS、JSON 和支持的本地资源写入 HTML，通过与 HTML Playground 相同的 deflate + base64url 格式放入公开 Playground 页面的 URL hash。公开页中的嵌套 sandbox iframe 保留原项目的完整文档和 import map，不需要接收者安装扩展，也不依赖本地 VFS 的项目过期时间。
+
+分享复用现有短链接服务；服务失败时回退到完整链接。复制被浏览器拒绝时，底部会显示可选中的链接，使用 Ctrl+C 手动复制。分享是点击时的快照，本地后续编辑不会更新已生成的链接。
+
+本地预览和分享共用资源处理：
+
+- JS/TS 模块通过 `import logo from './logo.svg'` 引入资源，模块默认导出 data URL。SVG 文件直接保存为文本。
+- PNG、JPEG、GIF、WebP、AVIF、ICO 和 WOFF/WOFF2/TTF/OTF 文件在文本 VFS 中必须保存为完整 data URL，例如 `data:image/png;base64,...`，不支持直接写入二进制字节。
+- 支持 HTML 图片 `src/srcset`、样式表和图标 `link[href]`、SVG `use/image` 的 `href`、内联样式，以及 CSS `url()` 和本地 `@import` 的静态资源路径。HTML 模块脚本的本地 `src` 转成 VFS 模块引用。
+- 缺失的静态资源、不支持的文件类型、循环 CSS 引用及本机 `blob:` / `file:` / `chrome-extension:` 地址会报错。项目不能自定义 `<base>` 或 import map；npm 依赖通过 package.json 声明。
+
+JS/JSX 中直接写入的路径字符串（如 `<img src='./logo.svg'>`）、动态拼接路径、`new URL(..., import.meta.url)` 和运行时 `fetch` 不会自动改写，应改为静态资源 import 或显式 data URL。SVG 文件内部引用的其他文件也需自行内联。外网图片、外部样式和 npm 依赖保持外部加载，需要联网；此功能不承诺完全离线。大资源会生成较长链接，短链接失败后仍可手动复制完整链接。

@@ -67,6 +67,17 @@ textarea {
   background: #f1f5f9;
 }
 
+.webide-command:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.webide-share-link {
+  flex: 1;
+  min-width: 80px;
+  max-width: 480px;
+}
+
 .webide-workspace {
   display: grid;
   grid-template-columns: 210px minmax(320px, 1fr) minmax(320px, 1fr);
