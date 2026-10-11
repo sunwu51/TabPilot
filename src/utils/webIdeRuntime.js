@@ -1,4 +1,8 @@
 import { init, parse } from "es-module-lexer";
+import { inlineWebIdeCss, isWebIdeAsset, webIdeAssetDataUrl } from "./webIdeAssets";
+import { normalizeWebIdePath } from "./webIdePaths";
+
+export { normalizeWebIdePath } from "./webIdePaths";
 
 const CODE_LANGUAGES = Object.freeze({
   js: "js",
@@ -6,16 +10,6 @@ const CODE_LANGUAGES = Object.freeze({
   ts: "ts",
   tsx: "tsx"
 });
-
-export function normalizeWebIdePath(path) {
-  const parts = [];
-  for (const part of String(path || "").replace(/\\/g, "/").split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") parts.pop();
-    else parts.push(part);
-  }
-  return parts.join("/");
-}
 
 export function resolveWebIdeImport(importer, specifier, files) {
   const importerPath = normalizeWebIdePath(importer);
@@ -66,9 +60,11 @@ export async function buildWebIdeModules({ files, entry, dependencies = {}, tran
     if (CODE_LANGUAGES[extension]) {
       javascript = await transform({ path: normalizedPath, code: String(source), lang: CODE_LANGUAGES[extension] });
     } else if (extension === "css") {
-      javascript = cssModuleSource(normalizedPath, String(source));
+      javascript = cssModuleSource(normalizedPath, inlineWebIdeCss(source, normalizedPath, files));
     } else if (extension === "json") {
       javascript = jsonModuleSource(normalizedPath, String(source));
+    } else if (isWebIdeAsset(normalizedPath)) {
+      javascript = `export default ${JSON.stringify(webIdeAssetDataUrl(normalizedPath, source))};`;
     } else {
       return;
     }
@@ -114,7 +110,12 @@ async function rewriteModuleImports(source, importer, files, dependencies) {
     const specifier = item.n;
     let replacement = specifier;
     if (specifier.startsWith(".") || specifier.startsWith("/")) {
-      replacement = moduleSpecifier(resolveWebIdeImport(importer, specifier, files));
+      const path = resolveWebIdeImport(importer, specifier, files);
+      const extension = path.split(".").pop()?.toLowerCase();
+      if (!CODE_LANGUAGES[extension] && extension !== "css" && extension !== "json" && !isWebIdeAsset(path)) {
+        throw new Error(`Unsupported project module: ${path} imported by ${importer}`);
+      }
+      replacement = moduleSpecifier(path);
     } else if (!isUrlSpecifier(specifier)) {
       const packageName = getPackageName(specifier);
       if (!Object.prototype.hasOwnProperty.call(dependencies, packageName)) {

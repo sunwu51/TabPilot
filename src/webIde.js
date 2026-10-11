@@ -1,4 +1,6 @@
-import { buildWebIdeModules, normalizeWebIdePath } from "./utils/webIdeRuntime";
+import { normalizeWebIdePath } from "./utils/webIdeRuntime";
+import { buildWebIdePreview, buildWebIdeShareUrl } from "./utils/webIdeShare";
+import { createShortLink } from "./utils/shortLink";
 import { javascript } from "@codemirror/lang-javascript";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
@@ -30,6 +32,15 @@ const title = element("div", "webide-title", "WebIDE");
 const templateLabel = element("span", "webide-template", "");
 const buildButton = element("button", "webide-command", "Build");
 buildButton.type = "button";
+const shareButton = element("button", "webide-command", "分享");
+shareButton.type = "button";
+shareButton.disabled = true;
+shareButton.title = "复制当前项目预览的公开分享链接（快照，npm 依赖需联网加载）";
+const shareLink = document.createElement("input");
+shareLink.className = "webide-share-link";
+shareLink.readOnly = true;
+shareLink.hidden = true;
+shareLink.setAttribute("aria-label", "项目分享链接，可手动复制");
 const workspace = element("div", "webide-workspace");
 const sidebar = element("aside", "webide-sidebar");
 const sidebarHeader = element("div", "webide-sidebar-header");
@@ -60,13 +71,13 @@ const statusbar = element("footer", "webide-statusbar");
 const statusText = element("span", "", "Waiting for project");
 const fileStatus = element("span", "", "");
 
-toolbar.append(title, templateLabel, buildButton);
+toolbar.append(title, templateLabel, buildButton, shareButton);
 sidebarHeader.append(filesLabel, addFileButton);
 sidebar.append(sidebarHeader, fileList);
 editorPane.append(tabs, editor, errors);
 previewPane.append(previewHeader, preview);
 workspace.append(sidebar, editorPane, previewPane);
-statusbar.append(statusText, fileStatus);
+statusbar.append(statusText, shareLink, fileStatus);
 shell.append(toolbar, workspace, statusbar);
 root.append(shell);
 
@@ -132,15 +143,6 @@ function createEditor() {
   });
 }
 
-function parsePackageJson() {
-  try {
-    const value = JSON.parse(files["package.json"] || "{}");
-    return value && typeof value === "object" ? value : {};
-  } catch (error) {
-    throw new Error(`Invalid package.json: ${error.message}`);
-  }
-}
-
 function formatBuildError(error) {
   if (Array.isArray(error?.errors) && error.errors.length) {
     return error.errors.map(item => {
@@ -151,31 +153,61 @@ function formatBuildError(error) {
   return error?.message || String(error);
 }
 
-function buildPreviewHtml(html, importMap, entry) {
-  let documentSource = String(html || "<!doctype html><html><body><div id=\"app\"></div></body></html>");
-  const safeImportMap = JSON.stringify(importMap).replace(/<\/script/gi, "<" + "\\/script");
-  const scriptTag = `<script type="importmap">${safeImportMap}</script><script type="module">import ${JSON.stringify(entry)};</script>`;
-  return documentSource.includes("</body>") ? documentSource.replace("</body>", `${scriptTag}</body>`) : `${documentSource}${scriptTag}`;
-}
-
 async function buildProject() {
   if (!project) return;
   statusText.textContent = "Building...";
   errors.hidden = true;
   try {
-    const packageJson = parsePackageJson();
-    const result = await buildWebIdeModules({
-      files,
-      entry: project.entry,
-      dependencies: packageJson.dependencies || {}
-    });
-    preview.srcdoc = buildPreviewHtml(files["index.html"], result.importMap, result.entry);
+    preview.srcdoc = await buildWebIdePreview({ files: { ...files }, entry: project.entry });
     statusText.textContent = `Built ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     const message = formatBuildError(error);
     errors.textContent = message;
     errors.hidden = false;
     statusText.textContent = "Build failed";
+  }
+}
+
+async function shareProject() {
+  if (!project || shareButton.disabled) return;
+  // Capture current editor contents before awaiting compilation or the short-link service.
+  const snapshot = { files: { ...files }, entry: project.entry };
+  shareButton.disabled = true;
+  shareButton.textContent = "生成中…";
+  shareLink.hidden = true;
+  errors.hidden = true;
+  statusText.textContent = "正在生成分享快照…";
+  try {
+    const html = await buildWebIdePreview(snapshot);
+    const longUrl = buildWebIdeShareUrl(html);
+    const shortUrl = await createShortLink(longUrl);
+    const url = shortUrl || longUrl;
+    // Sandbox clipboard access may be denied. Keep a selectable link available.
+    shareLink.value = url;
+    shareLink.hidden = false;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch {
+      shareLink.focus();
+      shareLink.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+    }
+    statusText.textContent = copied
+      ? (shortUrl ? "分享链接已复制" : "完整分享链接已复制（短链接服务不可用）")
+      : "分享链接已生成，请选中链接后按 Ctrl+C 复制";
+  } catch (error) {
+    errors.textContent = formatBuildError(error);
+    errors.hidden = false;
+    statusText.textContent = "分享失败";
+  } finally {
+    shareButton.disabled = false;
+    shareButton.textContent = "分享";
   }
 }
 
@@ -244,6 +276,7 @@ function renderTabs() {
 
 function loadProject(nextProject) {
   project = nextProject;
+  if (shareButton.textContent === "分享") shareButton.disabled = false;
   const incomingFiles = nextProject.files || {};
   for (const [path, content] of Object.entries(incomingFiles)) {
     if (!dirtyPaths.has(path)) files[path] = String(content);
@@ -259,6 +292,7 @@ function loadProject(nextProject) {
 }
 
 buildButton.addEventListener("click", () => void buildProject());
+shareButton.addEventListener("click", () => void shareProject());
 addFileButton.addEventListener("click", () => {
   const path = normalizePath(prompt("New project-relative file path", "src/component.js") || "");
   if (!path || path === ".project.json" || files[path] != null) return;
