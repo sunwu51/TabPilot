@@ -1,4 +1,5 @@
 import { API_TYPES, MODEL_CONTEXT_WARNING_THRESHOLD_RATIO, normalizeApiType, getDefaultApiType, normalizeModelContextLimitTokens } from "../../../../api/llm";
+export { normalizeStoredReasoningEffort as normalizeReasoningEffort, isCustomReasoningEffort } from "../../../../api/llm/core/reasoning";
 
 export function buildContextUsage(apiType, model, usage) {
   if (!usage || typeof usage !== "object") return null;
@@ -81,9 +82,6 @@ export function formatModelName(model) {
   return String(model || "").trim() || "未配置";
 }
 
-export function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
-}
 
 export function isContextUsageWarning(contextUsage, limitTokens) {
   const tokens = Number(contextUsage?.tokens);
