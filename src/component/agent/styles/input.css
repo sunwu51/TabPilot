@@ -205,6 +205,64 @@
   font-weight: 700;
 }
 
+.chat-input-model-menu-custom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  border-top: 1px solid #e5e7eb;
+  border-radius: 0 0 6px 6px;
+  padding: 5px 4px 2px 7px;
+  color: #374151;
+  font-size: 12px;
+}
+
+.chat-input-model-menu-custom-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.chat-input-model-menu-custom-label {
+  flex: 0 0 auto;
+}
+
+.chat-input-model-menu-custom-input {
+  flex: 1 1 auto;
+  width: 96px;
+  min-width: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: #fff;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.25;
+  outline: none;
+}
+
+.chat-input-model-menu-custom-input:focus {
+  border-color: #3b82f6;
+}
+
+.chat-input-model-menu-custom-apply {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.chat-input-model-menu-custom-apply:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
 .chat-input-model-menu-empty {
   padding: 6px 8px;
   color: #6b7280;

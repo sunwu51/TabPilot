@@ -5,6 +5,7 @@ import SubscriptionUsage from "./SubscriptionUsage";
 import MemoryManager from "./MemoryManager";
 import toast from "react-hot-toast";
 import { resolveLlmRequestUrl } from "../api/llm/core/endpoint";
+import { normalizeStoredReasoningEffort as normalizeReasoningEffort } from "../api/llm/core/reasoning";
 import {
   API_TYPES,
   DEFAULT_IMAGE_MODEL,
@@ -1891,9 +1892,6 @@ function buildTtsVoiceOptions(voices) {
   ];
 }
 
-function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
-}
 
 function createEmptySubagentTemplate() {
   return {

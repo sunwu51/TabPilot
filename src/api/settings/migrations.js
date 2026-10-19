@@ -12,6 +12,7 @@ import {
   normalizeStoredModelConfig,
   createImageModelProfileId
 } from "../llm/core/modelProfiles";
+import { normalizeStoredReasoningEffort as normalizeReasoningEffort } from "../llm/core/reasoning";
 
 export const SETTINGS_SCHEMA_VERSION = 5;
 export const SETTINGS_SCHEMA_VERSION_KEY = "settingsSchemaVersion";
@@ -148,6 +149,3 @@ function hasAnyLegacyImageModel(source) {
   return !!String(source?.imageBaseUrl || source?.imageApiKey || source?.imageModel || "").trim();
 }
 
-function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
-}

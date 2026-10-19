@@ -1,5 +1,6 @@
 /* global chrome */
 import { normalizeStoredModelConfig } from "../llm/core/modelProfiles";
+import { normalizeStoredReasoningEffort as normalizeReasoningEffort } from "../llm/core/reasoning";
 import { normalizeSubagentTemplates, SUBAGENT_TEMPLATES_STORAGE_KEY } from "../agent/subagentTemplates";
 import {
   ensureSettingsMigrated,
@@ -178,6 +179,3 @@ function addNumberPatch(patch, source, key, { min = -Infinity, integer = false }
   patch[key] = Math.max(min, normalized);
 }
 
-function normalizeReasoningEffort(value) {
-  return ["default", "low", "medium", "high", "xhigh"].includes(value) ? value : "default";
-}

@@ -114,6 +114,7 @@ import {
   getLatestContextUsageFromMessages,
   formatModelName,
   normalizeReasoningEffort,
+  isCustomReasoningEffort,
   isContextUsageWarning,
   formatContextLimitK,
   formatContextUsageK,
@@ -221,7 +222,8 @@ const REASONING_EFFORT_OPTIONS = [
   { key: "reasoningLow", shortKey: "reasoningShortLow", value: "low" },
   { key: "reasoningMedium", shortKey: "reasoningShortMedium", value: "medium" },
   { key: "reasoningHigh", shortKey: "reasoningShortHigh", value: "high" },
-  { key: "reasoningXhigh", shortKey: "reasoningShortXhigh", value: "xhigh" }
+  { key: "reasoningXhigh", shortKey: "reasoningShortXhigh", value: "xhigh" },
+  { key: "reasoningMax", shortKey: "reasoningShortMax", value: "max" }
 ];
 const AGENT_PANEL_SESSION_LOCK_PORT_NAME = "agent-panel-session-lock";
 const IMAGE_REFS_DEBUG_GLOBAL = "__tabManagerImageRefs";
@@ -539,6 +541,7 @@ export default function AgentPanel() {
     activeImageModelId: ""
   });
   const [modelMenuOpen, setModelMenuOpen] = useState(null);
+  const [customReasoningDraft, setCustomReasoningDraft] = useState("");
   const [contextUsage, setContextUsage] = useState(null);
   const [contextSummary, setContextSummary] = useState(null);
   const [contextCompaction, setContextCompaction] = useState(null);
@@ -2847,7 +2850,16 @@ export default function AgentPanel() {
     setModelMenuOpen(null);
   }
 
+  function applyCustomReasoningEffort() {
+    const value = normalizeReasoningEffort(customReasoningDraft);
+    if (value === "default") return;
+    void switchReasoningEffort(value);
+  }
+
   function toggleModelMenu(kind) {
+    if (kind === "reasoning" && modelMenuOpen !== kind) {
+      setCustomReasoningDraft(isCustomReasoningEffort(llmConfigInfo.reasoningEffort) ? llmConfigInfo.reasoningEffort : "");
+    }
     setShowAttachMenu(false);
     setModelMenuOpen(prev => prev === kind ? null : kind);
   }
@@ -5272,7 +5284,9 @@ export default function AgentPanel() {
                     onClick={() => toggleModelMenu("reasoning")}
                     title={t("reasoningEffort")}
                   >
-                    {t(REASONING_EFFORT_OPTIONS.find(item => item.value === llmConfigInfo.reasoningEffort)?.shortKey || "reasoningShortDefault")}
+                    {isCustomReasoningEffort(llmConfigInfo.reasoningEffort)
+                      ? llmConfigInfo.reasoningEffort
+                      : t(REASONING_EFFORT_OPTIONS.find(item => item.value === llmConfigInfo.reasoningEffort)?.shortKey || "reasoningShortDefault")}
                     <span className="chat-input-model-caret">⌃</span>
                   </button>
                   {modelMenuOpen === "reasoning" && (
@@ -5287,6 +5301,30 @@ export default function AgentPanel() {
                           <span>{t(item.key)}</span>
                         </button>
                       ))}
+                      <div className={`chat-input-model-menu-custom${isCustomReasoningEffort(llmConfigInfo.reasoningEffort) ? " chat-input-model-menu-custom-active" : ""}`}>
+                        <span className="chat-input-model-menu-custom-label">{t("reasoningCustom")}</span>
+                        <input
+                          type="text"
+                          className="chat-input-model-menu-custom-input"
+                          value={customReasoningDraft}
+                          maxLength={64}
+                          placeholder={t("reasoningCustomPlaceholder")}
+                          onChange={event => setCustomReasoningDraft(event.target.value)}
+                          onKeyDown={event => {
+                            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                            event.preventDefault();
+                            applyCustomReasoningEffort();
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="chat-input-model-menu-custom-apply"
+                          disabled={normalizeReasoningEffort(customReasoningDraft) === "default"}
+                          onClick={applyCustomReasoningEffort}
+                        >
+                          {t("reasoningCustomApply")}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
