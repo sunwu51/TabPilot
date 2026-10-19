@@ -18,6 +18,41 @@ afterEach(() => {
 });
 
 describe("OpenAI responses reasoning helpers", () => {
+  it.each(["completed", "output_item.done", "delta", "text.done", "content_part.done"])("replays reasoning content after a tool call from %s", async source => {
+    const content = [{ type: "reasoning_text", text: "Check the tabs first." }];
+    const reasoning = { type: "reasoning", id: "rs_deepseek", status: "completed", summary: [], content, encrypted_content: "opaque-id" };
+    const call = { type: "function_call", id: "fc_tabs", call_id: "call_tabs", name: "lookup", arguments: "{}" };
+    const events = [{ type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: reasoning.id, summary: [] } }];
+    if (source === "completed") {
+      events.push({ type: "response.completed", response: { output: [reasoning, call] } });
+    } else {
+      if (source === "output_item.done") events.push({ type: "response.output_item.done", output_index: 0, item: reasoning });
+      if (source === "delta") events.push({ type: "response.reasoning_text.delta", output_index: 0, item_id: reasoning.id, content_index: 0, delta: content[0].text });
+      if (source === "text.done") events.push({ type: "response.reasoning_text.done", output_index: 0, item_id: reasoning.id, content_index: 0, text: content[0].text });
+      if (source === "content_part.done") events.push({ type: "response.content_part.done", output_index: 0, item_id: reasoning.id, content_index: 0, part: content[0] });
+      events.push({ type: "response.output_item.done", output_index: 1, item: call });
+      // Compatible providers can omit content from the final output snapshot.
+      events.push({ type: "response.completed", response: { output: [{ type: "reasoning", id: reasoning.id, summary: [], encrypted_content: "opaque-id" }, call] } });
+    }
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(""), { status: 200 })));
+    const onDone = vi.fn();
+    await streamOpenAIResponsesAttempt({ baseUrl: "https://api.test/v1", model: "deepseek-flash" }, [], new AbortController().signal, { onDone }, [], { includeBuiltins: false });
+    const done = onDone.mock.calls[0][0];
+    expect(done.reasoning).toBe(content[0].text);
+    expect(done.response_reasoning_items[0]).toEqual({ type: "reasoning", id: reasoning.id, summary: [], content, encrypted_content: "opaque-id" });
+    const messages = [
+      { role: "assistant", content: null, _responsesReasoningItems: done.response_reasoning_items, _responsesReplayItems: done.response_replay_items, tool_calls: done._openaiToolCalls },
+      { role: "tool", tool_call_id: "fc_tabs", response_call_id: "call_tabs", content: "3 tabs" }
+    ];
+    for (const nativeWebSearch of [false, true]) {
+      const { input } = buildResponsesRequestInput(messages, { nativeWebSearch });
+      expect(input.map(item => item.type)).toEqual(["reasoning", "function_call", "function_call_output"]);
+      expect(input[0].content).toEqual(content);
+      expect(input[0]).not.toHaveProperty("status");
+      expect(buildResponsesRequestInput(messages, { nativeWebSearch, omitThinkingFromRequests: true }).input.map(item => item.type)).toEqual(["function_call", "function_call_output"]);
+    }
+  });
+
   it("uses stored OAuth credentials for OpenAI Subscription requests", async () => {
     await chrome.storage.local.set({
       "openAiSubscriptionCredential:llm_subscription": {

@@ -728,8 +728,21 @@ function applyResponsesStreamEvent(event, outputItems, toolCallsById, { onText, 
   const reasoningDelta = extractResponsesReasoningDelta(event);
   if (reasoningDelta) {
     const item = ensureResponsesReasoningItem(outputItems, event?.item_id, event?.output_index);
-    ensureResponsesReasoningTextPart(item).text += reasoningDelta;
+    ensureResponsesReasoningTextPart(item, eventType, event).text += reasoningDelta;
     onThinking?.(reasoningDelta, { eventType, provider: API_TYPES.OPENAI_RESPONSES });
+    return;
+  }
+
+  if (eventType === "response.reasoning_text.done" || eventType === "response.reasoning_summary_text.done") {
+    const item = ensureResponsesReasoningItem(outputItems, event?.item_id, event?.output_index);
+    if (typeof event.text === "string") ensureResponsesReasoningTextPart(item, eventType, event).text = event.text;
+    return;
+  }
+
+  if (eventType === "response.content_part.done" && event?.part?.type === "reasoning_text") {
+    const item = ensureResponsesReasoningItem(outputItems, event?.item_id, event?.output_index);
+    const part = ensureResponsesReasoningTextPart(item, "response.reasoning_text.done", event);
+    Object.assign(part, event.part);
     return;
   }
 
@@ -949,6 +962,7 @@ function normalizeResponsesReasoningOutputItem(item, order = 0) {
     type: item.type
   };
   if (item.status) normalized.status = item.status;
+  if (Array.isArray(item.content)) normalized.content = item.content.map(part => ({ ...part }));
   if (Array.isArray(item.summary)) normalized.summary = item.summary.map(normalizeResponsesReasoningSummaryPart).filter(Boolean);
   if (typeof item.encrypted_content === "string" && item.encrypted_content.length > 0) {
     normalized.encrypted_content = item.encrypted_content;
@@ -974,6 +988,7 @@ export function normalizeResponsesReasoningInputItem(item) {
 
   const normalized = { type: item.type };
   if (typeof item.id === "string" && item.id.length > 0) normalized.id = item.id;
+  if (Array.isArray(item.content)) normalized.content = item.content.map(part => ({ ...part }));
   if (Array.isArray(item.summary)) {
     const summary = item.summary.map(normalizeResponsesReasoningSummaryPart).filter(Boolean);
     normalized.summary = summary;
@@ -1012,6 +1027,13 @@ function storeResponsesOutputItem(outputItems, incoming) {
 }
 
 function mergeResponsesOutputItems(existing, incoming) {
+  if (incoming.type === "reasoning" || incoming.type === "thinking") {
+    const merged = { ...existing, ...incoming };
+    for (const field of ["content", "summary"]) {
+      if (!incoming[field]?.length && existing[field]?.length) merged[field] = existing[field];
+    }
+    return merged;
+  }
   if (incoming.type !== "message") return { ...existing, ...incoming };
   const existingContent = Array.isArray(existing.content) ? existing.content : [];
   const incomingContent = Array.isArray(incoming.content) ? incoming.content : [];
@@ -1077,12 +1099,16 @@ function ensureResponsesReasoningItem(outputItems, itemId, order = 0) {
   return item;
 }
 
-function ensureResponsesReasoningTextPart(item) {
-  if (!Array.isArray(item.summary)) item.summary = [];
-  let textPart = item.summary.find(part => (part?.type === "summary_text" || part?.type === "text") && typeof part.text === "string");
+function ensureResponsesReasoningTextPart(item, eventType = "", event = {}) {
+  const rawReasoning = eventType.startsWith("response.reasoning_text.");
+  const field = rawReasoning ? "content" : "summary";
+  const type = rawReasoning ? "reasoning_text" : "summary_text";
+  const index = (rawReasoning ? event.content_index : event.summary_index) ?? 0;
+  if (!Array.isArray(item[field])) item[field] = [];
+  let textPart = item[field][index];
   if (!textPart) {
-    textPart = { type: "summary_text", text: "" };
-    item.summary.push(textPart);
+    textPart = { type, text: "" };
+    item[field][index] = textPart;
   }
   return textPart;
 }
