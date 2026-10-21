@@ -330,6 +330,18 @@ export async function executeCodeRuntime({ code } = {}, {
     ]))
   ]));
 
+  // Non-enumerable aliases so "-" written as "_" (e.g. tools.mcp.x.a_b for "a-b") still resolves.
+  const defineAlias = (target, name, value) => {
+    const alias = name.replace(/-/g, "_");
+    if (alias !== name && !(alias in target)) {
+      Object.defineProperty(target, alias, { value, enumerable: false, configurable: true });
+    }
+  };
+  for (const [serverName, serverTools] of Object.entries(runtimeTools.mcp)) {
+    for (const [toolName, fn] of Object.entries(serverTools)) defineAlias(serverTools, toolName, fn);
+    defineAlias(runtimeTools.mcp, serverName, serverTools);
+  }
+
   for (const definition of definitions) {
     runtimeTools[definition.name] = (args = {}) => callBuiltin(definition.name, args);
   }

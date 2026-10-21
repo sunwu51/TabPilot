@@ -66,8 +66,16 @@ export function buildMcpRuntimePrompt(mcpTools = []) {
 export function findMcpRuntimeTool(mcpTools, serverName, toolName) {
   const requestedServer = String(serverName || "").trim();
   const requestedTool = String(toolName || "").trim();
-  return (Array.isArray(mcpTools) ? mcpTools : []).find(tool =>
+  const tools = Array.isArray(mcpTools) ? mcpTools : [];
+  const exact = tools.find(tool =>
     String(tool?._serverName || "").trim() === requestedServer &&
     String(tool?.name || "").trim() === requestedTool
+  );
+  if (exact) return exact;
+  // Compatibility: models often write "-" as "_" in JS property access.
+  const normalize = value => String(value || "").trim().replace(/-/g, "_");
+  return tools.find(tool =>
+    normalize(tool?._serverName) === normalize(requestedServer) &&
+    normalize(tool?.name) === normalize(requestedTool)
   ) || null;
 }
