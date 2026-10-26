@@ -128,4 +128,24 @@ describe("AgentPanel session export", () => {
     expect(markdown).not.toContain("session-image:");
     expect(markdown).not.toContain("|deRef:img_2|");
   });
+
+  it("wraps tool calls and results in collapsed details when collapseTools is enabled", () => {
+    const messages = [
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", name: "search", input: { q: "x" } }]
+      },
+      { role: "tool", tool_name: "search", content: "result text" }
+    ];
+
+    const collapsed = buildSessionExportMarkdown({ title: "t", sessionId: "s", messages, collapseTools: true });
+    expect(collapsed).toContain("<details>\n<summary>工具调用 · search</summary>\n\n```json");
+    expect(collapsed).toContain("<summary>工具结果 · search</summary>");
+    expect(collapsed).toContain("</details>");
+    expect(collapsed).not.toContain("## 工具调用");
+
+    const plain = buildSessionExportMarkdown({ title: "t", sessionId: "s", messages });
+    expect(plain).toContain("## 工具调用 · search");
+    expect(plain).not.toContain("<details>");
+  });
 });
