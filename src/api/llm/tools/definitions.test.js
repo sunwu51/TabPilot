@@ -42,6 +42,8 @@ describe("llm tool definitions", () => {
   });
 
   it("groups storage and memory tools", () => {
+    expect(getBuiltinToolGroup("vfs_list")).toBe("storage");
+    expect(getCodeRuntimeToolDefinitions().some(tool => tool.name === "vfs_list")).toBe(true);
     expect(getBuiltinToolGroup("html_playground")).toBe("storage");
     expect(getBuiltinToolGroup("vfs_read_file")).toBe("storage");
     expect(getBuiltinToolGroup("vfs_write_file")).toBe("storage");

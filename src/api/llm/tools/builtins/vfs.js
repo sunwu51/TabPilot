@@ -1,4 +1,9 @@
 import { chromeStorageVfs } from "../../../../utils/chromeStorageVfs";
+import { listVfsEntries } from "../../../../utils/vfsBrowser";
+
+export async function _execVfsList(args) {
+  return { success: true, ...await listVfsEntries(args) };
+}
 
 export async function _execVfsReadFile({ path, startLine, endLine } = {}) {
   const result = await chromeStorageVfs.readLines(path, { startLine, endLine });

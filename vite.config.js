@@ -22,6 +22,7 @@ export default defineConfig({
         webide: "webide.html",
         webideHost: "webide-host.html",
         stash: "stash.html",
+        files: "files.html",
         postdog: "postdog.html",
         imageViewer: "image-viewer.html",
         hooks: "hooks.html",

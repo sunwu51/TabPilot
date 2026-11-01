@@ -47,7 +47,7 @@ import {
   _execHtmlPlayground,
   openHelloWorldPlayground
 } from "./builtins/evalAndPlayground";
-import { _execVfsEditFile, _execVfsReadFile, _execVfsWriteFile } from "./builtins/vfs";
+import { _execVfsList, _execVfsEditFile, _execVfsReadFile, _execVfsWriteFile } from "./builtins/vfs";
 import { _execWebIdeProject } from "./builtins/webIde";
 import {
   _execGroupList,
@@ -192,6 +192,7 @@ const BUILTIN_TOOL_HANDLERS = {
 
   eval_js: (args) => _execEvalJs(args),
   html_playground: (args) => _execHtmlPlayground(args),
+  vfs_list: (args) => _execVfsList(args),
   vfs_read_file: (args) => _execVfsReadFile(args),
   vfs_write_file: (args) => _execVfsWriteFile(args),
   vfs_edit_file: (args) => _execVfsEditFile(args),

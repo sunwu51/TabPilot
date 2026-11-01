@@ -29,7 +29,7 @@ const EMPTY_DRAFT = {
 
 function StashPage() {
   const [stashMap, setStashMap] = useState({});
-  const [selectedTitle, setSelectedTitle] = useState("");
+  const [selectedTitle, setSelectedTitle] = useState(() => new URLSearchParams(window.location.search).get("title") || "");
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
