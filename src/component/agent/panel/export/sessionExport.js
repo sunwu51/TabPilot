@@ -3,9 +3,9 @@ import { formatJsonFence, formatTextFence } from "../utils/scheduleStatus";
 import { parseImageDataUrl, parseToolMessageContent } from "../messages/toolResults";
 import { imageBlockToDataUrl } from "../messages/userMessage";
 
-export function buildSessionExportMarkdown({ title, sessionId, messages, includeImages = true, imageStore = null }) {
+export function buildSessionExportMarkdown({ title, sessionId, messages, includeImages = true, collapseTools = false, imageStore = null }) {
   const imageRefMap = buildExportImageRefMap(messages, imageStore);
-  const exportOptions = { includeImages, imageRefMap };
+  const exportOptions = { includeImages, collapseTools, imageRefMap };
   const sections = [
     `# ${title || "新会话"}`,
     "",
@@ -21,6 +21,17 @@ export function buildSessionExportMarkdown({ title, sessionId, messages, include
   return sections.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function serializeToolSection(heading, body, options = {}) {
+  if (options.collapseTools) {
+    return ["<details>", `<summary>${escapeHtmlText(heading)}</summary>`, "", body, "", "</details>", ""];
+  }
+  return [`## ${heading}`, "", body, ""];
+}
+
+function escapeHtmlText(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function serializeExportMessage(msg, imageRefMap = new Map(), options = {}) {
   if (!msg || !msg.role) return [];
 
@@ -33,12 +44,11 @@ export function serializeExportMessage(msg, imageRefMap = new Map(), options = {
   }
 
   if (msg.role === "tool") {
-    return [
-      `## 工具结果${msg.tool_name ? ` · ${msg.tool_name}` : ""}`,
-      "",
+    return serializeToolSection(
+      `工具结果${msg.tool_name ? ` · ${msg.tool_name}` : ""}`,
       formatToolResultForMarkdown(msg, options),
-      ""
-    ];
+      options
+    );
   }
 
   if (msg.role === "error") {
@@ -117,12 +127,11 @@ export function serializeAssistantExportMessage(msg, imageRefMap = new Map(), op
       if (block.type === "text" && block.text) {
         sections.push("## 助手", "", replaceMarkdownImageDerefSources(String(block.text).trim(), imageRefMap, options), "");
       } else if (block.type === "tool_use") {
-        sections.push(
-          `## 工具调用${block.name ? ` · ${block.name}` : ""}`,
-          "",
+        sections.push(...serializeToolSection(
+          `工具调用${block.name ? ` · ${block.name}` : ""}`,
           formatJsonFence(block.input ?? {}),
-          ""
-        );
+          options
+        ));
       }
     }
   }
@@ -138,12 +147,11 @@ export function serializeAssistantExportMessage(msg, imageRefMap = new Map(), op
           toolArgs = { raw: toolArgs };
         }
       }
-      sections.push(
-        `## 工具调用 · ${toolName}`,
-        "",
+      sections.push(...serializeToolSection(
+        `工具调用 · ${toolName}`,
         formatJsonFence(toolArgs),
-        ""
-      );
+        options
+      ));
     }
   }
 

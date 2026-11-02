@@ -250,6 +250,14 @@ stop();
 
 旧的 `htmlPlaygroundProject:*` 和 `user_stashes` 数据会在首次读取时自动迁移。
 
+## 目录浏览与文件管理器
+
+设置 → 快捷入口 → 文件管理器打开 `files.html`，从 `/` 开始逐级浏览目录，支持面包屑导航、刷新、纯文本查看，以及打开识别出的 stash、Playground 或 WebIDE。stash 页面支持 `stash.html?title=...` 定位记录。
+
+模型可通过 storage 域的 `vfs_list({ path: '/', recursive: false })` 列出直接子项；`recursive: true` 返回所有后代文件的扁平列表（完整路径保留目录关系）。对应的共享函数为 `listVfsEntries`，底层使用 `chromeStorageVfs.readdir`。
+
+条目的 `type` 保持 `file` / `directory`，新增 `kind` 为 `text` / `directory` / `stash` / `playground` / `webide`。项目类型依据保留目录路径和 `.project.json` 中匹配的 ID 识别，项目内文件也带有 `projectId`、`projectRoot` 和 `url`。stash 依据文件路径和 JSON 内容识别，带有可读 `title` 和阅读页面 URL。URL 是当前扩展的本地入口，需要当前浏览器中的项目数据。
+
 ## 文件生命周期
 
 每个 VFS 文件的 metadata 都包含 `expireAt`。默认值 `-1` 表示永久保存；`writeFile` 和 `writeJson` 可传入绝对 Unix 毫秒时间戳。覆盖已有文件但不传 `expireAt` 时保留原过期时间。

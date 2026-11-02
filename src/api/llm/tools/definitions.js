@@ -58,6 +58,7 @@ const TOOL_SELECTION_CORE_NAMES = new Set([
   "get_current_time",
   "sleep",
   "html_playground",
+  "vfs_list",
   "vfs_read_file",
   "vfs_write_file",
   "vfs_edit_file",
@@ -1198,6 +1199,18 @@ export const TOOLS = [
         js: { type: "string", description: "Initial script.js source. Use readable multi-line JavaScript with normal indentation; do not minify." },
         expireAt: { type: "number", description: "Optional absolute expiration time in Unix milliseconds for a new project. Defaults to 24 hours after creation. Use -1 for no automatic expiration." },
         expanded: { type: "boolean", description: "Whether the HTML/CSS/JS editor inputs should be expanded initially. Defaults to false; use true only when the user explicitly asks to inspect or show the detailed source code." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "vfs_list",
+    description: "List browser VFS entries from / or a directory. recursive returns all descendant files as a flat list with absolute paths. Each entry includes type (file/directory), kind (text/directory/stash/playground/webide), and file stats. Recognized project entries also include projectId, projectRoot and an extension URL to reopen the project. Stashes include title and a reader URL.",
+    schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Absolute directory path. Defaults to /." },
+        recursive: { type: "boolean", description: "List all descendant files. Defaults to false (immediate children)." }
       },
       required: []
     }

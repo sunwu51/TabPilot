@@ -80,6 +80,7 @@ export const BUILTIN_TOOL_OUTPUT_EXAMPLES = {
   postdog_save_environment: { environment: { id: "env_1", name: "Development", variables: { baseUrl: "https://api.example.com" } } },
   postdog_set_active_environment: { activeEnvironment: { id: "env_1", name: "Development", active: true } },
   html_playground: { success: true, playgroundId: "pg_example", files: ["/playgrounds/pg_example/index.html", "/playgrounds/pg_example/style.css", "/playgrounds/pg_example/script.js"], revision: 1, expireAt: Date.now() + 86400000, tabId: tab.id, url: "playground-host.html?id=pg_example", expanded: false },
+  vfs_list: { success: true, path: "/playgrounds", recursive: false, entries: [{ type: "directory", path: "/playgrounds/pg_example", name: "pg_example", kind: "playground", projectId: "pg_example", projectRoot: "/playgrounds/pg_example", url: "chrome-extension://extension-id/playground-host.html?id=pg_example" }] },
   vfs_read_file: { success: true, path: "/playgrounds/pg_example/style.css", content: "color: red;", startLine: 4, endLine: 4, lineCount: 12, revision: 1 },
   vfs_write_file: { success: true, path: "/notes/report.md", size: 8, lineCount: 1, expireAt: -1, revision: 1 },
   vfs_edit_file: { success: true, path: "/playgrounds/pg_example/style.css", startLine: 4, endLine: 5, lineCount: 12, revision: 2 },

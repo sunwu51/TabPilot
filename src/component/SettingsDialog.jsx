@@ -1643,6 +1643,9 @@ function SettingsDialogBody() {
         <div className="settings-card">
           <div className="settings-card-title">快捷入口</div>
           <div className="settings-tab-action-row">
+            <Button className="!min-h-7 !px-3 !py-0 !text-xs" onPress={() => chrome.tabs.create({ url: chrome.runtime.getURL("files.html") })}>
+              文件管理器
+            </Button>
             <Button
               className="!min-h-7 !px-3 !py-0 !text-xs"
               onPress={handleScreenshotCurrentPage}

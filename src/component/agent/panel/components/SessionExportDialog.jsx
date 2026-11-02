@@ -53,7 +53,7 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
 
     setSharing(true);
     try {
-      const shareMarkdownContent = await buildMarkdownForAction({ includeImages: false });
+      const shareMarkdownContent = await buildMarkdownForAction({ includeImages: false, collapseTools: true });
       const result = await shareMarkdown({
         markdown: shareMarkdownContent,
         password
