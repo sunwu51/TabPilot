@@ -151,33 +151,38 @@ function CollapsedToolGroup({
 }) {
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = () => setExpanded(value => !value);
+  const searchItems = items.filter(item => hasNativeWebSearches(item.message));
+  const detailItems = items.filter(item => !hasNativeWebSearches(item.message));
 
   return (
-    <div className="tool-result-msg tool-group-msg">
-      <div
-        className="tool-result-header"
-        role="button"
-        tabIndex={0}
-        onClick={toggleExpanded}
-        onKeyDown={(event) => handleToggleKeyDown(event, toggleExpanded)}
-      >
-        <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">展开查看 {toolCallCount} 个工具调用详情</span>
-      </div>
-      {expanded && (
-        <div className="tool-group-content">
-          <ToolMessageSequence
-            items={items}
-            onRewindToUserMessage={onRewindToUserMessage}
-            sessionId={sessionId}
-            imageEditingEnabled={imageEditingEnabled}
-            onImageEditRequest={onImageEditRequest}
-            imageSrcResolver={imageSrcResolver}
-            imageRefNavigator={imageRefNavigator}
-          />
+    <>
+      <ToolMessageSequence items={searchItems} sessionId={sessionId} />
+      <div className="tool-result-msg tool-group-msg">
+        <div
+          className="tool-result-header"
+          role="button"
+          tabIndex={0}
+          onClick={toggleExpanded}
+          onKeyDown={(event) => handleToggleKeyDown(event, toggleExpanded)}
+        >
+          <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
+          <span className="tool-result-label">展开查看 {toolCallCount} 个工具调用详情</span>
         </div>
-      )}
-    </div>
+        {expanded && (
+          <div className="tool-group-content">
+            <ToolMessageSequence
+              items={detailItems}
+              onRewindToUserMessage={onRewindToUserMessage}
+              sessionId={sessionId}
+              imageEditingEnabled={imageEditingEnabled}
+              onImageEditRequest={onImageEditRequest}
+              imageSrcResolver={imageSrcResolver}
+              imageRefNavigator={imageRefNavigator}
+            />
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -423,8 +428,13 @@ function stripThinkingFromAssistantMessage(message) {
   return next;
 }
 
+function hasNativeWebSearches(message) {
+  return Array.isArray(message?.web_searches) && message.web_searches.length > 0;
+}
+
 function hasRenderableAssistantMessage(message) {
   if (!message || message.role !== "assistant") return false;
+  if (hasNativeWebSearches(message)) return true;
   if (typeof message.content === "string") return hasVisibleText(message.content);
   if (Array.isArray(message.content)) {
     return message.content.some(block => {
@@ -511,6 +521,12 @@ function buildToolSequenceItems(messages, startIndex) {
 
 function extractAssistantRenderItems(message) {
   const items = [];
+  if (hasNativeWebSearches(message)) {
+    items.push({
+      type: "message",
+      message: { role: "assistant", content: null, web_searches: message.web_searches }
+    });
+  }
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
       if (!block) continue;
