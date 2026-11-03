@@ -1,6 +1,12 @@
 import { serializeMentionSkill } from "./tabMention";
 export const SLASH_COMMANDS = [
   {
+    id: "new",
+    name: "/new",
+    titleKey: "slashNewTitle",
+    descriptionKey: "slashNewDescription"
+  },
+  {
     id: "mem",
     name: "/mem",
     titleKey: "slashMemoryTitle",

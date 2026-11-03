@@ -3200,6 +3200,10 @@ export default function AgentPanel() {
   async function runSlashCommand(command) {
     if (!command || loading || pendingApproval) return;
     closeInputCompletions();
+    if (command.id === "new") {
+      await handleNewSession();
+      return;
+    }
     if (command.id === "clear") {
       await handleClearCurrentSession({ confirm: false });
       return;
