@@ -111,9 +111,11 @@ export { captureFullPageScreenshotToTab, openHelloWorldPlayground };
  * @param {string} name - tool name
  * @param {Object} args - tool arguments
  * @param {Array} [mcpRegistry] - MCP tool registry [{name, _serverUrl, _serverHeaders, _serverType, _serverExtensionId, _toolCallName}]
+ * @param {{conversationId?: string}} [options] - conversationId gives HTTP MCP servers a separate
+ *   Mcp-Session-Id per conversation (subagents pass their parent's id).
  * @returns {Promise<Object>} result to send back to LLM
  */
-export async function executeTool(name, args, mcpRegistry = []) {
+export async function executeTool(name, args, mcpRegistry = [], options = {}) {
   try {
     if (isMcpToolCallName(name)) {
       const mcpTool = findMcpToolByCallName(mcpRegistry, name);
@@ -125,7 +127,7 @@ export async function executeTool(name, args, mcpRegistry = []) {
       const endpoint = mcpTool._serverType === "extension"
         ? { type: "extension", extensionId: mcpTool._serverExtensionId, name: mcpTool._serverName }
         : { type: "http", url: mcpTool._serverUrl, headers: mcpTool._serverHeaders };
-      return await callMcpTool(endpoint, mcpTool._serverHeaders, mcpTool.name, args, timeoutMs);
+      return await callMcpTool(endpoint, mcpTool._serverHeaders, mcpTool.name, args, timeoutMs, { conversationId: options?.conversationId });
     }
 
     const handler = BUILTIN_TOOL_HANDLERS[name];

@@ -194,12 +194,12 @@ function isKnownScheduledToolName(toolName, mcpRegistry = []) {
     return !!findMcpToolByCallName(mcpRegistry, toolName);
 }
 
-async function executeToolWithTimeout(name, args, mcpRegistry, timeoutMs) {
+async function executeToolWithTimeout(name, args, mcpRegistry, timeoutMs, options = {}) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-        return await executeTool(name, args, mcpRegistry);
+        return await executeTool(name, args, mcpRegistry, options);
     }
     return await Promise.race([
-        executeTool(name, args, mcpRegistry),
+        executeTool(name, args, mcpRegistry, options),
         new Promise((_, reject) => {
             setTimeout(() => reject(new Error(`Tool execution timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
         })
@@ -359,7 +359,7 @@ async function runScheduledJob(scheduleId) {
     let nextStatus = "succeeded";
     let errorText = null;
     try {
-        const result = await executeToolWithTimeout(job.toolName, job.toolArgs, job.mcpRegistry || [], job.executeTimeoutMs);
+        const result = await executeToolWithTimeout(job.toolName, job.toolArgs, job.mcpRegistry || [], job.executeTimeoutMs, { conversationId: `schedule:${job.id}` });
         if (result && typeof result === "object" && !Array.isArray(result) && result.error) {
             nextStatus = "failed";
             errorText = String(result.error);

@@ -29,6 +29,7 @@ import {
   listToolGroup,
   normalizeActiveToolNames
 } from "../../api/llm";
+import { releaseMcpConversation } from "../../api/mcp";
 import { ensureSettingsMigrated } from "../../api/settings/migrations";
 import { createHookLlmRuntime, loadAgentHooks, runAroundHooks } from "../../api/agent/hooks";
 import {
@@ -2597,6 +2598,8 @@ export default function AgentPanel() {
       sessionContextSummaryRef.current.delete(id);
       sessionRuntimeRef.current.delete(id);
       await deleteSession(id);
+      // End this conversation's MCP sessions so servers can release what it owns (best effort).
+      void releaseMcpConversation(id, combinedMcpTools).catch(() => {});
       const updated = await listSessions();
       setSessions(updated);
       // If deleted the current session, switch to another or create new
@@ -3546,14 +3549,14 @@ export default function AgentPanel() {
               }
               if (permissionDenied) return result;
               const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
-              if (!dangerousMeta) return await executeTool(toolCall.name, args, combinedMcpTools);
+              if (!dangerousMeta) return await executeTool(toolCall.name, args, combinedMcpTools, { conversationId: targetSessionId });
               const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
-              if (dangerousToolSkipApproval) return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools);
+              if (dangerousToolSkipApproval) return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools, { conversationId: targetSessionId });
               toast(`${dangerousMeta.title}：${toolCall.name}`, { duration: 2500 });
               const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
               if (!isCurrentRun(targetSessionId, runId)) return;
               if (!approved) return { error: "Execution canceled by user", cancelled: true };
-              return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools);
+              return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools, { conversationId: targetSessionId });
             };
             const outcome = await runAroundHooks({
               event: "tool.call",
