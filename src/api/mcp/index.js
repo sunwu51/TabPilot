@@ -18,6 +18,143 @@ function normalizeMcpTextResult(texts) {
 const _sessionIds = new Map();
 const EXTENSION_PROTOCOL_VERSION = "2025-03-26";
 
+// Per-conversation MCP sessions. A conversation that passes `conversationId` gets its own
+// Mcp-Session-Id from each HTTP server (created on first use, persisted so it survives
+// side-panel reloads and service-worker restarts), so stateful servers can keep one
+// conversation's state apart from another's. Calls without a conversationId (tool discovery,
+// settings) keep the legacy shared session.
+const CONVERSATION_SESSIONS_KEY = "mcp_conversation_sessions";
+const CONVERSATION_SESSION_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+const CONVERSATION_SESSION_TOUCH_MS = 24 * 60 * 60 * 1000;
+const SESSION_RENEWED_NOTICE = "The MCP server started a new session for this conversation because the previous one expired or was reset. State held by the old session (for example terminals or background jobs) may no longer be accessible.";
+const _sessionNotices = new Map();
+const _initInFlight = new Map();
+let _storageQueue = Promise.resolve();
+
+function _hashText(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+// Identifies a server without storing its credentials: the URL plus a hash of the headers.
+function _serverKey(url, headers = {}) {
+  return `${url}#${_hashText(JSON.stringify(_normalizeHeadersForSessionKey(headers)))}`;
+}
+
+function _hasStorage() {
+  return typeof chrome !== "undefined" && !!chrome.storage?.local;
+}
+
+async function _readStoredSessions() {
+  if (!_hasStorage()) return {};
+  try {
+    const stored = await chrome.storage.local.get({ [CONVERSATION_SESSIONS_KEY]: {} });
+    const all = stored[CONVERSATION_SESSIONS_KEY];
+    return all && typeof all === "object" && !Array.isArray(all) ? all : {};
+  } catch {
+    return {};
+  }
+}
+
+// Serialized read-modify-write; the mutator edits the whole map in place.
+function _updateStoredSessions(mutator) {
+  _storageQueue = _storageQueue.then(async () => {
+    if (!_hasStorage()) return;
+    try {
+      const all = await _readStoredSessions();
+      mutator(all);
+      const cutoff = Date.now() - CONVERSATION_SESSION_MAX_AGE_MS;
+      for (const [conversationId, servers] of Object.entries(all)) {
+        for (const [serverKey, record] of Object.entries(servers || {})) {
+          if (!(record?.updatedAt > cutoff)) delete servers[serverKey];
+        }
+        if (!servers || Object.keys(servers).length === 0) delete all[conversationId];
+      }
+      await chrome.storage.local.set({ [CONVERSATION_SESSIONS_KEY]: all });
+    } catch {
+      // Persistence is best effort; the in-memory session still works.
+    }
+  });
+  return _storageQueue;
+}
+
+async function _initializeConversation(url, headers, conversationId, sessionKey) {
+  let pending = _initInFlight.get(sessionKey);
+  if (!pending) {
+    pending = (async () => {
+      await initializeMcp(url, headers, { conversationId, skipSessionRefresh: true });
+      // A stateless server returns no session id; remember that so we do not initialize again.
+      if (!_sessionIds.has(sessionKey)) _sessionIds.set(sessionKey, "");
+      const id = _sessionIds.get(sessionKey) || "";
+      const serverKey = _serverKey(url, headers);
+      await _updateStoredSessions(all => {
+        (all[conversationId] ||= {})[serverKey] = { id, updatedAt: Date.now() };
+      });
+    })().finally(() => _initInFlight.delete(sessionKey));
+    _initInFlight.set(sessionKey, pending);
+  }
+  return pending;
+}
+
+async function _resolveConversationSessionId(url, headers, conversationId, sessionKey) {
+  if (_sessionIds.has(sessionKey)) return _sessionIds.get(sessionKey);
+  const serverKey = _serverKey(url, headers);
+  const record = (await _readStoredSessions())[conversationId]?.[serverKey];
+  if (typeof record?.id === "string") {
+    _sessionIds.set(sessionKey, record.id);
+    // Keep an actively used conversation from aging out of storage.
+    if (Date.now() - (record.updatedAt || 0) > CONVERSATION_SESSION_TOUCH_MS) {
+      void _updateStoredSessions(all => {
+        const current = all[conversationId]?.[serverKey];
+        if (current) current.updatedAt = Date.now();
+      });
+    }
+    return record.id;
+  }
+  await _initializeConversation(url, headers, conversationId, sessionKey);
+  return _sessionIds.get(sessionKey) || "";
+}
+
+/**
+ * End a conversation's MCP sessions (call when the conversation is deleted) so servers can
+ * release what the conversation owns. Servers no longer configured are forgotten locally;
+ * their sessions end through the server's own inactivity expiry.
+ * @param {string} conversationId
+ * @param {Array} [registry] - MCP tool registry entries ({_serverUrl, _serverHeaders, _serverType})
+ */
+export async function releaseMcpConversation(conversationId, registry = []) {
+  const id = String(conversationId || "").trim();
+  if (!id) return;
+  for (const key of [..._sessionIds.keys()]) {
+    try { if (JSON.parse(key).conversationId === id) _sessionIds.delete(key); } catch { /* not ours */ }
+  }
+  const mine = (await _readStoredSessions())[id];
+  if (!mine) return;
+  const servers = new Map();
+  for (const tool of registry || []) {
+    if (!tool || tool._serverType === "extension" || !tool._serverUrl) continue;
+    servers.set(_serverKey(tool._serverUrl, tool._serverHeaders || {}), tool);
+  }
+  await Promise.all([...servers].map(async ([serverKey, tool]) => {
+    const record = mine[serverKey];
+    if (!record?.id) return;
+    try {
+      await fetch(tool._serverUrl, {
+        method: "DELETE",
+        headers: _buildRequestHeaders(tool._serverHeaders || {}, record.id),
+        signal: AbortSignal.timeout(5000)
+      });
+    } catch {
+      // The server expires idle sessions on its own.
+    }
+  }));
+  await _updateStoredSessions(all => { delete all[id]; });
+}
+
 function _normalizeEndpoint(endpointOrUrl, headers = {}) {
   if (endpointOrUrl && typeof endpointOrUrl === "object") {
     if (endpointOrUrl.type === "extension") {
@@ -40,8 +177,12 @@ function _normalizeEndpoint(endpointOrUrl, headers = {}) {
   };
 }
 
-function _sessionKey(url, headers = {}) {
-  return JSON.stringify({ url, headers: _normalizeHeadersForSessionKey(headers) });
+function _sessionKey(url, headers = {}, conversationId = "") {
+  return JSON.stringify({
+    url,
+    headers: _normalizeHeadersForSessionKey(headers),
+    ...(conversationId ? { conversationId } : {})
+  });
 }
 
 function _normalizeHeadersForSessionKey(headers = {}) {
@@ -84,8 +225,14 @@ function _buildRequestHeaders(headers = {}, sessionId = "") {
  * @returns {Promise<Object>} JSON-RPC result
  */
 async function rpcCall(url, headers, method, params, timeoutMs, options = {}) {
-  const sessionKey = _sessionKey(url, headers);
-  const initialSessionId = method === "initialize" ? "" : (_sessionIds.get(sessionKey) || "");
+  const conversationId = String(options.conversationId || "").trim();
+  const sessionKey = _sessionKey(url, headers, conversationId);
+  let initialSessionId = "";
+  if (method !== "initialize") {
+    initialSessionId = conversationId
+      ? await _resolveConversationSessionId(url, headers, conversationId, sessionKey)
+      : (_sessionIds.get(sessionKey) || "");
+  }
   try {
     return await _rpcCallOnce(url, headers, method, params, timeoutMs, initialSessionId, sessionKey);
   } catch (error) {
@@ -94,7 +241,14 @@ async function rpcCall(url, headers, method, params, timeoutMs, options = {}) {
     }
 
     _sessionIds.delete(sessionKey);
-    await initializeMcp(url, headers, { skipSessionRefresh: true });
+    if (conversationId) {
+      // The session expired or the server restarted: start a fresh one, and tell the model
+      // so a missing terminal or job is not a mystery.
+      await _initializeConversation(url, headers, conversationId, sessionKey);
+      _sessionNotices.set(sessionKey, SESSION_RENEWED_NOTICE);
+    } else {
+      await initializeMcp(url, headers, { skipSessionRefresh: true });
+    }
     const refreshedSessionId = _sessionIds.get(sessionKey) || "";
     return await _rpcCallOnce(url, headers, method, params, timeoutMs, refreshedSessionId, sessionKey);
   }
@@ -276,7 +430,7 @@ export async function initializeMcp(url, headers = {}, options = {}) {
       protocolVersion: EXTENSION_PROTOCOL_VERSION
     });
   }
-  _sessionIds.delete(_sessionKey(endpoint.url, endpoint.headers));
+  _sessionIds.delete(_sessionKey(endpoint.url, endpoint.headers, String(options.conversationId || "").trim()));
   const result = await rpcCall(endpoint.url, endpoint.headers, "initialize", {
     protocolVersion: "2025-03-26",
     capabilities: {},
@@ -343,8 +497,9 @@ export async function readMcpResource(url, headers = {}, uri) {
  * @param {Object} args - tool arguments
  * @returns {Promise<Object>} tool result
  */
-export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs = DEFAULT_MCP_TOOL_TIMEOUT_MS) {
+export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs = DEFAULT_MCP_TOOL_TIMEOUT_MS, options = {}) {
   const endpoint = _normalizeEndpoint(url, headers);
+  const conversationId = String(options?.conversationId || "").trim();
   if (endpoint.type === "extension") {
     const result = await _rpcCallExtension(endpoint.extensionId, "tools/call", {
       name: toolName,
@@ -361,7 +516,11 @@ export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs =
   const result = await rpcCall(endpoint.url, endpoint.headers, "tools/call", {
     name: toolName,
     arguments: args
-  }, timeoutMs);
+  }, timeoutMs, { conversationId });
+  const sessionKey = _sessionKey(endpoint.url, endpoint.headers, conversationId);
+  const notice = _sessionNotices.get(sessionKey);
+  _sessionNotices.delete(sessionKey);
+  const withNotice = value => (notice && value && typeof value === "object" ? { ...value, mcp_session_notice: notice } : value);
 
   // MCP returns { content: [{ type: "text", text: "..." }] }
   // Flatten to a simple string or object for LLM consumption
@@ -369,9 +528,11 @@ export async function callMcpTool(url, headers = {}, toolName, args, timeoutMs =
     const texts = result.content
       .filter(c => c.type === "text")
       .map(c => c.text);
-    if (texts.length > 0) return normalizeMcpTextResult(texts);
+    // A tool-level failure (isError) is surfaced like every other tool failure.
+    if (result.isError === true && texts.length > 0) return withNotice({ error: texts.join("\n") });
+    if (texts.length > 0) return withNotice(normalizeMcpTextResult(texts));
   }
-  return result;
+  return withNotice(result);
 }
 
 /**

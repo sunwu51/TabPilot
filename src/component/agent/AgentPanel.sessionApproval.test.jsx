@@ -30,6 +30,7 @@ vi.mock("./UserProfilePanel", () => ({ default: () => null }));
 vi.mock("./SkillsConfig", () => ({ default: () => null }));
 
 import AgentPanel from "./AgentPanel";
+import { loadSession } from "../../api/agent/sessions";
 import { getChromeStorageSnapshot, resetChromeMock } from "../../../test/setup";
 
 describe("AgentPanel approvals when creating a session", () => {
@@ -89,6 +90,27 @@ describe("AgentPanel approvals when creating a session", () => {
     await waitFor(() => expect(mocks.streamChat).toHaveBeenCalledTimes(2));
     expect(mocks.streamChat.mock.calls[1][4].sessionId).toBe("a");
   }
+
+  it.each(["keyboard", "menu"])("creates a session via /new using the %s and preserves the original conversation", async (method) => {
+    render(<AgentPanel />);
+    await screen.findByText("原会话消息", { selector: ".chat-bubble-user" });
+    const input = screen.getByPlaceholderText(/输入消息/);
+    fireEvent.change(input, { target: { value: "/new" } });
+    const command = await screen.findByRole("button", { name: /\/new/ });
+    if (method === "keyboard") {
+      fireEvent.keyDown(input, { key: "Enter" });
+    } else {
+      fireEvent.click(command);
+    }
+    await expectNewSession();
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    const storage = getChromeStorageSnapshot();
+    expect(storage.session_a.messages).toEqual([{ role: "user", content: "原会话消息" }]);
+    expect(await loadSession(storage.agent_last_active_session_id)).toEqual([]);
+    expect(storage.sessions_index).toHaveLength(2);
+    expect(mocks.streamChat).not.toHaveBeenCalled();
+  });
 
   it("clears a visible plan card in the new session and preserves approval in the original session", async () => {
     const callbacks = await startRun();

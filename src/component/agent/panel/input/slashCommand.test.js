@@ -8,6 +8,12 @@ import {
 } from "./slashCommand";
 
 describe("memory slash command prompts", () => {
+  it("exposes and filters the new session command", () => {
+    expect(filterSlashCommands(SLASH_COMMANDS, [], [], "/new")).toEqual([
+      expect.objectContaining({ id: "new", name: "/new", titleKey: "slashNewTitle", descriptionKey: "slashNewDescription" })
+    ]);
+  });
+
   it("exposes manual context compaction", () => {
     expect(SLASH_COMMANDS).toContainEqual(expect.objectContaining({ id: "compact", name: "/compact" }));
   });

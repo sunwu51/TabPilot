@@ -395,9 +395,33 @@ describe("built-in tool execution", () => {
       { Authorization: "Bearer token" },
       "lookup",
       { query: "tabs" },
-      2000
+      2000,
+      { conversationId: undefined }
     );
     expect(result).toMatchObject({ name: "lookup", args: { query: "tabs" } });
+  });
+
+  it("forwards the conversation id so each conversation gets its own MCP session", async () => {
+    const { callMcpTool } = await import("../../mcp");
+    chrome.storage.local.get.mockResolvedValueOnce({ mcpToolTimeoutSeconds: 2 });
+
+    await executeTool("mcp_docs_lookup", { query: "tabs" }, [
+      {
+        name: "lookup",
+        _toolCallName: "mcp_docs_lookup",
+        _serverUrl: "https://mcp.example/rpc",
+        _serverHeaders: { Authorization: "Bearer token" }
+      }
+    ], { conversationId: "chat-7" });
+
+    expect(callMcpTool).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "http" }),
+      { Authorization: "Bearer token" },
+      "lookup",
+      { query: "tabs" },
+      2000,
+      { conversationId: "chat-7" }
+    );
   });
 
   it("routes extension-backed MCP tools with the extension endpoint descriptor", async () => {
@@ -420,7 +444,8 @@ describe("built-in tool execution", () => {
       {},
       "get_cookie",
       { url: "https://example.com", name: "sid" },
-      2000
+      2000,
+      { conversationId: undefined }
     );
   });
 
