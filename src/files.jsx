@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { listVfsEntries } from "./utils/vfsBrowser";
 import { chromeStorageVfs } from "./utils/chromeStorageVfs";
+import { LocaleProvider, useI18n } from "./i18n";
 import "./files.css";
 
 export function FileManager() {
+  const { locale, t } = useI18n();
+  const kindLabel = kind => ({ text: t("filesKindText"), directory: t("filesKindDirectory"), stash: "stash", playground: "Playground", webide: "WebIDE" }[kind] || kind);
   const [path, setPath] = useState("/");
   const [entries, setEntries] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -13,6 +16,11 @@ export function FileManager() {
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const request = useRef(0);
+
+  useEffect(() => {
+    document.title = t("fileManager");
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  }, [locale, t]);
 
   useEffect(() => {
     let active = true;
@@ -43,25 +51,25 @@ export function FileManager() {
   }
 
   return <main>
-    <header><h1>文件管理器</h1><button onClick={() => setRefresh(value => value + 1)}>刷新</button></header>
-    <nav aria-label="目录导航"><button onClick={() => setPath("/")}>根目录</button>{path.split("/").filter(Boolean).map((part, index, parts) => <button key={index} onClick={() => setPath(`/${parts.slice(0, index + 1).join("/")}`)}>/ {part}</button>)}</nav>
+    <header><h1>{t("fileManager")}</h1><button onClick={() => setRefresh(value => value + 1)}>{t("filesRefresh")}</button></header>
+    <nav aria-label={t("filesNavigation")}><button onClick={() => setPath("/")}>{t("filesRoot")}</button>{path.split("/").filter(Boolean).map((part, index, parts) => <button key={index} onClick={() => setPath(`/${parts.slice(0, index + 1).join("/")}`)}>/ {part}</button>)}</nav>
     {error && <p role="alert">{error}</p>}
     <div className="file-workspace">
-      <section className="file-list" aria-label="文件列表">
+      <section className="file-list" aria-label={t("filesList")}>
         <p className="directory-path">{path}</p>
         {path !== "/" && <button onClick={() => setPath(chromeStorageVfs.parentPath(path))}>📁 ..</button>}
-        {loading ? <p>加载中…</p> : entries.length === 0 ? <p>目录为空</p> : entries.map(entry => <div className="file-row" key={entry.path}>
+        {loading ? <p>{t("filesLoading")}</p> : entries.length === 0 ? <p>{t("filesEmpty")}</p> : entries.map(entry => <div className="file-row" key={entry.path}>
           <button className={selected?.path === entry.path ? "selected" : ""} onClick={() => entry.type === "directory" ? setPath(entry.path) : void select(entry)}>
-            <span>{entry.type === "directory" ? "📁" : "📄"} {entry.title || entry.name}</span><small>{entry.kind}{entry.type === "file" ? ` · ${entry.size} B` : ""}</small>
+            <span>{entry.type === "directory" ? "📁" : "📄"} {entry.title || entry.name}</span><small>{kindLabel(entry.kind)}{entry.type === "file" ? ` · ${entry.size} B` : ""}</small>
           </button>
-          {entry.url && <a href={entry.url} target="_blank" rel="noreferrer">打开 {entry.kind}</a>}
+          {entry.url && <a href={entry.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(entry.kind) })}</a>}
         </div>)}
       </section>
-      <section className="file-preview" aria-label="纯文本查看">
-        {selected ? <><div className="preview-toolbar"><strong>{selected.path}</strong>{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">打开 {selected.kind}</a>}</div><p>纯文本 · revision {selected.revision}</p><pre>{content}</pre></> : <p>选择文件查看纯文本，或打开 stash / Playground / WebIDE。</p>}
+      <section className="file-preview" aria-label={t("filesTextView")}>
+        {selected ? <><div className="preview-toolbar"><strong>{selected.path}</strong>{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(selected.kind) })}</a>}</div><p>{t("filesRevision", { revision: selected.revision })}</p><pre>{content}</pre></> : <p>{t("filesHint")}</p>}
       </section>
     </div>
   </main>;
 }
 
-if (document.getElementById("root")) createRoot(document.getElementById("root")).render(<FileManager />);
+if (document.getElementById("root")) createRoot(document.getElementById("root")).render(<LocaleProvider><FileManager /></LocaleProvider>);
