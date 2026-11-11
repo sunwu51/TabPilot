@@ -43,6 +43,10 @@
     background-color: var(--w-blue);
 }
 
+.search-result-badge-sticky.badge-container {
+    background-color: var(--w-indigo);
+}
+
 .search-result-badge-history.badge-container {
     background-color: var(--w-blue-dark);
 }

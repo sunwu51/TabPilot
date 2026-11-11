@@ -1,7 +1,7 @@
 {
   "name": "tabpilot",
   "private": true,
-  "version": "1.5.6.27",
+  "version": "1.5.6.28",
   "type": "module",
   "scripts": {
     "dev": "vite",
