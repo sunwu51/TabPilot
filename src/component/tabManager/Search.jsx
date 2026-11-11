@@ -3,6 +3,7 @@ import { Badge, Button, Card, Input, } from "@sunwu51/camel-ui"
 import { useEffect, useRef, useState } from "react"
 import { useLocalizedDom } from "../../i18n"
 import './Search.css'
+import { BOARD_KEY, loadBoard } from "../../api/sticky/store"
 
 /**
  * Search component for finding tabs by keyword matching on title + url.
@@ -18,6 +19,8 @@ function Search() {
   const [timestamp, setTimestamp] = useState(0)
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const preserveIndexRef = useRef(null)
+  // Tabs currently stuck to the sticky board get their own badge in the results.
+  const [stickyTabIds, setStickyTabIds] = useState(() => new Set())
 
   useEffect(() => {
     (async function _run() {
@@ -61,6 +64,22 @@ function Search() {
     chrome.runtime.onMessage.addListener(function () {
       setTimestamp(new Date().getTime())
     });
+  }, [])
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => loadBoard().then(board => {
+      if (alive) setStickyTabIds(new Set(board.notes.filter(note => !note.done && note.tabId != null).map(note => note.tabId)));
+    }).catch(() => {});
+    const onChanged = (changes, areaName) => {
+      if (areaName === "local" && changes[BOARD_KEY]) load();
+    };
+    load();
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
   }, [])
 
   const searchRef = useRef(null);
@@ -143,6 +162,8 @@ function Search() {
                         <div className="flex flex-col px-1 min-h-8 rounded-md justify-center">
                           <div className="flex items-center">
                             {
+                              stickyTabIds.has(item.tab.id) ?
+                                <Badge className="search-result-badge search-result-badge-sticky min-w-20">贴板-{item.score}</Badge> :
                               curWindow.id === item.tab.windowId ?
                                 <Badge className="search-result-badge search-result-badge-current min-w-20">当前-{item.score}</Badge> :
                                 <Badge className="search-result-badge search-result-badge-other min-w-20">其他-{item.score}</Badge>

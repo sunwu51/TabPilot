@@ -51,6 +51,7 @@ import {
 import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
 import { runPostdogRequest } from "./api/postdog/runtime";
 import { markSupabaseSettingsDirtyFromStorageChanges } from "./api/supabase/backup";
+import { registerStickyBackground } from "./api/sticky/background";
 import {
     authorizeMcpServerFromServiceWorker,
     getOAuthServerUrlForAlarm,
@@ -1424,6 +1425,8 @@ chrome.windows?.onRemoved?.addListener((windowId) => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
     void markSupabaseSettingsDirtyFromStorageChanges(changes, areaName);
 });
+
+registerStickyBackground();
 
 chrome.runtime.onInstalled.addListener(() => {
     chrome.alarms?.create("ws-bridge-health", { periodInMinutes: 1 });

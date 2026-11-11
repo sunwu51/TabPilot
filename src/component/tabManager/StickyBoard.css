@@ -1,0 +1,942 @@
+/* Sticky board: pages stuck to the tab manager like paper notes. */
+
+/* Registered so the paper colour can animate when a note dies or is revived. */
+@property --paper {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #dff1fd;
+}
+
+@property --paper-deep {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #9fd3f5;
+}
+
+.stk-board {
+  --stk-ink: #1a1a1a;
+  --stk-spring: cubic-bezier(.3, 1.5, .5, 1);
+  color: var(--stk-ink);
+}
+
+/* sky is the default for notes without a lane and matches the app's blue buttons. */
+.stk-c-sky { --paper: #dff1fd; --paper-deep: #9fd3f5; }
+.stk-c-yellow { --paper: #fff3a3; --paper-deep: #ffe45c; }
+.stk-c-pink { --paper: #ffd6e2; --paper-deep: #ff9dbb; }
+.stk-c-blue { --paper: #dfe0ff; --paper-deep: #a9abfd; }
+.stk-c-green { --paper: #d9f6c9; --paper-deep: #9fe07f; }
+.stk-c-purple { --paper: #e8dcff; --paper-deep: #c3a6ff; }
+.stk-c-orange { --paper: #ffe2c2; --paper-deep: #ffb96b; }
+
+.stk-board button:focus-visible,
+.stk-board input:focus-visible,
+.stk-board select:focus-visible {
+  outline: 2px solid var(--w-indigo-dark, #312e81);
+  outline-offset: 1px;
+}
+
+/* ---------- header ---------- */
+
+.stk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px dashed #d1d5db;
+}
+
+.stk-heading {
+  font-size: .875rem;
+  font-weight: 700;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.stk-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.stk-seg {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: repeat(3, 22px);
+  height: 24px;
+  border: 1.5px solid #111;
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.stk-seg-thumb {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 22px;
+  background: var(--w-blue, #73bcec);
+  transform: translateX(calc(var(--i, 0) * 22px));
+  transition: transform .28s var(--stk-spring);
+}
+
+.stk-seg button {
+  position: relative;
+  font-size: 10px;
+  font-weight: 800;
+  color: #6b7280;
+  transition: color .2s;
+}
+
+.stk-seg button[aria-pressed="true"] {
+  color: #111;
+}
+
+.stk-pin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  margin: 0 4px 4px 0;
+  border: 2px solid #000;
+  border-radius: .5rem;
+  background: var(--w-blue, #73bcec);
+  box-shadow: 2px 2px var(--w-green-dark, #00a600), 4px 4px #000;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: transform .1s ease, box-shadow .1s ease, background .15s, color .15s;
+}
+
+.stk-pin-btn:hover {
+  background: var(--w-blue-dark, #1e3a8a);
+  color: #fff;
+}
+
+.stk-pin-btn:active {
+  box-shadow: 0 0;
+  transform: translate(3px, 3px);
+}
+
+.stk-pin-btn:disabled {
+  opacity: .5;
+}
+
+.stk-pin-icon {
+  display: inline-flex;
+  transform-origin: 50% 85%;
+}
+
+.stk-pin-btn:hover .stk-pin-icon {
+  animation: stk-wiggle .5s ease;
+}
+
+/* ---------- lanes ---------- */
+
+.stk-lanes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.stk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1.5px solid #111;
+  border-radius: 999px;
+  /* Lane chips carry the same paper colour as the notes in that lane. */
+  background: var(--paper, #fff);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  transition: transform .18s var(--stk-spring), box-shadow .18s, background .2s, color .2s;
+}
+
+.stk-chip:hover {
+  transform: translateY(-1px);
+}
+
+.stk-chip.is-active {
+  background: var(--paper-deep, #111);
+  box-shadow: 2px 2px 0 #111;
+  transform: translate(-1px, -1px);
+}
+
+.stk-chip-all,
+.stk-chip-add {
+  background: #fff;
+}
+
+.stk-chip-all.is-active {
+  background: #111;
+  color: #fff;
+  box-shadow: 2px 2px 0 var(--w-green-dark, #00a600);
+}
+
+.stk-chip-dot {
+  width: 8px;
+  height: 8px;
+  border: 1px solid #111;
+  border-radius: 50%;
+  background: var(--paper-deep);
+}
+
+.stk-chip-count {
+  font-size: 10px;
+  opacity: .6;
+}
+
+.stk-chip-add {
+  padding: 1px 7px;
+  border-style: dashed;
+  color: #6b7280;
+}
+
+.stk-chip-add:hover {
+  color: #111;
+  border-style: solid;
+}
+
+.stk-chip-input {
+  width: 130px;
+  padding: 1px 8px;
+  border: 1.5px solid #111;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.5;
+  animation: stk-pop .2s var(--stk-spring);
+}
+
+.stk-lane-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 10px;
+  color: #6b7280;
+  animation: stk-fade .2s ease;
+}
+
+.stk-lane-actions button:hover {
+  color: #111;
+  text-decoration: underline;
+}
+
+.stk-board .is-danger {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+/* ---------- grid ---------- */
+
+.stk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--col), 1fr));
+  gap: 16px 12px;
+  padding: 12px 6px 8px 4px;
+}
+
+.stk-grid:empty {
+  display: none;
+}
+
+.stk-size-s { --col: 104px; }
+.stk-size-m { --col: 150px; }
+.stk-size-l { --col: 260px; --tilt-scale: .4; }
+
+.stk-slot {
+  min-width: 0;
+}
+
+/* ---------- card ---------- */
+
+.stk-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1.5px solid #111;
+  border-radius: 3px 3px 12px 3px;
+  background: linear-gradient(172deg, var(--paper) 0%, var(--paper) 62%, var(--paper-deep) 170%);
+  box-shadow: 3px 3px 0 #111;
+  transform: rotate(calc(var(--tilt, 0deg) * var(--tilt-scale, 1)));
+  transform-origin: 50% 0;
+  transition:
+    transform .28s var(--stk-spring),
+    box-shadow .22s ease,
+    border-color .5s ease,
+    color .5s ease,
+    --paper .6s ease,
+    --paper-deep .6s ease;
+}
+
+.stk-card:hover,
+.stk-card:has(:focus-visible) {
+  z-index: 2;
+  transform: rotate(0deg) translate(-2px, -4px) scale(1.03);
+  box-shadow: 6px 8px 0 #111;
+}
+
+.stk-tape {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  z-index: 1;
+  width: 42px;
+  height: 14px;
+  border: 1px solid rgba(0, 0, 0, .28);
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, .25) 0 3px, transparent 3px 6px),
+    rgba(255, 255, 255, .62);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .12);
+  transform: translateX(-50%) rotate(-3deg);
+  transition: transform .28s var(--stk-spring), opacity .5s;
+  pointer-events: none;
+}
+
+.stk-card:hover .stk-tape {
+  transform: translateX(-50%) rotate(2deg) scaleX(1.08);
+}
+
+.stk-shot {
+  position: relative;
+  margin: 9px 6px 0;
+  border: 1.5px solid #111;
+  border-radius: 2px;
+  background: #fff;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  transition: border-color .5s ease;
+}
+
+.stk-open {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.stk-open > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  transition: transform .6s cubic-bezier(.2, .7, .2, 1), filter .6s ease, opacity .6s ease;
+}
+
+.stk-card:hover .stk-open > img {
+  transform: scale(1.07);
+}
+
+.stk-shot-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, .9), transparent 55%),
+    var(--paper-deep);
+  transition: filter .6s ease;
+}
+
+.stk-shot-empty img {
+  width: 24px;
+  height: 24px;
+}
+
+.stk-shot-letter {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1.5px solid #111;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.stk-shot-host {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stk-shot-label {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 12px 6px 3px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .72));
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: left;
+  transform: translateY(100%);
+  transition: transform .22s ease;
+}
+
+.stk-card:hover .stk-shot-label,
+.stk-open:focus-visible .stk-shot-label {
+  transform: translateY(0);
+}
+
+/* toolbar */
+
+.stk-tools {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  left: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+  pointer-events: none;
+}
+
+.stk-tool {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid #111;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 1px 1px 0 #111;
+  color: #111;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-5px) scale(.8);
+  transition: opacity .16s ease, transform .22s var(--stk-spring), background .15s, color .15s;
+}
+
+.stk-card:hover .stk-tool,
+.stk-card:has(:focus-visible) .stk-tool {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.stk-tool:nth-child(2) { transition-delay: .03s; }
+.stk-tool:nth-child(3) { transition-delay: .06s; }
+.stk-tool:nth-child(4) { transition-delay: .09s; }
+.stk-tool:nth-child(5) { transition-delay: .12s; }
+
+.stk-card .stk-tool:hover,
+.stk-card .stk-tool.is-active {
+  background: var(--w-blue, #73bcec);
+  transform: translate(-1px, -1px);
+  transition-delay: 0s;
+}
+
+.stk-card .stk-tool-done:hover {
+  background: var(--w-green, #84cc16);
+}
+
+.stk-card .stk-tool-delete:hover,
+.stk-card .stk-tool-delete.is-confirming {
+  background: #ef4444;
+  color: #fff;
+}
+
+.stk-tool-delete.is-confirming {
+  animation: stk-shake .35s ease;
+}
+
+/* lane menu */
+
+.stk-card.is-menu-open {
+  z-index: 5;
+}
+
+.stk-card.is-menu-open .stk-tool {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.stk-menu {
+  position: absolute;
+  top: 34px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 128px;
+  max-width: 190px;
+  padding: 5px;
+  border: 1.5px solid #111;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 3px 3px 0 #111;
+  color: #111;
+  cursor: default;
+  animation: stk-menu-in .18s var(--stk-spring);
+}
+
+.stk-menu-right {
+  right: 6px;
+  transform-origin: 100% 0;
+}
+
+.stk-menu-left {
+  left: 6px;
+  transform-origin: 0 0;
+}
+
+.stk-menu-title {
+  padding: 0 5px 3px;
+  color: #9ca3af;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.stk-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  transition: background .12s, transform .12s;
+}
+
+.stk-menu-item:hover,
+.stk-menu-item:focus-visible {
+  background: var(--paper);
+  transform: translateX(2px);
+}
+
+.stk-menu-item.is-checked {
+  background: var(--paper);
+}
+
+.stk-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stk-menu-check {
+  display: inline-flex;
+}
+
+/* drag to reorder */
+
+.stk-slot {
+  cursor: grab;
+}
+
+.stk-slot:active {
+  cursor: grabbing;
+}
+
+.stk-slot input {
+  cursor: text;
+}
+
+.stk-slot.is-dragging .stk-card {
+  border-style: dashed;
+  box-shadow: none;
+  opacity: .35;
+  transform: rotate(0deg) scale(.96);
+}
+
+.stk-grid.is-sorting .stk-tool,
+.stk-grid.is-sorting .stk-shot-label {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* body */
+
+.stk-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px 7px;
+  min-width: 0;
+}
+
+.stk-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.stk-title-input {
+  width: 100%;
+  padding: 1px 4px;
+  border: 1.5px solid #111;
+  border-radius: 3px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stk-note {
+  width: 100%;
+  padding: 1px 0;
+  border-bottom: 1px dashed transparent;
+  background: transparent;
+  color: rgba(0, 0, 0, .7);
+  font-size: 11px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  transition: border-color .2s;
+}
+
+.stk-note::placeholder {
+  color: rgba(0, 0, 0, .32);
+}
+
+/* An empty note keeps its line so hovering never changes a card's height:
+   a height change would push the cards below it around. */
+.stk-note:placeholder-shown {
+  opacity: 0;
+  transition: opacity .2s;
+}
+
+.stk-card:hover .stk-note:placeholder-shown,
+.stk-note:placeholder-shown:focus {
+  opacity: 1;
+}
+
+.stk-note:hover,
+.stk-note:focus {
+  border-bottom-color: rgba(0, 0, 0, .4);
+}
+
+.stk-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 1px;
+  color: rgba(0, 0, 0, .55);
+  font-size: 10px;
+}
+
+.stk-host {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stk-dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #16a34a;
+  transition: background .5s;
+}
+
+.stk-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #16a34a;
+  animation: stk-ping 2.2s ease-out infinite;
+}
+
+/* small size */
+
+.stk-size-s .stk-shot-host {
+  display: none;
+}
+
+.stk-size-s .stk-title {
+  font-size: 11px;
+}
+
+.stk-size-s .stk-note {
+  font-size: 10px;
+}
+
+/* ---------- states ---------- */
+
+.stk-card.is-dead {
+  --paper: #efede7;
+  --paper-deep: #d8d5cc;
+  border-color: #7a7a7a;
+  box-shadow: 3px 3px 0 #a3a3a3;
+  color: #6b7280;
+}
+
+.stk-card.is-dead:hover,
+.stk-card.is-dead:has(:focus-visible) {
+  box-shadow: 6px 8px 0 #8b8b8b;
+}
+
+.stk-card.is-dead .stk-open > img,
+.stk-card.is-dead .stk-shot-empty {
+  filter: grayscale(1) contrast(.9);
+  opacity: .7;
+}
+
+.stk-card.is-dead .stk-shot {
+  border-color: #7a7a7a;
+}
+
+.stk-card.is-dead .stk-tape {
+  opacity: .55;
+}
+
+.stk-card.is-dead .stk-dot {
+  background: #9ca3af;
+}
+
+.stk-card.is-dead .stk-dot::after {
+  display: none;
+}
+
+.stk-card.is-entering {
+  animation: stk-stick .52s cubic-bezier(.2, .9, .3, 1.25) backwards;
+}
+
+.stk-card.is-leaving {
+  animation: stk-peel .3s cubic-bezier(.5, 0, .9, .4) forwards;
+  pointer-events: none;
+}
+
+.stk-card.is-reviving {
+  animation: stk-revive .9s ease;
+}
+
+.stk-card.is-flash {
+  animation: stk-shake .6s ease;
+}
+
+/* ---------- empty state ---------- */
+
+.stk-empty {
+  margin: 8px 2px 4px;
+  padding: 14px 10px;
+  border: 1.5px dashed #9ca3af;
+  border-radius: 8px;
+  color: #6b7280;
+  font-size: 11px;
+  text-align: center;
+  animation: stk-fade .3s ease;
+}
+
+.stk-empty-pin {
+  display: inline-flex;
+  margin-bottom: 4px;
+  color: #111;
+  animation: stk-bob 2.4s ease-in-out infinite;
+}
+
+.stk-empty-pin svg {
+  width: 20px;
+  height: 20px;
+}
+
+.stk-empty-hint {
+  margin-top: 4px;
+  font-size: 10px;
+}
+
+.stk-empty kbd {
+  padding: 0 4px;
+  border: 1px solid #9ca3af;
+  border-radius: 3px;
+  background: #fff;
+  font-family: inherit;
+}
+
+/* ---------- done list ---------- */
+
+.stk-done {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed #e5e7eb;
+  font-size: 11px;
+}
+
+.stk-done-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.stk-done-toggle:hover {
+  color: #111;
+}
+
+.stk-chevron {
+  display: inline-block;
+  transition: transform .2s ease;
+}
+
+.stk-done-toggle.is-open .stk-chevron {
+  transform: rotate(90deg);
+}
+
+.stk-done-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  animation: stk-slide .22s ease backwards;
+}
+
+.stk-done-list li:hover {
+  background: #f3f4f6;
+}
+
+.stk-done-list li.is-leaving {
+  opacity: 0;
+  transform: translateX(12px);
+  transition: opacity .28s, transform .28s;
+}
+
+.stk-done-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: #9ca3af;
+  text-decoration: line-through;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stk-done-list button {
+  flex-shrink: 0;
+  color: #374151;
+}
+
+.stk-done-list button:hover {
+  text-decoration: underline;
+}
+
+/* ---------- keyframes ---------- */
+
+@keyframes stk-stick {
+  0% {
+    opacity: 0;
+    transform: translateY(-22px) scale(1.2) rotate(calc(var(--tilt, 0deg) - 7deg));
+    box-shadow: 14px 18px 0 rgba(0, 0, 0, .25);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) scale(.97) rotate(calc(var(--tilt, 0deg) + 1deg));
+    box-shadow: 1px 1px 0 #111;
+  }
+  100% {
+    transform: rotate(calc(var(--tilt, 0deg) * var(--tilt-scale, 1)));
+  }
+}
+
+@keyframes stk-peel {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(34px) rotate(calc(var(--tilt, 0deg) + 16deg)) scale(.86);
+  }
+}
+
+@keyframes stk-revive {
+  0% {
+    transform: rotate(var(--tilt, 0deg)) scale(1);
+    box-shadow: 3px 3px 0 #111, 0 0 0 0 rgba(34, 197, 94, .7);
+  }
+  35% {
+    transform: rotate(0deg) scale(1.08);
+    box-shadow: 5px 6px 0 #111, 0 0 0 8px rgba(34, 197, 94, .35);
+  }
+  100% {
+    transform: rotate(calc(var(--tilt, 0deg) * var(--tilt-scale, 1))) scale(1);
+    box-shadow: 3px 3px 0 #111, 0 0 0 14px rgba(34, 197, 94, 0);
+  }
+}
+
+@keyframes stk-shake {
+  0%, 100% { translate: 0; }
+  20% { translate: -4px 0; }
+  40% { translate: 4px 0; }
+  60% { translate: -3px 0; }
+  80% { translate: 2px 0; }
+}
+
+@keyframes stk-wiggle {
+  0%, 100% { transform: rotate(0); }
+  30% { transform: rotate(-18deg); }
+  65% { transform: rotate(12deg); }
+}
+
+@keyframes stk-ping {
+  0% { transform: scale(1); opacity: .6; }
+  70%, 100% { transform: scale(2.8); opacity: 0; }
+}
+
+@keyframes stk-bob {
+  0%, 100% { transform: translateY(0) rotate(-8deg); }
+  50% { transform: translateY(-4px) rotate(6deg); }
+}
+
+@keyframes stk-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.9); }
+}
+
+@keyframes stk-pop {
+  from { opacity: 0; transform: scale(.8); }
+}
+
+@keyframes stk-fade {
+  from { opacity: 0; }
+}
+
+@keyframes stk-slide {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stk-board *,
+  .stk-board *::before,
+  .stk-board *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.stk-done-hint {
+  margin-left: 8px;
+  color: #9ca3af;
+  font-size: 10px;
+  animation: stk-fade .2s ease;
+}

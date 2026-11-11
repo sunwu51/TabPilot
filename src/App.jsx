@@ -5,6 +5,7 @@ import { Tabs, TabsItem } from "@sunwu51/camel-ui";
 import Group from "./component/tabManager/Group";
 import Search from "./component/tabManager/Search";
 import Workspace from "./component/tabManager/Workspace";
+import StickyBoard from "./component/tabManager/StickyBoard";
 import Macro from "./component/tabManager/Macro";
 import AgentPanel from "./component/agent/AgentPanel";
 import BridgePanel from "./component/bridge/BridgePanel";
@@ -68,6 +69,7 @@ function AppContent() {
     <TabsItem key="tab-mgr" title={t("tabManagement")}>
       <div className="p-1 relative flex flex-col gap-2">
         <Search />
+        <StickyBoard />
         <Group />
         <Workspace />
         <Macro />
