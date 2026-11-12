@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { _execEvalJs } from "./evalAndPlayground";
+import { chromeStorageVfs as vfs } from "../../../../utils/chromeStorageVfs";
 
 describe("eval_js", () => {
   it("injects the packaged Sval runtime into the main world before running code", async () => {
@@ -42,5 +43,37 @@ describe("eval_js", () => {
 
     expect(chrome.scripting.executeScript).toHaveBeenCalledTimes(2);
     expect(chrome.scripting.executeScript).not.toHaveBeenCalledWith(expect.objectContaining({ files: ["vendor/sval.min.js"] }));
+  });
+});
+
+describe("eval_js saved scripts", () => {
+  function mockTab() {
+    chrome.tabs.get.mockResolvedValue({ id: 9, url: "https://example.com/", windowId: 1, groupId: -1 });
+    chrome.scripting.executeScript
+      .mockResolvedValueOnce([{ result: true }])
+      .mockResolvedValueOnce([{ result: { success: true, strategy: "sval", result: 3 } }]);
+  }
+
+  it("runs a script saved in the VFS and passes args as JSON", async () => {
+    await vfs.writeFile("/scripts/count-rows.js", "return document.querySelectorAll(args.selector).length;");
+    mockTab();
+
+    const result = await _execEvalJs({ tabId: 9, path: "scripts/count-rows.js", args: { selector: "tr" } });
+
+    expect(chrome.scripting.executeScript).toHaveBeenLastCalledWith(expect.objectContaining({
+      target: { tabId: 9 },
+      args: ["return document.querySelectorAll(args.selector).length;", '{"selector":"tr"}']
+    }));
+    expect(result).toMatchObject({ path: "/scripts/count-rows.js", tabId: 9, result: 3 });
+  });
+
+  it("reports a missing script without touching the page", async () => {
+    const result = await _execEvalJs({ tabId: 9, path: "/scripts/nope.js" });
+    expect(result.error).toMatch(/Cannot read script/);
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+  });
+
+  it("requires either inline code or a path", async () => {
+    expect((await _execEvalJs({ tabId: 9 })).error).toMatch(/jsScript, or path/);
   });
 });

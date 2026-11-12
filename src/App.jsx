@@ -65,6 +65,11 @@ function AppContent() {
     return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
   }, []);
 
+  const scheduledRunId = new URLSearchParams(window.location.search).get("scheduledRun");
+  if (scheduledRunId) {
+    return <div className="app-root"><Toaster /><AgentPanel scheduledRunId={scheduledRunId} /></div>;
+  }
+
   const tabs = [
     <TabsItem key="tab-mgr" title={t("tabManagement")}>
       <div className="p-1 relative flex flex-col gap-2">

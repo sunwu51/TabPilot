@@ -328,19 +328,33 @@ export async function pinTab(tab, { laneId = null } = {}) {
   // captureVisibleTab can only see the active tab of a window.
   const hasThumb = tab.active ? await storeThumb(id, await captureThumbnail(tab.windowId)) : false;
 
-  const note = await mutateBoard(board => {
+  const note = await addNote({
+    id,
+    url,
+    title: tab.title || url,
+    favIconUrl: tab.favIconUrl || "",
+    laneId,
+    tabId: tab.id,
+    windowId: tab.windowId ?? null,
+    hasThumb,
+  });
+  return { note, duplicate: false };
+}
+
+function addNote({ id, url, title, favIconUrl = "", laneId = null, tabId = null, windowId = null, hasThumb = false }) {
+  return mutateBoard(board => {
     const now = Date.now();
     const created = {
       id,
       url,
       pinnedUrl: url,
-      title: tab.title || url,
+      title,
       customTitle: "",
       note: "",
-      favIconUrl: tab.favIconUrl || "",
+      favIconUrl,
       laneId: board.lanes.some(lane => lane.id === laneId) ? laneId : null,
-      tabId: tab.id,
-      windowId: tab.windowId ?? null,
+      tabId,
+      windowId,
       hasThumb,
       done: false,
       createdAt: now,
@@ -349,6 +363,40 @@ export async function pinTab(tab, { laneId = null } = {}) {
     board.notes.unshift(created);
     return created;
   });
+}
+
+/** Only addresses a tab can be reopened at are worth sticking. */
+export function parsePinnableUrl(raw) {
+  try {
+    const parsed = new URL(String(raw || "").trim());
+    return ["http:", "https:", "file:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Stick a URL that was dragged in or chosen from a link's context menu.
+ * If a tab is already open at that URL it is stuck like any other tab;
+ * otherwise the note starts out closed and opens the URL on first click.
+ */
+export async function pinUrl(rawUrl, { title = "", laneId = null } = {}) {
+  const url = parsePinnableUrl(rawUrl);
+  if (!url) throw new Error("BAD_URL");
+
+  const target = stripHash(url);
+  const board = await loadBoard();
+  const openNotes = board.notes.filter(note => !note.done);
+  const tabs = (await chrome.tabs.query({})).filter(tab => stripHash(tabUrlOf(tab)) === target);
+
+  const freeTab = tabs.find(tab => !openNotes.some(note => note.tabId === tab.id));
+  if (freeTab) return pinTab(freeTab, { laneId });
+
+  const existing = openNotes.find(note => tabs.some(tab => tab.id === note.tabId))
+    || openNotes.find(note => note.tabId == null && stripHash(note.url) === target);
+  if (existing) return { note: existing, duplicate: true };
+
+  const note = await addNote({ id: newId("st"), url, title: String(title || "").trim() || url, laneId });
   return { note, duplicate: false };
 }
 

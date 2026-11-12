@@ -6,6 +6,7 @@ const windowSnapshot = { id: 1, focused: true, current: true, type: "normal", st
 const download = { id: 12, url: "https://example.com/report.pdf", finalUrl: "https://example.com/report.pdf", filename: "C:\\Downloads\\report.pdf", state: "complete", mime: "application/pdf", totalBytes: 2048, bytesReceived: 2048, paused: false, exists: true };
 
 export const BUILTIN_TOOL_OUTPUT_EXAMPLES = {
+  schedule_agent: { success: true, scheduleId: "sched_example", kind: "agent", allowDangerousTools: false },
   tab_list: { capturedAt, count: 1, tabs: [tab] },
   tab_extract: { url: tab.url, title: tab.title, content: "Example page content", tabId: tab.id, windowId: 1, groupId: null, splitViewId: null, lastAccessed: tab.lastAccessed, lastAccessedIso: tab.lastAccessedIso },
   tab_scroll: { tabId: tab.id, windowId: 1, success: true, action: "delta", requestedTop: 640, moved: true, before: { scrollY: 0, maxScrollY: 1800, viewportHeight: 800 }, after: { scrollY: 640, maxScrollY: 1800, viewportHeight: 800 } },
@@ -50,7 +51,6 @@ export const BUILTIN_TOOL_OUTPUT_EXAMPLES = {
   window_create: { success: true, capturedAt, window: windowSnapshot },
   window_close: { success: true, capturedAt, closedWindowId: 1, window: windowSnapshot },
   get_current_time: { timestamp: capturedAt.timestamp, iso: capturedAt.iso, local: capturedAt.local, timezone: capturedAt.timezone, timezoneOffset: -480 },
-  schedule_tool: { success: true, scheduleId: "schedule_123", label: "Open report", toolName: "tab_open", fireTimestamp: 1786352700000, status: "pending" },
   list_scheduled: { scheduled: [{ scheduleId: "schedule_123", label: "Open report", toolName: "tab_open", status: "pending", fireTimestamp: 1786352700000 }] },
   cancel_scheduled: { success: true, cancelled: { scheduleId: "schedule_123", label: "Open report", toolName: "tab_open", status: "cancelled" } },
   clear_completed_scheduled: { success: true, removedCount: 1, removedIds: ["schedule_123"] },

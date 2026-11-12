@@ -7,6 +7,7 @@ import {
   loadBoard,
   openNote,
   pinTab,
+  pinUrl,
   reconcileBoard,
   reconcileStickies,
   removeLane,
@@ -180,5 +181,26 @@ describe("finished notes", () => {
     await reconcileStickies();
     expect((await loadBoard()).notes).toHaveLength(0);
     expect((await chrome.storage.local.get(thumbKey(pinned.id)))[thumbKey(pinned.id)]).toBeUndefined();
+  });
+});
+
+describe("pinUrl", () => {
+  it("creates a closed note for a link with no open tab, once", async () => {
+    const first = await pinUrl("https://git.example.com/mr/9", { title: "MR 9" });
+    expect(first).toMatchObject({ duplicate: false, note: { tabId: null, title: "MR 9", url: "https://git.example.com/mr/9", hasThumb: false } });
+    expect((await pinUrl("https://git.example.com/mr/9#note_1")).duplicate).toBe(true);
+    expect((await loadBoard()).notes).toHaveLength(1);
+  });
+
+  it("sticks the open tab when one already shows that URL", async () => {
+    chrome.tabs.query.mockResolvedValue([tab({ id: 12, active: false })]);
+    const result = await pinUrl("https://git.example.com/mr/1");
+    expect(result).toMatchObject({ duplicate: false, note: { tabId: 12, title: "MR 1" } });
+    expect((await pinUrl("https://git.example.com/mr/1")).duplicate).toBe(true);
+  });
+
+  it("rejects things that are not web addresses", async () => {
+    await expect(pinUrl("javascript:alert(1)")).rejects.toThrow("BAD_URL");
+    await expect(pinUrl("just some text")).rejects.toThrow("BAD_URL");
   });
 });
