@@ -68,7 +68,7 @@ import {
 import { _execHistorySearch, _execHistoryRecent } from "./builtins/history";
 import { _execListMacros, _execDescribeMacro, _execRunMacro } from "./builtins/macros";
 import {
-  _execScheduleTool,
+  _execScheduleAgent,
   _execListScheduled,
   _execCancelScheduled,
   _execClearCompletedScheduled
@@ -221,7 +221,7 @@ const BUILTIN_TOOL_HANDLERS = {
   describe_macro: (args) => _execDescribeMacro(args),
   run_macro: (args) => _execRunMacro(args),
 
-  schedule_tool: (args, mcpRegistry) => _execScheduleTool(args, mcpRegistry),
+  schedule_agent: (args) => _execScheduleAgent(args),
   list_scheduled: () => _execListScheduled(),
   cancel_scheduled: (args) => _execCancelScheduled(args),
   clear_completed_scheduled: () => _execClearCompletedScheduled(),

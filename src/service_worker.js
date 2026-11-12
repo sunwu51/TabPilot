@@ -1,3 +1,4 @@
+import { createAgentJob, serializeAgentJob, finishAgentJob } from "./api/agent/scheduleJobs";
 /* global chrome */
 import { readSubscriptionUsage } from "./api/llm/providers/openai-subscription-usage";
 import {
@@ -9,7 +10,6 @@ import {
     getReuseDomainPolicy,
     setReuseDomainPolicy
 } from "./api/browser/tabReuse";
-import { BUILTIN_TOOL_NAMES, executeTool, findMcpToolByCallName } from "./api/llm";
 import { connectWsBridge, disconnectWsBridge, ensureWsBridgeHealthy, getWsBridgeStatus, startWsBridge } from "./api/bridge/wsBridge";
 import {
     listMacros,
@@ -78,7 +78,6 @@ const AGENT_PANEL_PORT_NAME = "agent-panel-session-lock";
 const pendingReusePrompts = new Map();
 const SCHEDULE_STORAGE_KEY = "scheduledJobs";
 const SCHEDULE_RETENTION_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS = 30;
 const SCHEDULE_FIRE_ALARM_PREFIX = "schedule-fire:";
 const SCHEDULE_CLEANUP_ALARM_PREFIX = "schedule-cleanup:";
 const TERMINAL_SCHEDULE_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -124,31 +123,13 @@ async function saveScheduledJobs(jobs) {
     await chrome.storage.local.set({ [SCHEDULE_STORAGE_KEY]: jobs });
 }
 
-function serializeScheduledJob(job) {
-    const remainingSeconds = job.status === "pending"
-        ? Math.max(0, Math.round((job.fireTimestamp - Date.now()) / 1000))
-        : 0;
-    return {
-        id: job.id,
-        scheduleId: job.id,
-        label: job.label,
-        toolName: job.toolName,
-        toolArgs: job.toolArgs,
-        fireAt: new Date(job.fireTimestamp).toLocaleString(),
-        status: job.status,
-        remainingSeconds,
-        timeoutSeconds: Math.round((job.executeTimeoutMs || (DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS * 1000)) / 1000),
-        startedAt: job.startedAt ? new Date(job.startedAt).toLocaleString() : null,
-        finishedAt: job.finishedAt ? new Date(job.finishedAt).toLocaleString() : null,
-        error: job.error || null,
-        expiresAt: job.expiresAt ? new Date(job.expiresAt).toLocaleString() : null
-    };
-}
+const serializeScheduledJob = serializeAgentJob;
 
 async function clearScheduleAlarms(scheduleId) {
     if (!chrome.alarms) return;
     await chrome.alarms.clear(buildScheduleFireAlarmName(scheduleId));
     await chrome.alarms.clear(buildScheduleCleanupAlarmName(scheduleId));
+    await chrome.alarms.clear(`agent-timeout:${scheduleId}`);
 }
 
 async function createScheduleFireAlarm(job) {
@@ -166,7 +147,7 @@ async function pruneExpiredScheduledJobs() {
     const now = Date.now();
     const kept = [];
     for (const job of jobs) {
-        if (isTerminalScheduleStatus(job?.status) && Number.isFinite(job?.expiresAt) && job.expiresAt <= now) {
+        if (job.kind !== "agent" || (isTerminalScheduleStatus(job?.status) && Number.isFinite(job?.expiresAt) && job.expiresAt <= now)) {
             await clearScheduleAlarms(job.id);
             continue;
         }
@@ -176,35 +157,6 @@ async function pruneExpiredScheduledJobs() {
         await saveScheduledJobs(kept);
     }
     return kept;
-}
-
-function buildScheduleMcpSnapshot(mcpRegistry = []) {
-    return (mcpRegistry || []).map(tool => ({
-        name: tool?.name,
-        _serverName: tool?._serverName,
-        _serverUrl: tool?._serverUrl,
-        _serverHeaders: tool?._serverHeaders || {},
-        _serverType: tool?._serverType || "http",
-        _serverExtensionId: tool?._serverExtensionId || "",
-        _toolCallName: tool?._toolCallName
-    })).filter(tool => tool.name && tool._toolCallName && (tool._serverUrl || tool._serverExtensionId));
-}
-
-function isKnownScheduledToolName(toolName, mcpRegistry = []) {
-    if (BUILTIN_TOOL_NAMES.includes(toolName)) return true;
-    return !!findMcpToolByCallName(mcpRegistry, toolName);
-}
-
-async function executeToolWithTimeout(name, args, mcpRegistry, timeoutMs, options = {}) {
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-        return await executeTool(name, args, mcpRegistry, options);
-    }
-    return await Promise.race([
-        executeTool(name, args, mcpRegistry, options),
-        new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(`Tool execution timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
-        })
-    ]);
 }
 
 async function listScheduledJobs() {
@@ -238,67 +190,6 @@ async function clearCompletedScheduledJobs() {
         success: true,
         removedCount: completedJobs.length,
         removedIds: completedJobs.map(job => job.id)
-    };
-}
-
-async function scheduleJob(payload = {}) {
-    const { delaySeconds, timestamp, toolName, toolArgs, label, timeoutSeconds, mcpRegistry } = payload;
-    const mcpSnapshot = buildScheduleMcpSnapshot(mcpRegistry);
-
-    if (!isKnownScheduledToolName(toolName, mcpSnapshot)) {
-        return { error: `Unknown tool: ${toolName}` };
-    }
-    if (toolArgs == null || typeof toolArgs !== "object" || Array.isArray(toolArgs)) {
-        return { error: "toolArgs is required and must be an object" };
-    }
-
-    const now = Date.now();
-    let delayMs;
-    let fireTimestamp;
-
-    if (delaySeconds != null && Number(delaySeconds) > 0) {
-        delayMs = Number(delaySeconds) * 1000;
-        fireTimestamp = now + delayMs;
-    } else if (timestamp != null && Number.isFinite(Number(timestamp))) {
-        fireTimestamp = Number(timestamp);
-        delayMs = fireTimestamp - now;
-    } else {
-        return { error: "Please provide either delaySeconds or timestamp" };
-    }
-
-    if (delayMs < 0) return { error: "The specified time is in the past" };
-
-    const jobs = await pruneExpiredScheduledJobs();
-    const id = `sched_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const executeTimeoutMs = Math.max(1, Number(timeoutSeconds) || DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS) * 1000;
-    const entry = {
-        id,
-        fireTimestamp,
-        toolName,
-        toolArgs,
-        label: label || toolName,
-        executeTimeoutMs,
-        status: "pending",
-        startedAt: null,
-        finishedAt: null,
-        error: null,
-        expiresAt: null,
-        mcpRegistry: mcpSnapshot
-    };
-
-    jobs.push(entry);
-    await saveScheduledJobs(jobs);
-    await createScheduleFireAlarm(entry);
-
-    return {
-        success: true,
-        scheduleId: id,
-        toolName,
-        toolArgs,
-        label: entry.label,
-        fireAt: new Date(fireTimestamp).toLocaleString(),
-        delaySeconds: Math.round(delayMs / 1000),
-        timeoutSeconds: Math.round(executeTimeoutMs / 1000)
     };
 }
 
@@ -343,13 +234,36 @@ async function finalizeScheduledJob(scheduleId, updater) {
     return job;
 }
 
+async function scheduleAgentJob(payload) {
+    const entry = createAgentJob(payload);
+    const jobs = await pruneExpiredScheduledJobs();
+    jobs.push(entry);
+    await saveScheduledJobs(jobs);
+    await createScheduleFireAlarm(entry);
+    return { success: true, ...serializeAgentJob(entry) };
+}
+
+async function finishScheduledAgent(scheduleId, error) {
+    const existing = (await loadScheduledJobs()).find(job => job.id === scheduleId);
+    if (!existing || existing.kind !== "agent" || existing.status !== "running") return { error: "Scheduled assistant is not running" };
+    const job = await finalizeScheduledJob(scheduleId, current => {
+        if (current.kind !== "agent" || current.status !== "running") return;
+        Object.assign(current, finishAgentJob(current, error));
+    });
+    await chrome.alarms.clear(`agent-timeout:${scheduleId}`);
+    if (job?.status === "pending") await createScheduleFireAlarm(job);
+    else if (job) await createScheduleCleanupAlarm(job);
+    if (job?.runnerWindowId) await chrome.windows.remove(job.runnerWindowId).catch(() => {});
+    return { success: true };
+}
+
 async function runScheduledJob(scheduleId) {
     const jobs = await pruneExpiredScheduledJobs();
     const index = jobs.findIndex(job => job.id === scheduleId);
     if (index < 0) return;
 
     const job = jobs[index];
-    if (job.status !== "pending") return;
+    if (job.kind !== "agent" || job.status !== "pending") return;
 
     job.status = "running";
     job.startedAt = Date.now();
@@ -357,29 +271,46 @@ async function runScheduledJob(scheduleId) {
     await saveScheduledJobs(jobs);
     await chrome.alarms?.clear(buildScheduleFireAlarmName(scheduleId));
 
-    let nextStatus = "succeeded";
-    let errorText = null;
-    try {
-        const result = await executeToolWithTimeout(job.toolName, job.toolArgs, job.mcpRegistry || [], job.executeTimeoutMs, { conversationId: `schedule:${job.id}` });
-        if (result && typeof result === "object" && !Array.isArray(result) && result.error) {
-            nextStatus = "failed";
-            errorText = String(result.error);
-        }
-    } catch (error) {
-        nextStatus = "failed";
-        errorText = error?.message || String(error);
+    if (job.kind === "agent") {
+        try {
+            const sessionId = `scheduled_${job.id}_${Date.now()}`;
+            await finalizeScheduledJob(job.id, current => Object.assign(current, { sessionId, claimed: false }));
+            const runner = await chrome.windows.create({ url: chrome.runtime.getURL(`sidepanel.html?scheduledRun=${encodeURIComponent(job.id)}`), type: "popup", focused: false, width: 560, height: 760 });
+            await finalizeScheduledJob(job.id, current => Object.assign(current, { runnerWindowId: runner.id, runnerTabId: runner.tabs?.[0]?.id }));
+            await chrome.alarms.create(`agent-timeout:${job.id}`, { when: Date.now() + job.executeTimeoutMs });
+        } catch (error) { await finishScheduledAgent(job.id, error.message); }
+        return;
     }
 
-    const finishedAt = Date.now();
-    const updatedJob = await finalizeScheduledJob(scheduleId, (current) => {
-        current.status = nextStatus;
-        current.finishedAt = finishedAt;
-        current.error = errorText;
-        current.expiresAt = finishedAt + SCHEDULE_RETENTION_MS;
-    });
-    if (updatedJob) {
-        await createScheduleCleanupAlarm(updatedJob);
+}
+
+async function manageAgentJob({ scheduleId, operation }) {
+    const job = (await pruneExpiredScheduledJobs()).find(item => item.id === scheduleId);
+    if (!job) return { error: "Task not found" };
+    if (operation === "stop") {
+        if (job.status !== "running") return { error: "Task is not running" };
+        await finalizeScheduledJob(job.id, current => { current.pauseAfterRun = true; });
+        await finishScheduledAgent(job.id, "Stopped by user");
+        return { success: true };
     }
+    if (operation === "delete") {
+        if (job.status === "running") return { error: "Stop the task before deleting it" };
+        await cleanupScheduledJob(job.id);
+        return { success: true };
+    }
+    if (operation === "pause") {
+        if (job.status !== "pending") return { error: "Only pending tasks can be paused" };
+        await clearScheduleAlarms(job.id);
+        await finalizeScheduledJob(job.id, current => { current.status = "paused"; });
+    } else if (operation === "resume" || operation === "run_now") {
+        if (job.status === "running") return { error: "Task is already running" };
+        if (operation === "resume" && job.status !== "paused") return { error: "Task is not paused" };
+        await clearScheduleAlarms(job.id);
+        const updated = await finalizeScheduledJob(job.id, current => Object.assign(current, { status: "pending", expiresAt: null, fireTimestamp: operation === "run_now" ? Date.now() : Math.max(Date.now() + 1000, current.fireTimestamp) }));
+        if (operation === "run_now") await runScheduledJob(job.id);
+        else await createScheduleFireAlarm(updated);
+    } else return { error: "Unknown task operation" };
+    return { success: true };
 }
 
 async function cleanupScheduledJob(scheduleId) {
@@ -394,6 +325,13 @@ async function restoreScheduledJobs() {
     const jobs = await pruneExpiredScheduledJobs();
     let changed = false;
     for (const job of jobs) {
+        if (job.status === "running" && job.kind === "agent") {
+            const runner = job.runnerTabId != null ? await chrome.tabs.get(job.runnerTabId).catch(() => null) : null;
+            if (runner?.url === chrome.runtime.getURL(`sidepanel.html?scheduledRun=${encodeURIComponent(job.id)}`)) {
+                await chrome.alarms.create(`agent-timeout:${job.id}`, { when: Math.max(Date.now() + 1000, job.startedAt + job.executeTimeoutMs) });
+                continue;
+            }
+        }
         if (job.status === "running") {
             job.status = "failed";
             job.finishedAt = Date.now();
@@ -1006,8 +944,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         (async () => {
             try {
                 switch (msg.action) {
-                    case "schedule":
-                        sendResponse(await scheduleJob(msg.payload || {}));
+                    case "schedule_agent":
+                        sendResponse(await scheduleAgentJob(msg.payload || {}));
+                        break;
+                    case "claim_agent": {
+                        const jobs = await loadScheduledJobs();
+                        const job = jobs.find(item => item.id === msg.payload?.scheduleId);
+                        const expectedUrl = chrome.runtime.getURL(`sidepanel.html?scheduledRun=${encodeURIComponent(job?.id || "")}`);
+                        const runnerTab = await chrome.tabs.get(sender.tab?.id ?? msg.payload?.runnerTabId).catch(() => null);
+                        const ownPage = sender.id === chrome.runtime.id && sender.url === expectedUrl && runnerTab?.url === expectedUrl;
+                        if (!job || job.kind !== "agent" || job.status !== "running" || job.claimed || !ownPage || (job.runnerTabId != null && runnerTab?.id !== job.runnerTabId)) {
+                            sendResponse({ error: "Scheduled runner could not be claimed" });
+                        } else {
+                            await finalizeScheduledJob(job.id, current => Object.assign(current, { claimed: true, runnerTabId: runnerTab.id, runnerWindowId: runnerTab.windowId }));
+                            sendResponse({ success: true, job });
+                        }
+                        break;
+                    }
+                    case "finish_agent": {
+                        const job = (await loadScheduledJobs()).find(item => item.id === msg.payload?.scheduleId);
+                        if (!job || job.kind !== "agent" || job.status !== "running" || sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL(`sidepanel.html?scheduledRun=${encodeURIComponent(job.id)}`)) sendResponse({ error: "Not the scheduled runner" });
+                        else sendResponse(await finishScheduledAgent(job.id, msg.payload?.error));
+                        break;
+                    }
+                    case "manage_agent":
+                        sendResponse(await manageAgentJob(msg.payload || {}));
                         break;
                     case "list":
                         sendResponse(await listScheduledJobs());
@@ -1482,6 +1443,10 @@ if (chrome.alarms) {
             } catch (error) {
                 console.warn(`[mcp-oauth] token refresh failed for ${serverUrl}:`, error?.message || error);
             }
+            return;
+        }
+        if (alarm.name.startsWith("agent-timeout:")) {
+            await finishScheduledAgent(alarm.name.slice("agent-timeout:".length), "Scheduled assistant exceeded its time limit");
             return;
         }
         if (alarm.name.startsWith(SCHEDULE_FIRE_ALARM_PREFIX)) {

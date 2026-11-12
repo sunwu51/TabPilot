@@ -1,186 +1,74 @@
+/* global chrome */
+/* eslint-disable react/prop-types */
 import { useEffect, useState } from "react";
 import { executeTool } from "../../../../api/llm";
-import { Button, Card } from "@sunwu51/camel-ui";
-import toast from "react-hot-toast";
-import { useLocalizedDom } from "../../../../i18n";
-import {
-  formatRemainingSeconds,
-  formatScheduleStatus,
-  getLiveRemainingSeconds,
-  isTerminalScheduleStatus,
-  normalizeScheduleStatusClass
-} from "../utils/scheduleStatus";
+import { useI18n } from "../../../../i18n";
+import "./ScheduleJobsDialog.css";
 
-export function ScheduleJobsDialogBody() {
-  const rootRef = useLocalizedDom();
+export function ScheduleJobsDialogBody({ onOpenSession } = {}) {
+  const { locale } = useI18n();
+  const L = (zh, en) => locale === "en" ? en : zh;
   const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [clearingCompleted, setClearingCompleted] = useState(false);
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [now, setNow] = useState(Date.now());
-
+  async function refresh() {
+    const result = await executeTool("list_scheduled", {});
+    if (result?.error) throw new Error(result.error);
+    setJobs(result?.scheduled || []);
+    setError("");
+  }
   useEffect(() => {
-    let disposed = false;
-
-    async function loadJobs(showSpinner = false) {
-      if (showSpinner) {
-        setLoading(true);
-      } else {
-        setRefreshing(true);
-      }
+    let alive = true;
+    const load = async () => {
       try {
         const result = await executeTool("list_scheduled", {});
-        if (disposed) return;
-        if (result?.error) {
-          throw new Error(result.error);
-        }
-        setJobs(Array.isArray(result?.scheduled) ? result.scheduled : []);
+        if (!alive) return;
+        if (result?.error) throw new Error(result.error);
+        setJobs(result?.scheduled || []);
         setError("");
-      } catch (err) {
-        if (disposed) return;
-        setError(err?.message || String(err));
-      } finally {
-        if (!disposed) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      }
-    }
-
-    loadJobs(true);
-    const refreshIntervalId = setInterval(() => {
-      loadJobs(false);
-    }, 5000);
-    const clockIntervalId = setInterval(() => {
-      if (!disposed) setNow(Date.now());
-    }, 1000);
-
-    return () => {
-      disposed = true;
-      clearInterval(refreshIntervalId);
-      clearInterval(clockIntervalId);
+      } catch (err) { if (alive) setError(err.message); }
     };
+    void load();
+    const timer = setInterval(() => { setNow(Date.now()); void load(); }, 5000);
+    return () => { alive = false; clearInterval(timer); };
   }, []);
-
-  const hasCompletedJobs = jobs.some((job) => isTerminalScheduleStatus(job?.status));
-
-  async function handleRefresh() {
-    setRefreshing(true);
+  async function act(job, operation) {
+    if (operation === "delete" && confirmDelete !== job.id) { setConfirmDelete(job.id); return; }
+    setBusy(job.id);
     try {
-      const result = await executeTool("list_scheduled", {});
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-      setJobs(Array.isArray(result?.scheduled) ? result.scheduled : []);
-      setError("");
-    } catch (err) {
-      setError(err?.message || String(err));
-      toast.error(`刷新调度列表失败: ${err?.message || String(err)}`);
-    } finally {
-      setRefreshing(false);
-    }
+      const result = await chrome.runtime.sendMessage({ type: "schedule_manager", action: "manage_agent", payload: { scheduleId: job.id, operation } });
+      if (!result?.success) throw new Error(result?.error || "Task action failed");
+      setConfirmDelete(null);
+      await refresh();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(""); }
   }
-
-  async function handleClearCompleted() {
-    setClearingCompleted(true);
-    try {
-      const result = await executeTool("clear_completed_scheduled", {});
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-      const removedCount = Number(result?.removedCount) || 0;
-      setJobs((currentJobs) => currentJobs.filter((job) => !isTerminalScheduleStatus(job?.status)));
-      setError("");
-      toast.success(removedCount > 0 ? `已清理 ${removedCount} 个完成的 job` : "没有可清理的已完成 job");
-    } catch (err) {
-      setError(err?.message || String(err));
-      toast.error(`清理完成 job 失败: ${err?.message || String(err)}`);
-    } finally {
-      setClearingCompleted(false);
-    }
-  }
-
-  return (
-    <div ref={rootRef} className="schedule-dialog">
-      <div className="schedule-dialog-header">
-        <div>
-          <div className="schedule-dialog-title">Schedule Jobs</div>
-          <div className="schedule-dialog-subtitle">显示待执行任务和最近 24 小时内的执行记录</div>
-        </div>
-        <div className="schedule-dialog-actions">
-          <Button
-            className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-gray-100 !text-gray-700 !border !border-gray-300 hover:!bg-gray-200"
-            onPress={handleRefresh}
-            isDisabled={loading || refreshing || clearingCompleted}
-          >
-            {refreshing ? "刷新中..." : "刷新"}
-          </Button>
-          <Button
-            className="!min-h-8 !px-3 !text-xs !whitespace-nowrap !bg-red-50 !text-red-700 !border !border-red-200 hover:!bg-red-100"
-            onPress={handleClearCompleted}
-            isDisabled={loading || refreshing || clearingCompleted || !hasCompletedJobs}
-          >
-            {clearingCompleted ? "删除中..." : "删除结束项"}
-          </Button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="schedule-dialog-error">加载失败: {error}</div>
-      )}
-
-      {loading && jobs.length === 0 ? (
-        <div className="schedule-dialog-empty">正在加载任务…</div>
-      ) : jobs.length === 0 ? (
-        <div className="schedule-dialog-empty">当前没有可显示的 schedule job</div>
-      ) : (
-        <div className="schedule-job-list">
-          {jobs.map((job) => (
-            <Card key={job.id || job.scheduleId} className="schedule-job-card !p-3 !mb-2">
-              <div className="schedule-job-row">
-                <span className="schedule-job-label">{job.label || job.toolName || "未命名任务"}</span>
-                <span className={`schedule-job-status schedule-job-status-${normalizeScheduleStatusClass(job.status)}`}>
-                  {formatScheduleStatus(job.status)}
-                </span>
-              </div>
-              <div className="schedule-job-meta">
-                <span className="schedule-job-key">ID</span>
-                <code className="schedule-job-value">{job.id || job.scheduleId}</code>
-              </div>
-              <div className="schedule-job-meta">
-                <span className="schedule-job-key">预计执行时间</span>
-                <span className="schedule-job-value">{job.fireAt || "-"}</span>
-              </div>
-              {job.status === "pending" && typeof job.remainingSeconds === "number" && (
-                <div className="schedule-job-meta">
-                  <span className="schedule-job-key">剩余时间</span>
-                  <span className="schedule-job-value">
-                    {formatRemainingSeconds(getLiveRemainingSeconds(job, now))}
-                  </span>
-                </div>
-              )}
-              {job.status === "failed" && job.error && (
-                <div className="schedule-job-error">{job.error}</div>
-              )}
-            </Card>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const statuses = { pending: L("等待执行", "Scheduled"), running: L("运行中", "Running"), paused: L("已暂停", "Paused"), succeeded: L("成功", "Succeeded"), failed: L("失败", "Failed"), cancelled: L("已取消", "Cancelled") };
+  return <div className="agent-schedules">
+    <header><div><h2>{L("定时助手", "Scheduled assistants")}</h2><p>{L("每次启动新会话，使用相同的任务指令自主执行。", "Each run starts a fresh session with the same task prompt.")}</p></div><button onClick={() => refresh().catch(err => setError(err.message))}>{L("刷新", "Refresh")}</button></header>
+    <p className="agent-schedules-hint">{L("固定间隔或每日当地时间执行；重叠的轮次跳过，离线后最多补跑一次。", "Fixed intervals or daily local-time schedules. Overlaps are skipped; missed runs coalesce into one.")}</p>
+    {error && <p role="alert">{error}</p>}
+    {!jobs.length && <div className="agent-schedules-empty">{L("暂无任务。让助手按指定时间执行一段任务指令即可创建。", "No tasks yet. Ask the assistant to schedule a task prompt.")}</div>}
+    {jobs.map(job => <article key={job.id} className="agent-schedule">
+      <div className="agent-schedule-title"><strong>{job.label}</strong><span data-status={job.status}>{statuses[job.status] || job.status}</span></div>
+      <details><summary>{L("任务指令", "Task prompt")}</summary><pre>{job.prompt}</pre></details>
+      <dl><dt>{L("执行方式", "Cadence")}</dt><dd>{job.schedule?.type === "daily" ? L(`每天 ${job.schedule.time}（${job.schedule.timeZone}）`, `Daily ${job.schedule.time} (${job.schedule.timeZone})`) : job.repeatSeconds ? L(`每 ${job.repeatSeconds} 秒（固定间隔）`, `Every ${job.repeatSeconds}s (fixed cadence)`) : L("单次", "Once")}</dd>
+      <dt>{L("危险工具", "Dangerous tools")}</dt><dd>{job.allowDangerousTools ? L("允许，无需再次确认", "Allowed without further prompts") : L("禁止", "Blocked")}</dd>
+      {job.status === "pending" && <><dt>{L("下次运行", "Next run")}</dt><dd>{job.fireAt} · {Math.max(0, Math.ceil((job.fireTimestamp - now) / 1000))}s</dd></>}
+      <dt>{L("运行时限", "Time limit")}</dt><dd>{job.timeoutSeconds}s</dd>
+      {job.lastRunStatus && <><dt>{L("最近结果", "Last result")}</dt><dd>{statuses[job.lastRunStatus]} · {new Date(job.lastFinishedAt).toLocaleString()}</dd></>}
+      </dl>
+      {(job.lastError || job.error) && <p role="alert">{job.lastError || job.error}</p>}
+      <footer>
+        {job.status !== "running" && <button disabled={busy === job.id} onClick={() => act(job, "run_now")}>{L("立即运行", "Run now")}</button>}
+        {job.status === "pending" && <button disabled={busy === job.id} onClick={() => act(job, "pause")}>{L("暂停", "Pause")}</button>}
+        {job.status === "paused" && <button disabled={busy === job.id} onClick={() => act(job, "resume")}>{L("恢复", "Resume")}</button>}
+        {job.status === "running" ? <button disabled={busy === job.id} onClick={() => act(job, "stop")}>{L("停止", "Stop")}</button> : <button className="danger" disabled={busy === job.id} onClick={() => act(job, "delete")}>{confirmDelete === job.id ? L("确认删除", "Confirm delete") : L("删除", "Delete")}</button>}
+        {(job.lastSessionId || job.sessionId) && onOpenSession && <button onClick={() => onOpenSession(job.lastSessionId || job.sessionId)}>{L("查看会话", "View conversation")}</button>}
+      </footer>
+    </article>)}
+    {jobs.some(job => ["succeeded", "failed", "cancelled"].includes(job.status)) && <button onClick={async () => { try { await executeTool("clear_completed_scheduled", {}); await refresh(); } catch (err) { setError(err.message); } }}>{L("清理已结束任务", "Clear finished tasks")}</button>}
+  </div>;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

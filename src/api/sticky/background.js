@@ -1,6 +1,11 @@
 /* global chrome */
 import { PIN_COMMAND, loadPrefs, pinTab, pinUrl, reconcileStickies } from "./store";
+import { chromeStorageVfs, VFS_INDEX_KEY, VFS_STORAGE_PREFIX } from "../../utils/chromeStorageVfs";
+import { SCRIPTS_DIR, _execEvalJs } from "../llm/tools/builtins/evalAndPlayground";
 
+const MENU_ROOT = "tabpilot-context";
+const MENU_SCRIPTS = "tabpilot-run-scripts";
+const SCRIPT_MENU_PREFIX = "tabpilot-run-script:";
 const MENU_PAGE = "sticky-pin-page";
 const MENU_LINK = "sticky-pin-link";
 const LOCALE_KEY = "uiLocale";
@@ -40,12 +45,20 @@ export function registerStickyBackground() {
       void pinFromBackground(tab, laneId => pinTab(tab, { laneId }));
     } else if (info.menuItemId === MENU_LINK && info.linkUrl) {
       void pinFromBackground(tab, laneId => pinUrl(info.linkUrl, { laneId }));
+    } else if (typeof info.menuItemId === "string" && info.menuItemId.startsWith(SCRIPT_MENU_PREFIX) && tab?.id != null) {
+      const path = info.menuItemId.slice(SCRIPT_MENU_PREFIX.length);
+      if (path.startsWith(`${SCRIPTS_DIR}/`) && /\.m?js$/i.test(path)) {
+        void runScriptFromBackground(tab.id, path);
+      }
     }
   });
 
-  // Keep the menu labels in the language chosen in settings.
+  // Keep labels and saved scripts current while the worker is running.
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName === "local" && changes[LOCALE_KEY]) void setupContextMenus();
+    if (areaName === "local" && (changes[LOCALE_KEY] || changes[VFS_INDEX_KEY]
+      || Object.keys(changes).some(key => key.startsWith(VFS_STORAGE_PREFIX)))) {
+      void setupContextMenus();
+    }
   });
 }
 
@@ -67,22 +80,86 @@ async function menuLocale() {
   return String(chrome.i18n?.getUILanguage?.() || "").toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
-async function setupContextMenus() {
+// Serialize rebuilds so overlapping storage events cannot create duplicate IDs.
+let menuUpdates = Promise.resolve();
+function setupContextMenus() {
+  menuUpdates = menuUpdates.then(rebuildContextMenus).catch(error => {
+    console.warn("Could not refresh context menus:", error);
+  });
+  return menuUpdates;
+}
+
+async function rebuildContextMenus() {
   if (!chrome.contextMenus) return;
   const zh = (await menuLocale()) === "zh";
-  chrome.contextMenus.removeAll(() => {
+  let scripts = [];
+  try {
+    scripts = (await chromeStorageVfs.readdir(SCRIPTS_DIR, { recursive: true }))
+      .filter(entry => entry.type === "file" && /\.m?js$/i.test(entry.path)
+        && (entry.expireAt < 0 || entry.expireAt > Date.now()));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await new Promise(resolve => chrome.contextMenus.removeAll(() => {
     void chrome.runtime.lastError;
-    chrome.contextMenus.create({
-      id: MENU_PAGE,
-      title: zh ? "把此页面贴到便利贴" : "Stick this page to the board",
-      contexts: ["page"],
-    }, () => void chrome.runtime.lastError);
-    chrome.contextMenus.create({
-      id: MENU_LINK,
-      title: zh ? "把此链接贴到便利贴" : "Stick this link to the board",
-      contexts: ["link"],
-    }, () => void chrome.runtime.lastError);
+    resolve();
+  }));
+  const create = properties => new Promise(resolve => {
+    chrome.contextMenus.create(properties, () => {
+      void chrome.runtime.lastError;
+      resolve();
+    });
   });
+  const contexts = ["page", "link", "selection", "image", "video", "audio", "frame", "editable"];
+  await create({ id: MENU_ROOT, title: "TabPilot", contexts });
+  await create({
+    id: MENU_PAGE,
+    parentId: MENU_ROOT,
+    title: zh ? "添加到粘贴板" : "Add to sticky board",
+    contexts: ["page", "selection", "image", "video", "audio", "frame", "editable"],
+  });
+  await create({
+    id: MENU_LINK,
+    parentId: MENU_ROOT,
+    title: zh ? "添加链接到粘贴板" : "Add link to sticky board",
+    contexts: ["link"],
+  });
+  await create({
+    id: MENU_SCRIPTS,
+    parentId: MENU_ROOT,
+    title: zh ? "运行脚本（空参）" : "Run script (no arguments)",
+    contexts,
+    documentUrlPatterns: ["http://*/*", "https://*/*"],
+  });
+  if (!scripts.length) {
+    await create({
+      id: `${MENU_SCRIPTS}-empty`, parentId: MENU_SCRIPTS,
+      title: zh ? "暂无可运行的脚本" : "No runnable scripts", enabled: false, contexts,
+    });
+  }
+  for (const script of scripts) {
+    await create({
+      id: `${SCRIPT_MENU_PREFIX}${script.path}`,
+      parentId: MENU_SCRIPTS,
+      title: script.path.slice(SCRIPTS_DIR.length + 1).replace(/&/g, "&&"),
+      contexts,
+    });
+  }
+}
+
+async function runScriptFromBackground(tabId, path) {
+  try {
+    const result = await _execEvalJs({ tabId, path });
+    if (result.error) {
+      console.warn("Context-menu script failed:", path, result.error);
+      await flashBadge(tabId, "!");
+    } else {
+      await flashBadge(tabId, "✓");
+    }
+  } catch (error) {
+    console.warn("Context-menu script failed:", path, error);
+    await flashBadge(tabId, "!");
+  }
 }
 
 async function flashBadge(tabId, text) {

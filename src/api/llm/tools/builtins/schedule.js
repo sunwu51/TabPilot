@@ -1,25 +1,6 @@
 /* global chrome */
-import { buildMcpToolCallName } from "../definitions";
-import {
-  DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS,
-  SCHEDULE_CLEANUP_ALARM_PREFIX,
-  SCHEDULE_FIRE_ALARM_PREFIX,
-  SCHEDULE_RETENTION_MS,
-  SCHEDULE_STORAGE_KEY,
-  TERMINAL_SCHEDULE_STATUSES
-} from "../../core/constants";
-
-function _snapshotScheduleMcpRegistry(mcpRegistry = []) {
-  return (mcpRegistry || []).map(tool => ({
-    name: tool?.name,
-    _serverName: tool?._serverName,
-    _serverUrl: tool?._serverUrl,
-    _serverHeaders: tool?._serverHeaders || {},
-    _serverType: tool?._serverType || "http",
-    _serverExtensionId: tool?._serverExtensionId || "",
-    _toolCallName: tool?._toolCallName || buildMcpToolCallName(tool?._serverName || "server", tool?.name)
-  })).filter(tool => tool.name && tool._toolCallName && (tool._serverUrl || tool._serverExtensionId));
-}
+import { serializeAgentJob } from "../../../agent/scheduleJobs";
+import { SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "../../core/constants";
 
 function _isTerminalScheduledStatus(status) {
   return TERMINAL_SCHEDULE_STATUSES.has(status);
@@ -48,27 +29,7 @@ async function _clearScheduledAlarms(scheduleId) {
   await chrome.alarms.clear(_buildScheduleCleanupAlarmName(scheduleId));
 }
 
-function _serializeScheduledJob(job) {
-  const remainingSeconds = job.status === "pending"
-    ? Math.max(0, Math.round((job.fireTimestamp - Date.now()) / 1000))
-    : 0;
-
-  return {
-    id: job.id,
-    scheduleId: job.id,
-    label: job.label,
-    toolName: job.toolName,
-    toolArgs: job.toolArgs,
-    fireAt: new Date(job.fireTimestamp).toLocaleString(),
-    status: job.status,
-    remainingSeconds,
-    timeoutSeconds: Math.round((job.executeTimeoutMs || (DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS * 1000)) / 1000),
-    startedAt: job.startedAt ? new Date(job.startedAt).toLocaleString() : null,
-    finishedAt: job.finishedAt ? new Date(job.finishedAt).toLocaleString() : null,
-    error: job.error || null,
-    expiresAt: job.expiresAt ? new Date(job.expiresAt).toLocaleString() : null
-  };
-}
+const _serializeScheduledJob = serializeAgentJob;
 
 async function _pruneExpiredScheduledJobsInStorage() {
   const jobs = await _loadScheduledJobsFromStorage();
@@ -76,7 +37,7 @@ async function _pruneExpiredScheduledJobsInStorage() {
   const kept = [];
 
   for (const job of jobs) {
-    if (_isTerminalScheduledStatus(job?.status) && Number.isFinite(job?.expiresAt) && job.expiresAt <= now) {
+    if (job.kind !== "agent" || (_isTerminalScheduledStatus(job?.status) && Number.isFinite(job?.expiresAt) && job.expiresAt <= now)) {
       await _clearScheduledAlarms(job.id);
       continue;
     }
@@ -103,23 +64,12 @@ async function _sendScheduleMessage(action, payload = {}) {
   }
 }
 
-/**
- * Schedule a tool call to execute at a future time via the background service worker.
- */
-export async function _execScheduleTool({ delaySeconds, timestamp, toolName, toolArgs, label, timeoutSeconds }, mcpRegistry) {
-  return await _sendScheduleMessage("schedule", {
-    delaySeconds,
-    timestamp,
-    toolName,
-    toolArgs,
-    label,
-    timeoutSeconds,
-    mcpRegistry: _snapshotScheduleMcpRegistry(mcpRegistry)
-  });
+export async function _execScheduleAgent(args = {}) {
+  return _sendScheduleMessage("schedule_agent", args);
 }
 
 /**
- * List scheduled tool calls directly from storage to avoid MV3 service worker
+ * List scheduled assistant tasks directly from storage to avoid MV3 service worker
  * wake-up / response jitter in the schedule management UI.
  */
 export async function _execListScheduled() {
@@ -137,7 +87,7 @@ export async function _execListScheduled() {
 }
 
 /**
- * Cancel a pending scheduled tool call directly in storage.
+ * Cancel a pending scheduled assistant task directly in storage.
  * The background service worker still owns creation and execution.
  */
 export async function _execCancelScheduled({ scheduleId }) {

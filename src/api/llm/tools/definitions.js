@@ -1,4 +1,3 @@
-import { DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS } from "../core/constants";
 import { API_TYPES, normalizeApiType } from "../core/config";
 import { buildMcpRuntimePrompt } from "./mcpRuntime";
 import { buildSubagentTemplateTools } from "../../agent/subagentTemplates";
@@ -536,14 +535,15 @@ export const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Dangerous tool. Execute arbitrary JavaScript on a browser tab through a Sval interpreter with sandBox:false in the page's main JavaScript world. The packaged interpreter is injected with chrome.scripting when needed, so page CSP cannot block loading or evaluation. Use only when structured DOM tools are insufficient. It can access page-owned JavaScript variables and page-world APIs such as fetch and XMLHttpRequest to observe network requests and responses. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed.",
+    description: "Dangerous tool. Execute arbitrary JavaScript on a browser tab through a Sval interpreter with sandBox:false in the page's main JavaScript world. The packaged interpreter is injected with chrome.scripting when needed, so page CSP cannot block loading or evaluation. Use only when structured DOM tools are insufficient. It can access page-owned JavaScript variables and page-world APIs such as fetch and XMLHttpRequest to observe network requests and responses. The application will handle explicit user confirmation before execution, so do not ask the user for confirmation in natural language; call the tool directly when needed. Scripts can be saved and reused: once a script works, save it with vfs_write_file as /scripts/<name>.js, starting with a comment that says what it does, which site it is for and what `args` it expects; later run it by passing `path` instead of `jsScript`. Use vfs_list on /scripts to find saved scripts before writing a new one.",
     schema: {
       type: "object",
       properties: {
         tabId: { type: "number", description: "Optional browser tab ID. Defaults to the current active tab." },
-        jsScript: { type: "string", description: "JavaScript source code to execute through Sval with sandBox:false in the page's main world. Use `return ...` if you want a result value back." }
-      },
-      required: ["jsScript"]
+        jsScript: { type: "string", description: "JavaScript source code to execute through Sval with sandBox:false in the page's main world. Use `return ...` if you want a result value back. Provide either jsScript or path." },
+        path: { type: "string", description: "VFS path of a saved script to run instead of jsScript, for example /scripts/export-table.js. If both are given, path wins." },
+        args: { type: "object", description: "Optional JSON object passed to the script, which reads it as the variable `args`. Mainly for saved scripts run by path." }
+      }
     }
   },
   {
@@ -813,20 +813,22 @@ export const TOOLS = [
     }
   },
   {
-    name: "schedule_tool",
-    description: "Schedule a tool call to execute at a future time. You MUST provide both toolName and toolArgs. toolName must be one of the available built-in tools or connected MCP tools. toolArgs must be a JSON object and must strictly match the input format required by the selected toolName. Provide EITHER delaySeconds (relative, preferred) OR timestamp (absolute). Example: schedule tab_open to open a URL in 5 minutes. Recommendation: because scheduled jobs run inside the Chrome host process, they will disappear and cannot execute after Chrome is closed, so avoid creating jobs too far in the future whenever possible.",
-    schema: {
-      type: "object",
-      properties: {
-        delaySeconds: { type: "number", description: "Seconds from now (e.g. 300 for 5 minutes). Preferred." },
-        timestamp: { type: "number", description: "Absolute Unix timestamp in ms. Only if user gives exact datetime." },
-        toolName: { type: "string", description: "Name of the tool to call (e.g. tab_open, tab_close, mcp_server_tool)" },
-        toolArgs: { type: "object", description: "Required JSON object of arguments for the selected toolName. The shape and field names must strictly match that tool's input schema." },
-        label: { type: "string", description: "Short human-readable description of this scheduled task" },
-        timeoutSeconds: { type: "number", description: `Maximum execution time after the schedule fires. Defaults to ${DEFAULT_SCHEDULE_TOOL_TIMEOUT_SECONDS} seconds.` }
-      },
-      required: ["toolName", "toolArgs"]
-    }
+    name: "schedule_agent",
+    description: "Schedule a fresh autonomous assistant session in an unfocused popup. Uses the configured model and persists the conversation in history. Supports once, fixed-interval and daily calendar schedules with time zones. Missed occurrences coalesce into one run, and overlapping occurrences are skipped. Creation always asks the user to confirm and choose dangerous-tool access; do not ask separately in prose. No user-input or approval tools are available during the run.",
+    schema: { type: "object", properties: {
+      prompt: { type: "string", description: "Task prompt for each fresh session." },
+      delaySeconds: { type: "number", description: "Delay until first run." },
+      timestamp: { type: "number", description: "First run Unix milliseconds; use instead of delaySeconds." },
+      repeatSeconds: { type: "number", minimum: 60, description: "Optional fixed interval in seconds. Prefer schedule for new tasks." },
+      schedule: { type: "object", description: "Explicit schedule: once with delaySeconds or timestamp; interval with everySeconds (minimum 60), optional first-run delaySeconds/timestamp; daily with time HH:mm and IANA timeZone, e.g. Asia/Shanghai. Relative delays begin after creation is approved. Fixed intervals skip overlapping occurrences. Daily runs use the specified local clock time.", properties: {
+        type: { type: "string", enum: ["once", "interval", "daily"] },
+        delaySeconds: { type: "number" }, timestamp: { type: "number" }, everySeconds: { type: "number", minimum: 60 },
+        time: { type: "string", description: "Daily clock time HH:mm, e.g. 00:00" },
+        timeZone: { type: "string", description: "IANA time zone, e.g. Asia/Shanghai. Defaults to the browser time zone." }
+      }, required: ["type"] },
+      timeoutSeconds: { type: "number", description: "Maximum run duration, default 600 seconds." },
+      label: { type: "string" }
+    }, required: ["prompt"] }
   },
   {
     name: "list_scheduled",
@@ -839,7 +841,7 @@ export const TOOLS = [
   },
   {
     name: "cancel_scheduled",
-    description: "Cancel a pending scheduled tool call by its ID. Cancelled jobs remain visible with status=cancelled for 24 hours before cleanup.",
+    description: "Cancel a pending scheduled assistant task by its ID. Cancelled jobs remain visible with status=cancelled for 24 hours before cleanup.",
     schema: {
       type: "object",
       properties: {
@@ -1351,7 +1353,7 @@ export function getBuiltinToolGroup(toolName) {
   if (name.startsWith("postdog_")) return "postdog";
   if (IMAGE_TOOL_NAMES.has(name)) return "images";
   if (name.startsWith("memory_")) return "memory";
-  if (name === "schedule_tool" || name === "list_scheduled" || name === "cancel_scheduled" || name === "clear_completed_scheduled" || name === "get_current_time" || name === "sleep") return "schedule";
+  if (name === "schedule_agent" || name === "list_scheduled" || name === "cancel_scheduled" || name === "clear_completed_scheduled" || name === "get_current_time" || name === "sleep") return "schedule";
   if (name === "html_playground" || name === "webide_project" || name.startsWith("vfs_") || name.includes("stash")) return "storage";
   if (name.includes("macro")) return "automation";
   return "automation";
@@ -1529,6 +1531,7 @@ export function getTools(apiType, mcpTools = [], { includeBuiltins = true, suppo
 export function getCodeRuntimeToolDefinitions(options = {}) {
   return TOOLS
     .filter(tool => !CODE_RUNTIME_EXCLUDED_TOOL_NAMES.has(tool.name))
+    .filter(tool => !(options.excludeToolNames || []).includes(tool.name))
     .filter(tool => {
       const domains = Array.isArray(options.allowedBuiltinDomains) ? options.allowedBuiltinDomains : [];
       return options.restrictBuiltinDomains !== true || domains.includes(getBuiltinToolGroup(tool.name));

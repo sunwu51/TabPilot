@@ -503,7 +503,15 @@ function resolveSubagentConfig(config, template) {
   return resolveActiveLlmConfig({ ...config, activeLlmModelId: profileId });
 }
 
-export default function AgentPanel() {
+// scheduledRunId is supplied only by the standalone scheduled runner entry point.
+// eslint-disable-next-line react/prop-types
+export default function AgentPanel({ scheduledRunId = "" } = {}) {
+  const scheduledJobRef = useRef(null);
+  const scheduledStartedRef = useRef(false);
+  const scheduledFinishedRef = useRef(false);
+  const [scheduleAllowDangerous, setScheduleAllowDangerous] = useState(false);
+  const scheduleAllowDangerousRef = useRef(false);
+  const [scheduleDialogKey, setScheduleDialogKey] = useState(0);
   const { locale, t } = useI18n();
   const agentRootRef = useLocalizedDom();
   const newConversationTitle = t("newConversation");
@@ -815,6 +823,28 @@ export default function AgentPanel() {
   /** Initialize: load last session or create a new one */
   useEffect(() => {
     (async () => {
+      if (scheduledRunId) {
+        if (scheduledStartedRef.current) return;
+        scheduledStartedRef.current = true;
+        try {
+          const runnerTab = await chrome.tabs.getCurrent();
+          const response = await chrome.runtime.sendMessage({ type: "schedule_manager", action: "claim_agent", payload: { scheduleId: scheduledRunId, runnerTabId: runnerTab?.id } });
+          if (!response?.success || !response.job) throw new Error(response?.error || "Scheduled run could not be claimed");
+          scheduledJobRef.current = response.job;
+          const id = response.job.sessionId;
+          if (!id) throw new Error("Scheduled run has no session ID");
+          await createSession(id, response.job.label || "Scheduled run");
+          await saveSessionMeta(id, { scheduledJobId: scheduledRunId });
+          await openSession(id, { skipLockPrompt: true });
+          const config = await getLLMConfig();
+          if (!isLlmConfigUsable(config)) throw new Error("Configure an LLM model before running scheduled sessions");
+          await startUserMessage(id, { role: "user", content: response.job.prompt, sentAt: Date.now() }, config, { clearComposer: false });
+        } catch (error) {
+          toast.error(error.message);
+          await finishScheduledRun(error.message);
+        }
+        return;
+      }
       const currentWindowId = await getCurrentWindowId();
       await pruneExpiredSessionLocks();
       const allSessions = await listSessions();
@@ -2316,6 +2346,10 @@ export default function AgentPanel() {
   }
 
   function requestDangerousToolApproval(targetSessionId, runId, toolCall, approvalMeta) {
+    if (toolCall.name === "schedule_agent") {
+      scheduleAllowDangerousRef.current = false;
+      setScheduleAllowDangerous(false);
+    }
     return enqueueApproval(approvalQueuesRef.current, targetSessionId, {
       kind: "dangerous",
       runId,
@@ -2408,32 +2442,13 @@ export default function AgentPanel() {
 
   function getDangerousToolMeta(toolCall) {
     if (!toolCall) return null;
-    if (toolCall.name === "schedule_tool") {
-      const scheduledToolMeta = getDirectDangerousToolMeta(toolCall.args?.toolName, toolCall.args?.toolArgs);
-      if (!scheduledToolMeta) return null;
-      const scheduledTimestamp = resolveScheduledFireTimestamp(toolCall.args);
-      const scheduledFireAt = formatScheduledFireAt(scheduledTimestamp);
-      const originalArgs = toolCall.args || {};
-      const restArgs = { ...originalArgs };
-      delete restArgs.delaySeconds;
+    if (toolCall.name === "schedule_agent") {
       return {
-        title: "危险定时任务待确认",
-        description:
-          `${scheduledToolMeta.toolLabel} 将于 ${scheduledFireAt || "未来某个时间"} 自动执行。` +
-          `请确认参数无误后再创建该定时任务。`,
-        displayArgs: {
-          toolName: toolCall.args?.toolName,
-          label: toolCall.args?.label || toolCall.args?.toolName,
-          fireAt: scheduledFireAt,
-          delaySeconds: toolCall.args?.delaySeconds,
-          timestamp: toolCall.args?.timestamp,
-          timeoutSeconds: toolCall.args?.timeoutSeconds,
-          toolArgs: toolCall.args?.toolArgs || {}
-        },
-        confirmLabel: "确认创建任务",
-        executeArgs: scheduledTimestamp != null
-          ? { ...restArgs, timestamp: scheduledTimestamp }
-          : { ...originalArgs }
+        title: t("scheduleApprovalTitle"),
+        description: t("scheduleApprovalDescription"),
+        displayArgs: toolCall.args || {},
+        confirmLabel: t("scheduleApprovalCreate"),
+        executeArgs: { ...toolCall.args }
       };
     }
     return getDirectDangerousToolMeta(toolCall.name, toolCall.args);
@@ -2443,7 +2458,9 @@ export default function AgentPanel() {
     if (toolName === "eval_js") {
       return {
         title: "危险工具待确认",
-        description: "`eval_js` 将在当前页面执行任意 JavaScript。请确认参数无误后再执行。",
+        description: toolArgs?.path
+          ? `\`eval_js\` 将在页面中执行已保存的脚本 ${toolArgs.path}。请确认后再执行。`
+          : "`eval_js` 将在当前页面执行任意 JavaScript。请确认参数无误后再执行。",
         displayArgs: toolArgs || {},
         confirmLabel: "确认执行",
         executeArgs: toolArgs || {},
@@ -2464,23 +2481,6 @@ export default function AgentPanel() {
       }
     }
     return null;
-  }
-
-  function resolveScheduledFireTimestamp(scheduleArgs) {
-    if (Number.isFinite(Number(scheduleArgs?.timestamp))) {
-      return Number(scheduleArgs.timestamp);
-    }
-    if (Number.isFinite(Number(scheduleArgs?.delaySeconds)) && Number(scheduleArgs.delaySeconds) > 0) {
-      return Date.now() + Number(scheduleArgs.delaySeconds) * 1000;
-    }
-    return null;
-  }
-
-  function formatScheduledFireAt(fireTimestamp) {
-    if (!Number.isFinite(fireTimestamp)) return null;
-    const fireDate = new Date(fireTimestamp);
-    if (Number.isNaN(fireDate.getTime())) return null;
-    return fireDate.toLocaleString();
   }
 
   function resolveDangerousToolApproval(approved) {
@@ -2730,6 +2730,7 @@ export default function AgentPanel() {
       `- Dangerous tools such as eval_js or MCP tools marked as dangerous require explicit user confirmation before execution. The application will present that confirmation UI automatically, so do not ask the user to reply with confirmation in text.\n` +
       `- If the user asks you to set a reminder and there is no reminder/notification tool available in the tool list, create a new tab with tab_open using a data: URL that displays the reminder content clearly. For example: data:text/html;charset=utf-8,<h1>立即喝水</h1><p>15 分钟后提醒</p>.\n` +
       `- Use eval_js only when the structured DOM tools are insufficient.\n` +
+      `- Reusable page scripts live in the VFS under /scripts. When the user asks to run or reuse a saved script, find it with vfs_list and run it with eval_js using path (and args). When a script you wrote is worth keeping, offer to save it there.\n` +
       `- Some follow-up context messages may be added by the application to attach tool outputs such as screenshots. Treat them as internal tool context, not as a change in user intent.\n` +
       `- Images may be accompanied by refs such as img_1. If any tool argument requires that image as a base64 data URL, pass exactly the placeholder string "|deRef:img_1|". Do not copy, rewrite, summarize, shorten, or invent base64 data URLs. The host system will replace the placeholder before tool execution.\n` +
       `- To show an image ref to the user, render it with Markdown image syntax as ![image](|deRef:img_1|). Do not paste or copy base64 into your message. The host system will resolve the ref only for the visual preview.\n` +
@@ -3041,6 +3042,7 @@ export default function AgentPanel() {
       console.error("Failed to start conversation:", err);
       toast.error(`发送失败: ${err.message || String(err)}`);
       setSessionRuntime(currentSessionId, { loading: false, abort: null });
+      void finishScheduledRun(err.message || String(err));
     });
   }
 
@@ -3183,9 +3185,24 @@ export default function AgentPanel() {
     return true;
   }
 
+  async function finishScheduledRun(error = null) {
+    if (!scheduledRunId || scheduledFinishedRef.current) return;
+    scheduledFinishedRef.current = true;
+    try {
+      await chrome.runtime.sendMessage({ type: "schedule_manager", action: "finish_agent", payload: { scheduleId: scheduledRunId, error: error || null, sessionId: scheduledJobRef.current?.sessionId } });
+    } catch (failure) {
+      console.error("Could not report scheduled run completion:", failure);
+    }
+  }
+
   async function completeSessionRun(targetSessionId, finalMessages) {
     setSessionMessages(targetSessionId, finalMessages);
     await autoSave(targetSessionId, finalMessages);
+    if (scheduledRunId) {
+      setSessionRuntime(targetSessionId, { loading: false, abort: null });
+      await finishScheduledRun();
+      return;
+    }
     await waitForQueuedDrainTurn();
     const drained = await drainNextQueuedMessage(targetSessionId, { afterCompletedRun: true });
     if (!drained) {
@@ -3351,7 +3368,7 @@ export default function AgentPanel() {
 
   async function runConversation(config, targetSessionId, conversationMessages, runId, completion = null) {
     if (!isCurrentRun(targetSessionId, runId)) return;
-    const systemPrompt = await buildSystemPrompt(config);
+    const systemPrompt = (await buildSystemPrompt(config)) + (scheduledRunId ? "\n\nThis is an unattended scheduled task in a separate assistant window. Do not request user input or approvals, create schedules, or create approval-gated plans. Work autonomously within the tools available; report missing capabilities instead of waiting. The active tab may be the assistant page: select target web tabs explicitly or open required URLs. Dangerous tools are " + (scheduledJobRef.current?.allowDangerousTools === true ? "pre-authorized for this task." : "not authorized for this task.") : "");
     await loadSessionImagesIntoCache(targetSessionId);
     if (!isCurrentRun(targetSessionId, runId)) return;
     const activeContextSummary = await maybeCompactContextBeforeRequest(config, targetSessionId, conversationMessages, runId);
@@ -3403,6 +3420,8 @@ export default function AgentPanel() {
     }
 
     const activeToolNames = getActiveToolNamesForSession(targetSessionId, config);
+    const unattendedExcluded = scheduledRunId ? ["request_user_input", "plan_create_for_session", "schedule_agent", ...(scheduledJobRef.current?.allowDangerousTools === true ? [] : ["eval_js"])] : [];
+    const runMcpTools = scheduledRunId && scheduledJobRef.current?.allowDangerousTools !== true ? combinedMcpTools.filter(tool => !tool._dangerous) : combinedMcpTools;
     const agentHooks = await loadAgentHooks();
     const abort = streamChat({ ...config, ...(requestData.request || {}) }, requestMessages, {
       onText: (chunk) => {
@@ -3537,6 +3556,14 @@ export default function AgentPanel() {
               let result;
               let permissionDenied = false;
               const resolvedToolCall = { ...toolCall, args };
+              if (scheduledRunId) {
+                const blocked = ["request_user_input", "plan_create_for_session", "schedule_agent"];
+                if (blocked.includes(toolCall.name)) return { error: "Interactive tools are unavailable during scheduled runs", code: "UNATTENDED_TOOL_BLOCKED" };
+                const dangerous = getDangerousToolMeta(resolvedToolCall);
+                if (dangerous && scheduledJobRef.current?.allowDangerousTools !== true) return { error: "This scheduled job does not allow dangerous tools", code: "UNATTENDED_TOOL_BLOCKED" };
+                if (getPermissionMetaForToolCall(resolvedToolCall) && !(await hasDownloadsPermission())) return { error: "Required permission is unavailable in unattended mode" };
+                return executeTool(toolCall.name, dangerous?.executeArgs ?? args, combinedMcpTools, { conversationId: targetSessionId });
+              }
               const permissionMeta = getPermissionMetaForToolCall(resolvedToolCall);
               if (permissionMeta && !(await hasDownloadsPermission())) {
                 toast(`${permissionMeta.title}`, { duration: 2500 });
@@ -3551,12 +3578,15 @@ export default function AgentPanel() {
               const dangerousMeta = getDangerousToolMeta(resolvedToolCall);
               if (!dangerousMeta) return await executeTool(toolCall.name, args, combinedMcpTools, { conversationId: targetSessionId });
               const { dangerousToolSkipApproval } = await chrome.storage.local.get({ dangerousToolSkipApproval: false });
-              if (dangerousToolSkipApproval) return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools, { conversationId: targetSessionId });
+              if (dangerousToolSkipApproval && toolCall.name !== "schedule_agent") return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools, { conversationId: targetSessionId });
               toast(`${dangerousMeta.title}：${toolCall.name}`, { duration: 2500 });
               const approved = await requestDangerousToolApproval(targetSessionId, runId, resolvedToolCall, dangerousMeta);
               if (!isCurrentRun(targetSessionId, runId)) return;
               if (!approved) return { error: "Execution canceled by user", cancelled: true };
-              return await executeTool(toolCall.name, dangerousMeta.executeArgs ?? args, combinedMcpTools, { conversationId: targetSessionId });
+              const approvedArgs = toolCall.name === "schedule_agent"
+                ? { ...(dangerousMeta.executeArgs ?? args), allowDangerousTools: scheduleAllowDangerousRef.current }
+                : dangerousMeta.executeArgs ?? args;
+              return await executeTool(toolCall.name, approvedArgs, combinedMcpTools, { conversationId: targetSessionId });
             };
             const outcome = await runAroundHooks({
               event: "tool.call",
@@ -3581,7 +3611,9 @@ export default function AgentPanel() {
             let result;
             const t0 = Date.now();
             const resolvedArgs = tc.args;
-            if (tc.name === "tool_list_group") {
+            if (scheduledRunId && ["request_user_input", "plan_create_for_session", "schedule_agent"].includes(tc.name)) {
+              result = { error: "Interactive tools are unavailable during scheduled runs", code: "UNATTENDED_TOOL_BLOCKED" };
+            } else if (tc.name === "tool_list_group") {
               result = buildToolGroupResult(resolvedArgs?.group, config);
             } else if (tc.name === "tool_enable") {
               result = await enableToolsForSession(targetSessionId, resolvedArgs?.names, config);
@@ -3617,7 +3649,8 @@ export default function AgentPanel() {
                 supportsImageInput: config.supportsImageInput === true,
                 imageToolsEnabled: config.imageToolsEnabled === true,
                 postdogToolsEnabled: config.postdogToolsEnabled === true,
-                mcpTools: combinedMcpTools,
+                mcpTools: runMcpTools,
+                excludeToolNames: unattendedExcluded,
                 transformToolResult: async ({ result: nestedResult }) => {
                   const transformed = replaceBase64ImageDataUrlsWithRefs(
                     nestedResult,
@@ -3644,7 +3677,7 @@ export default function AgentPanel() {
               const templateRunArgs = template
                 ? { ...resolvedArgs, name: `${template.templateName} · ${resolvedArgs.name || "run"}` }
                 : resolvedArgs;
-              const templateMcpTools = template ? filterSubagentMcpTools(combinedMcpTools, template.allowedMcpServers) : combinedMcpTools;
+              const templateMcpTools = template ? filterSubagentMcpTools(runMcpTools, template.allowedMcpServers) : runMcpTools;
               const subagentConfig = resolveSubagentConfig(config, template);
               const updateSubagentCard = (steps, streamedMessage, streamedToolArgs) => {
                 const currentMsgs = getSessionMessages(targetSessionId);
@@ -3670,6 +3703,7 @@ export default function AgentPanel() {
                 sessionId: targetSessionId,
                 subagentId: tc.id || `subagent_${Date.now()}`,
                 mcpTools: templateMcpTools,
+                excludeToolNames: scheduledRunId ? ["create_subagent", ...unattendedExcluded] : undefined,
                 templatePrompt: template?.systemPrompt || "",
                 allowedBuiltinDomains: template?.allowedBuiltinDomains || [],
                 restrictBuiltinDomains: !!template,
@@ -3719,6 +3753,7 @@ export default function AgentPanel() {
                       allowedBuiltinDomains: template?.allowedBuiltinDomains || [],
                       restrictBuiltinDomains: !!template,
                       mcpTools: templateMcpTools,
+                      excludeToolNames: unattendedExcluded,
                       transformToolResult: async ({ result: codeResult }) => {
                         const transformed = replaceBase64ImageDataUrlsWithRefs(
                           codeResult,
@@ -3849,10 +3884,11 @@ export default function AgentPanel() {
         const finalMessages = [...stampedMessages, buildLlmErrorDisplayMessage(err)];
         setSessionMessages(targetSessionId, finalMessages);
         setSessionRuntime(targetSessionId, { loading: false, abort: null });
-        void autoSave(targetSessionId, finalMessages);
+        void autoSave(targetSessionId, finalMessages).then(() => finishScheduledRun(err.message || String(err)));
         completion?.reject(err);
       }
-    }, combinedMcpTools, {
+    }, runMcpTools, {
+      excludeToolNames: unattendedExcluded,
       sessionId: targetSessionId,
       supportsImageInput: config.supportsImageInput === true,
       supportsToolImageInput: config.supportsToolImageInput === true,
@@ -4799,13 +4835,13 @@ export default function AgentPanel() {
               messages={messages}
             />
           </Dialog>
-          <Dialog trigger={
+          <Dialog key={`schedule-${scheduleDialogKey}`} trigger={
             <button className="chat-toolbar-btn" title={t("schedule")}>
               <span className="chat-toolbar-icon">⏱️</span>
               <span className="chat-toolbar-full-text">{t("schedule")}</span>
             </button>
           }>
-            <ScheduleJobsDialogBody />
+            <ScheduleJobsDialogBody onOpenSession={id => { setScheduleDialogKey(value => value + 1); void switchSession(id); }} />
           </Dialog>
           <UserProfilePanel />
           <div className="chat-toolbar-expanded-spacer" />
@@ -5053,6 +5089,7 @@ export default function AgentPanel() {
             <pre className="tool-result-content" style={{ marginBottom: "8px" }}>
               {JSON.stringify(pendingApprovalMeta?.displayArgs ?? pendingApproval.toolCall?.args ?? {}, null, 2)}
             </pre>
+            {pendingApproval.toolCall?.name === "schedule_agent" && <label className="text-xs flex gap-2 mb-2"><input type="checkbox" checked={scheduleAllowDangerous} onChange={event => { scheduleAllowDangerousRef.current = event.target.checked; setScheduleAllowDangerous(event.target.checked); }} />{t("scheduleApprovalDangerous")}</label>}
             <div className="chat-input-actions" style={{ justifyContent: "flex-end", gap: "6px" }}>
               <Button className="!text-xs" onPress={() => resolveDangerousToolApproval(false)}>取消</Button>
               <Button className="!text-xs" onPress={() => resolveDangerousToolApproval(true)}>

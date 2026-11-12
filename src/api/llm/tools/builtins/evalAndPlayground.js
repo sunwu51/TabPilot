@@ -6,9 +6,37 @@ import {
   requirePlaygroundProject
 } from "../../../../utils/playgroundProjects";
 
-const SVAL_RUNTIME_FILE = "vendor/sval.min.js";
+import { chromeStorageVfs } from "../../../../utils/chromeStorageVfs";
 
-export async function _execEvalJs({ tabId, jsScript }) {
+const SVAL_RUNTIME_FILE = "vendor/sval.min.js";
+/** Where reusable scripts are kept in the VFS. */
+export const SCRIPTS_DIR = "/scripts";
+
+/**
+ * Run JavaScript on a tab. The code comes either inline (`jsScript`) or from a
+ * script saved in the VFS (`path`). `args` is exposed to the script as `args`.
+ */
+export async function _execEvalJs({ tabId, jsScript, path, args } = {}) {
+  let source = jsScript;
+  let scriptPath = null;
+  if (path != null && String(path).trim()) {
+    try {
+      scriptPath = chromeStorageVfs.normalizePath(String(path));
+      source = await chromeStorageVfs.readFile(scriptPath);
+    } catch (e) {
+      return { error: `Cannot read script ${path}: ${e.message}`, path: String(path) };
+    }
+  }
+  if (source == null || !String(source).trim()) {
+    return { error: "Provide jsScript, or path to a saved script file." };
+  }
+  let argsJson;
+  try {
+    argsJson = JSON.stringify(args === undefined ? null : args);
+  } catch (e) {
+    return { error: `args must be JSON-serializable: ${e.message}` };
+  }
+
   const resolved = await _resolveControllableTab(tabId, "run code on");
   if (resolved.error) return { error: resolved.error };
 
@@ -38,7 +66,7 @@ export async function _execEvalJs({ tabId, jsScript }) {
         target: { tabId: resolved.tab.id },
         world,
         func: __evalJsPageRunner,
-        args: [jsScript]
+        args: args === undefined ? [source] : [source, argsJson]
       }),
       new Promise((_, reject) => {
         setTimeout(() => reject(new Error(
@@ -52,6 +80,7 @@ export async function _execEvalJs({ tabId, jsScript }) {
 
     return {
       world,
+      ...(scriptPath ? { path: scriptPath } : {}),
       tabId: resolved.tab.id,
       windowId: resolved.tab.windowId,
       groupId: _normalizeGroupId(resolved.tab.groupId),
@@ -76,7 +105,7 @@ export async function _execEvalJs({ tabId, jsScript }) {
  * Must not close over any extension-side variables — chrome.scripting
  * serializes via toString() and re-parses in the page context.
  */
-async function __evalJsPageRunner(source) {
+async function __evalJsPageRunner(source, argsJson) {
   function normalizeResult(value) {
     if (value === undefined) return { kind: "undefined", value: null };
     if (value === null) return null;
@@ -96,7 +125,8 @@ async function __evalJsPageRunner(source) {
     const runtime = new globalThis.Sval({ ecmaVer: "latest", sourceType: "script", sandBox: false });
     // sandBox:false evaluates against the current main-world globals. Do not
     // import window/document/etc. again: Sval would redeclare those bindings.
-    runtime.run("exports.__result = (async () => {\n" + String(source || "") + "\n})()");
+    // `args` is passed as a JSON literal so nothing has to be declared on the page's globals.
+    runtime.run("exports.__result = (async (args) => {\n" + String(source || "") + "\n})(" + (argsJson || "null") + ")");
     const result = await runtime.exports.__result;
     return {
       success: true,

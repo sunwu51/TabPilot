@@ -10,6 +10,20 @@ function namesFor(apiType, options) {
 }
 
 describe("llm tool definitions", () => {
+  it("exposes scheduled assistant creation without model-controlled dangerous consent", () => {
+    const tool = getTools(API_TYPES.OPENAI_RESPONSES).find(item => item.name === "schedule_agent");
+    expect(tool.parameters.required).toEqual(["prompt"]);
+    expect(tool.parameters.properties.repeatSeconds.minimum).toBe(60);
+    expect(tool.parameters.properties.allowDangerousTools).toBeUndefined();
+    expect(getBuiltinToolGroup("schedule_agent")).toBe("schedule");
+  });
+
+  it("removes unattended exclusions from code-mode discovery", () => {
+    const names = getCodeRuntimeToolDefinitions({ excludeToolNames: ["eval_js", "schedule_agent", "request_user_input"] }).map(tool => tool.name);
+    expect(names).not.toContain("eval_js");
+    expect(names).not.toContain("schedule_agent");
+    expect(names).toContain("tab_list");
+  });
   it("builds deterministic MCP tool call names", () => {
     expect(buildMcpToolCallName("local", "search")).toBe("mcp_local_search");
   });

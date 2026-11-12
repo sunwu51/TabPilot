@@ -3,7 +3,81 @@ import { createRoot } from "react-dom/client";
 import { listVfsEntries } from "./utils/vfsBrowser";
 import { chromeStorageVfs } from "./utils/chromeStorageVfs";
 import { LocaleProvider, useI18n } from "./i18n";
+import { SCRIPTS_DIR, _execEvalJs } from "./api/llm/tools/builtins/evalAndPlayground";
 import "./files.css";
+
+/* global chrome */
+/* eslint-disable react/prop-types */
+
+/** Saved scripts are the .js files under /scripts; only those get a run bar. */
+function isRunnableScript(entry) {
+  return entry?.type === "file" && entry.path.startsWith(`${SCRIPTS_DIR}/`) && /\.m?js$/i.test(entry.path);
+}
+
+function hostOf(url) {
+  try { return new URL(url).host; } catch { return ""; }
+}
+
+/** Pick an open tab and run the selected script in it. */
+function ScriptRunner({ path }) {
+  const { t } = useI18n();
+  const [tabs, setTabs] = useState([]);
+  const [tabId, setTabId] = useState("");
+  const [argsText, setArgsText] = useState("");
+  const [running, setRunning] = useState(false);
+  const [outcome, setOutcome] = useState(null);
+
+  async function loadTabs() {
+    const all = await chrome.tabs.query({});
+    // Scripts can only run on web pages; most recently used tabs first.
+    const pages = all.filter(tab => /^https?:/.test(tab.url || "")).sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    setTabs(pages);
+    setTabId(current => (pages.some(tab => String(tab.id) === String(current)) ? current : String(pages[0]?.id ?? "")));
+  }
+
+  useEffect(() => {
+    setOutcome(null);
+    void loadTabs();
+  }, [path]);
+
+  async function run() {
+    let args;
+    if (argsText.trim()) {
+      try {
+        args = JSON.parse(argsText);
+      } catch {
+        setOutcome({ error: t("filesRunBadArgs") });
+        return;
+      }
+    }
+    setRunning(true);
+    setOutcome(null);
+    try {
+      const result = await _execEvalJs({ tabId: Number(tabId), path, args });
+      setOutcome(result.error ? { error: result.error } : { value: result.result });
+    } catch (err) {
+      setOutcome({ error: err.message });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return <div className="script-runner">
+    <div className="script-runner-row">
+      <label>{t("filesRunIn")}
+        <select aria-label={t("filesRunIn")} value={tabId} onChange={event => setTabId(event.target.value)} onFocus={() => void loadTabs()}>
+          {tabs.length === 0 && <option value="">{t("filesRunNoTabs")}</option>}
+          {tabs.map(tab => <option key={tab.id} value={tab.id}>{(tab.title || tab.url).slice(0, 60)} — {hostOf(tab.url)}</option>)}
+        </select>
+      </label>
+      <button className="primary" onClick={run} disabled={running || !tabId}>{running ? t("filesRunning") : t("filesRun")}</button>
+    </div>
+    <input aria-label={t("filesRunArgs")} placeholder={t("filesRunArgs")} value={argsText} onChange={event => setArgsText(event.target.value)} />
+    {outcome && (outcome.error
+      ? <p role="alert">{outcome.error}</p>
+      : <pre className="script-result" aria-label={t("filesRunResult")}>{outcome.value === undefined ? "undefined" : JSON.stringify(outcome.value, null, 2)}</pre>)}
+  </div>;
+}
 
 export function FileManager() {
   const { locale, t } = useI18n();
@@ -66,7 +140,7 @@ export function FileManager() {
         </div>)}
       </section>
       <section className="file-preview" aria-label={t("filesTextView")}>
-        {selected ? <><div className="preview-toolbar"><strong>{selected.path}</strong>{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(selected.kind) })}</a>}</div><p>{t("filesRevision", { revision: selected.revision })}</p><pre>{content}</pre></> : <p>{t("filesHint")}</p>}
+        {selected ? <><div className="preview-toolbar"><strong>{selected.path}</strong>{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(selected.kind) })}</a>}</div><p>{t("filesRevision", { revision: selected.revision })}</p>{isRunnableScript(selected) && <ScriptRunner path={selected.path} />}<pre>{content}</pre></> : <p>{t("filesHint")}</p>}
       </section>
     </div>
   </main>;
