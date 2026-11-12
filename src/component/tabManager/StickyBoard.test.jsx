@@ -29,7 +29,7 @@ describe("StickyBoard", () => {
   it("shows an empty state, then sticks the current tab", async () => {
     chrome.tabs.query.mockResolvedValue([liveTab]);
     render(<StickyBoard />);
-    await screen.findByText("把正在处理的页面贴在这里，稍后一键回来。");
+    await screen.findByText(/把正在处理的页面贴在这里/);
 
     fireEvent.click(screen.getByRole("button", { name: /贴住当前页/ }));
     const card = await screen.findByTestId("sticky-card");

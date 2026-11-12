@@ -496,20 +496,22 @@ export default function StickyBoard() {
     void reorderNotes(finished.order).then(refresh);
   }
 
+  async function afterPin({ note, duplicate }) {
+    if (duplicate) {
+      toast(L("这个页面已经贴过了", "This page is already on the board"), { icon: "📌" });
+      if (activeLane !== "all" && note.laneId !== (selectedLane?.id ?? null)) updatePrefs({ activeLane: "all" });
+      pulse(setFlashId, note.id, 700);
+      return;
+    }
+    await refresh();
+    if (!note.hasThumb) toast(L("已贴住（没有截图）", "Stuck (no screenshot)"), { icon: "📌" });
+  }
+
   async function handlePin() {
     if (pinning) return;
     setPinning(true);
     try {
-      const laneId = selectedLane ? selectedLane.id : null;
-      const { note, duplicate } = await pinActiveTab({ laneId });
-      if (duplicate) {
-        toast(L("这个页面已经贴过了", "This tab is already on the board"), { icon: "📌" });
-        if (activeLane !== "all" && note.laneId !== (selectedLane?.id ?? null)) updatePrefs({ activeLane: "all" });
-        pulse(setFlashId, note.id, 700);
-      } else {
-        await refresh();
-        if (!note.hasThumb) toast(L("已贴住（该页面无法截图）", "Stuck (this page can't be captured)"), { icon: "📌" });
-      }
+      await afterPin(await pinActiveTab({ laneId: selectedLane ? selectedLane.id : null }));
     } catch {
       toast.error(L("没有可以贴住的页面", "No tab to stick"));
     } finally {

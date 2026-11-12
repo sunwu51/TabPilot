@@ -25,6 +25,7 @@
     "sidePanel",
     "history",
     "storage",
+    "contextMenus",
     "scripting",
     "identity",
     "declarativeNetRequestWithHostAccess"
