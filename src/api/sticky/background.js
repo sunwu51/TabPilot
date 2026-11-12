@@ -115,13 +115,13 @@ async function rebuildContextMenus() {
   await create({
     id: MENU_PAGE,
     parentId: MENU_ROOT,
-    title: zh ? "添加到粘贴板" : "Add to sticky board",
+    title: zh ? "添加到便利贴" : "Add to sticky board",
     contexts: ["page", "selection", "image", "video", "audio", "frame", "editable"],
   });
   await create({
     id: MENU_LINK,
     parentId: MENU_ROOT,
-    title: zh ? "添加链接到粘贴板" : "Add link to sticky board",
+    title: zh ? "添加链接到便利贴" : "Add link to sticky board",
     contexts: ["link"],
   });
   await create({
