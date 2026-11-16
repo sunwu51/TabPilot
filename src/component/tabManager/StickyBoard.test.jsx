@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@sunwu51/camel-ui", () => ({
   Card: ({ children }) => <div>{children}</div>,
+  Button: ({ children, onPress, isDisabled, title, className }) => (
+    <button type="button" className={className} title={title} disabled={isDisabled} onClick={onPress}>{children}</button>
+  ),
 }));
 
 import StickyBoard from "./StickyBoard";

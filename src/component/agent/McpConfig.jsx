@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { connectMcpServer } from "../../api/mcp";
 import { BUILTIN_TOOL_NAMES, buildMcpToolCallName } from "../../api/llm";
 import toast from "react-hot-toast";
-import { useI18n, useLocalizedDom } from "../../i18n";
+import { useI18n, useLocalizedDom, tr } from "../../i18n";
 
 const MCP_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 const MCP_SILENT_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
@@ -215,23 +215,23 @@ export default function McpConfig({ onToolsChanged }) {
     const url = newUrl.trim();
     const extensionId = newExtensionId.trim();
     if (!name) {
-      toast.error("请填写 MCP 名称");
+      toast.error(tr("请填写 MCP 名称", "Enter an MCP name"));
       return;
     }
     if (!MCP_NAME_PATTERN.test(name)) {
-      toast.error("名称只能包含字母、数字和下划线");
+      toast.error(tr("名称只能包含字母、数字和下划线", "Name can only contain letters, numbers and underscores"));
       return;
     }
     if (servers.some(server => server.name === name)) {
-      toast.error("MCP 名称不能重复");
+      toast.error(tr("MCP 名称不能重复", "MCP name must be unique"));
       return;
     }
     if (newType === "http" && !url) {
-      toast.error("请填写服务器 URL");
+      toast.error(tr("请填写服务器 URL", "Enter the server URL"));
       return;
     }
     if (newType === "extension" && !extensionId) {
-      toast.error("请填写插件 ID");
+      toast.error(tr("请填写插件 ID", "Enter the extension ID"));
       return;
     }
 
@@ -240,7 +240,7 @@ export default function McpConfig({ onToolsChanged }) {
       try {
         headers = JSON.parse(newHeaders.trim());
       } catch (e) {
-        toast.error("Headers JSON 格式错误");
+        toast.error(tr("Headers JSON 格式错误", "Invalid Headers JSON"));
         return;
       }
     }
@@ -268,9 +268,9 @@ export default function McpConfig({ onToolsChanged }) {
     };
 
     if (result.error) {
-      toast.error(`连接失败: ${result.error}`);
+      toast.error(tr(`连接失败: ${result.error}`, `Connection failed: ${result.error}`));
     } else {
-      toast.success(`已连接「${name}」(${result.tools.length} 个工具)`);
+      toast.success(tr(`已连接「${name}」(${result.tools.length} 个工具)`, `Connected "${name}" (${result.tools.length} tools)`));
       setNewType("http");
       setNewName("");
       setNewUrl("");
@@ -314,8 +314,8 @@ export default function McpConfig({ onToolsChanged }) {
     setServers(updated);
     _saveServers(updated);
     _notifyTools(updated, { showWarning: true });
-    if (result.error) toast.error(`重连失败: ${result.error}`);
-    else toast.success(`已刷新「${server.name}」工具列表`);
+    if (result.error) toast.error(tr(`重连失败: ${result.error}`, `Reconnect failed: ${result.error}`));
+    else toast.success(tr(`已刷新「${server.name}」工具列表`, `Refreshed tool list for "${server.name}"`));
   }
 
   async function handleToggleTool(serverId, toolName, patch) {
@@ -381,7 +381,7 @@ export default function McpConfig({ onToolsChanged }) {
                 <div className="text-xs font-medium truncate">{s.name || s.url}</div>
                 <div className="text-xs text-gray-400">
                   {s.enabled
-                    ? `${s.tools?.filter(tool => getToolSetting(s, tool.name).enabled !== false).length || 0}/${s.tools?.length || 0} 个工具`
+                    ? tr(`${s.tools?.filter(tool => getToolSetting(s, tool.name).enabled !== false).length || 0}/${s.tools?.length || 0} 个工具`, `${s.tools?.filter(tool => getToolSetting(s, tool.name).enabled !== false).length || 0}/${s.tools?.length || 0} tools`)
                     : (s.error || "未连接")}
                 </div>
                 {s.serverInfoName && s.serverInfoName !== s.name && (
@@ -415,8 +415,8 @@ export default function McpConfig({ onToolsChanged }) {
                   title={s.type === "extension" ? s.extensionId : s.url}
                 >
                   {s.type === "extension"
-                    ? `插件 ID：${s.extensionId || "—"}`
-                    : `HTTP URL：${s.url || "—"}`}
+                    ? tr(`插件 ID：${s.extensionId || "—"}`, `Extension ID: ${s.extensionId || "—"}`)
+                    : `HTTP URL: ${s.url || "—"}`}
                 </div>
                 {[...s.tools].sort((a, b) => {
                   const aNest = !!getToolSetting(s, a.name).nesting;

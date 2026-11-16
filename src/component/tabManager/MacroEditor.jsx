@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { normalizeStep, targetToSelectors } from "../../api/macro";
 
+import { tr } from "../../i18n";
 export default function MacroEditor({ macro, onSaved, trigger, replayOptions = { speed: "normal" } }) {
     return (
         <Dialog trigger={trigger || <Button className="!text-xs !p-0 !px-2 !min-h-6">编辑</Button>}>
@@ -86,13 +87,13 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
     function cleanupSteps() {
         setSteps(prev => compactSteps(prev));
         setExpanded(new Set());
-        toast.success("已清理连续输入 / 重复滚动 / click+submit");
+        toast.success(tr("已清理连续输入 / 重复滚动 / click+submit", "Cleaned up consecutive inputs / repeated scrolls / click+submit"));
     }
 
     async function testSelector(selector) {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab || !tab.url || !tab.url.startsWith("http")) {
-            toast.error("请先在目标 http(s) 页面上打开标签页");
+            toast.error(tr("请先在目标 http(s) 页面上打开标签页", "Open a tab on the target http(s) page first"));
             return;
         }
         chrome.tabs.sendMessage(tab.id, {
@@ -101,23 +102,23 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
             durationMs: 1500
         }, (resp) => {
             if (chrome.runtime.lastError) {
-                toast.error(`无法访问页面: ${chrome.runtime.lastError.message}`);
+                toast.error(tr(`无法访问页面: ${chrome.runtime.lastError.message}`, `Unable to access the page: ${chrome.runtime.lastError.message}`));
                 return;
             }
-            if (resp?.success) toast.success("已在页面高亮");
-            else toast.error("没找到匹配元素");
+            if (resp?.success) toast.success(tr("已在页面高亮", "Highlighted on the page"));
+            else toast.error(tr("没找到匹配元素", "No matching element found"));
         });
     }
 
     async function save() {
         if (!name.trim()) {
-            toast.error("名称不能为空");
+            toast.error(tr("名称不能为空", "Name cannot be empty"));
             return;
         }
         for (let i = 0; i < steps.length; i++) {
             const s = steps[i];
             if (!["scroll", "wait", "wait_url", "navigate"].includes(s.type) && (!s.selectors || s.selectors.filter(x => x.trim()).length === 0)) {
-                toast.error(`第 ${i + 1} 步至少需要一个 selector`);
+                toast.error(tr(`第 ${i + 1} 步至少需要一个 selector`, `Step ${i + 1} needs at least one selector`));
                 return;
             }
         }
@@ -130,11 +131,11 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
             const next = { ...macro, name: name.trim(), workflow: { version: 1, steps: cleanedSteps.map(normalizeStep).filter(Boolean) } };
             const res = await sendMacroMessage({ action: "save", payload: next });
             if (res?.success) {
-                toast.success("已保存");
+                toast.success(tr("已保存", "Saved"));
                 onSaved && onSaved(res.data);
                 closeDialog();
             } else {
-                toast.error(res?.error || "保存失败");
+                toast.error(res?.error || tr("保存失败", "Save failed"));
             }
         } finally {
             setSaving(false);
@@ -150,14 +151,14 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
                 payload: { macro: tempMacro, options: { ...replayOptions, startIndex: index, singleStep } }
             });
             if (!res?.success) {
-                toast.error(`调试回放失败: ${res?.error || "未知错误"}`);
+                toast.error(tr(`调试回放失败: ${res?.error || tr("未知错误", "Unknown error")}`, `Debug replay failed: ${res?.error || tr("未知错误", "Unknown error")}`));
                 return;
             }
             const report = res.report;
-            if (report?.ok) toast.success(singleStep ? `第 ${index + 1} 步执行成功` : `从第 ${index + 1} 步回放成功`);
+            if (report?.ok) toast.success(singleStep ? tr(`第 ${index + 1} 步执行成功`, `Step ${index + 1} succeeded`) : tr(`从第 ${index + 1} 步回放成功`, `Replay from step ${index + 1} succeeded`));
             else if (report) {
                 const failed = report.results?.find(r => r.index === report.failedAt);
-                toast.error(`第 ${report.failedAt + 1} 步失败：${failed?.error || "未知"}`);
+                toast.error(tr(`第 ${report.failedAt + 1} 步失败：${failed?.error || tr("未知", "unknown")}`, `Step ${report.failedAt + 1} failed: ${failed?.error || tr("未知", "unknown")}`));
                 if (failed?.selectors?.length) console.warn("Macro failed selectors:", failed.selectors, failed);
             }
         } finally {
@@ -185,7 +186,7 @@ function MacroEditorBody({ macro, onSaved, replayOptions }) {
             </div>
 
             <div className="flex items-center justify-between mt-2">
-                <span className="text-sm font-bold text-gray-600">步骤 ({steps.length})</span>
+                <span className="text-sm font-bold text-gray-600">{tr(`步骤 (${steps.length})`, `Steps (${steps.length})`)}</span>
                 <div className="flex gap-1">
                     <Button className="!text-xs !p-0 !px-2 !min-h-6" onPress={cleanupSteps}>
                         清理步骤
@@ -497,7 +498,7 @@ function describeStep(step) {
         case "submit":
             return step.selectors?.[0] || "form";
         case "key":
-            return `按键 ${step.key || ""}`;
+            return tr(`按键 ${step.key || ""}`, `Key ${step.key || ""}`);
         case "scroll":
             return `(${step.scrollX || 0}, ${step.scrollY || 0})`;
         case "wait":

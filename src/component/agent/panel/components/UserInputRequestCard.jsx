@@ -2,6 +2,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useMemo, useState } from "react";
 import { Button, Card } from "@sunwu51/camel-ui";
+import { tr } from "../../../../i18n";
 
 const MAX_QUESTIONS = 3;
 const MAX_OPTIONS = 4;
@@ -29,7 +30,7 @@ export function normalizeUserInputRequest(args = {}) {
     seenIds.add(id);
     questions.push({
       id,
-      header: String(raw.header || `问题 ${index + 1}`).trim() || `问题 ${index + 1}`,
+      header: String(raw.header || tr(`问题 ${index + 1}`, `Question ${index + 1}`)).trim() || tr(`问题 ${index + 1}`, `Question ${index + 1}`),
       question,
       options
     });

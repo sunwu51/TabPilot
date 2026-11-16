@@ -57,18 +57,18 @@ describe("SettingsDialog model forms", () => {
     });
     const { container } = render(<LocaleProvider><SettingsDialog /></LocaleProvider>);
 
-    fireEvent.click(await screen.findByLabelText("编辑 gpt-5.5"));
-    fireEvent.click(screen.getByLabelText("编辑 gpt-image-2"));
-    const hostSelect = await screen.findByLabelText("OpenAI 宿主模型");
+    fireEvent.click(await screen.findByLabelText(/^(编辑|Edit) gpt-5\.5$/));
+    fireEvent.click(screen.getByLabelText(/^(编辑|Edit) gpt-image-2$/));
+    const hostSelect = await screen.findByLabelText(/OpenAI (宿主模型|host model)/);
 
     // One LLM edit form plus one image edit form.
     const countModelForms = () => container.querySelectorAll(".settings-model-form").length;
     expect(countModelForms()).toBe(2);
 
     for (const option of ["gpt-6-astra (gpt-6-astra)", "gpt-5.5 (gpt-5.5)", "gpt-6-astra (gpt-6-astra)"]) {
-      fireEvent.change(screen.getByLabelText("OpenAI 宿主模型"), { target: { value: option } });
+      fireEvent.change(screen.getByLabelText(/OpenAI (宿主模型|host model)/), { target: { value: option } });
       expect(countModelForms()).toBe(2);
     }
-    expect(screen.getAllByLabelText("OpenAI 宿主模型")).toEqual([hostSelect]);
+    expect(screen.getAllByLabelText(/OpenAI (宿主模型|host model)/)).toEqual([hostSelect]);
   });
 });

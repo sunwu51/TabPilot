@@ -1,6 +1,6 @@
 /* global chrome */
 /* eslint-disable react/prop-types */
-import { Card } from "@sunwu51/camel-ui";
+import { Button, Card } from "@sunwu51/camel-ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useI18n } from "../../i18n";
@@ -569,7 +569,7 @@ export default function StickyBoard() {
 
   return (
     <div className="stk-board">
-      <Card>
+      <Card className="!p-2">
         <div className="stk-head">
           <span className="stk-heading">{L("便利贴", "Stickies")}</span>
           <div className="stk-head-actions">
@@ -587,10 +587,10 @@ export default function StickyBoard() {
                 </button>
               ))}
             </div>
-            <button type="button" className="stk-pin-btn" onClick={handlePin} disabled={pinning} title={pinTitle}>
+            <Button size="sm" className="stk-pin-btn" onPress={handlePin} isDisabled={pinning} title={pinTitle}>
               <span className="stk-pin-icon">{Icon.pin}</span>
               {L("贴住当前页", "Stick this tab")}
-            </button>
+            </Button>
           </div>
         </div>
 

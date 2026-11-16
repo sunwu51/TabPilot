@@ -13,6 +13,7 @@ import { uploadSessionImage } from "../../api/supabase/images";
 import { createSupabaseSignedUrl } from "../../api/supabase/storage";
 import toast from "react-hot-toast";
 
+import { tr } from "../../i18n";
 let activeSpeechController = null;
 
 /**
@@ -908,7 +909,7 @@ function ErrorResultBlock({ msg }) {
     <div className="tool-result-msg tool-result-error" onClick={() => setExpanded(!expanded)}>
       <div className="tool-result-header">
         <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-        <span className="tool-result-label">❌ {summary}（重试 {attempts}/{maxAttempts}）</span>
+        <span className="tool-result-label">❌ {summary}{tr(`（重试 ${attempts}/${maxAttempts}）`, ` (retry ${attempts}/${maxAttempts})`)}</span>
       </div>
       {expanded && (
         <pre className="tool-result-content">{JSON.stringify(detail, null, 2)}</pre>
@@ -1230,9 +1231,9 @@ export function EditableChatImage({
     if (uploadState.status === "uploaded" && uploadState.url) {
       try {
         await navigator.clipboard.writeText(uploadState.url);
-        toast.success("图片 URL 已复制");
+        toast.success(tr("图片 URL 已复制", "Image URL copied"));
       } catch (error) {
-        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
+        toast.error(tr(`复制图片 URL 失败: ${error?.message || String(error)}`, `Failed to copy image URL: ${error?.message || String(error)}`));
       }
       return;
     }
@@ -1240,9 +1241,9 @@ export function EditableChatImage({
       try {
         const signedUrl = await createSupabaseSignedUrl(uploadState.path);
         await navigator.clipboard.writeText(signedUrl);
-        toast.success("图片 URL 已复制");
+        toast.success(tr("图片 URL 已复制", "Image URL copied"));
       } catch (error) {
-        toast.error(`复制图片 URL 失败: ${error?.message || String(error)}`);
+        toast.error(tr(`复制图片 URL 失败: ${error?.message || String(error)}`, `Failed to copy image URL: ${error?.message || String(error)}`));
       }
       return;
     }
@@ -1252,14 +1253,14 @@ export function EditableChatImage({
       setUploadState({ status: "uploaded", url: uploaded.url, path: uploaded.path });
       try {
         await navigator.clipboard.writeText(uploaded.url);
-        toast.success("图片已上传，URL 已复制");
+        toast.success(tr("图片已上传，URL 已复制", "Image uploaded, URL copied"));
       } catch (clipboardError) {
-        toast.success("图片已上传到 Supabase");
-        toast.error(`URL 自动复制失败: ${clipboardError?.message || String(clipboardError)}`);
+        toast.success(tr("图片已上传到 Supabase", "Image uploaded to Supabase"));
+        toast.error(tr(`URL 自动复制失败: ${clipboardError?.message || String(clipboardError)}`, `Failed to copy URL automatically: ${clipboardError?.message || String(clipboardError)}`));
       }
     } catch (error) {
       setUploadState(current => ({ ...current, status: "error" }));
-      toast.error(`图片上传失败: ${error?.message || String(error)}`);
+      toast.error(tr(`图片上传失败: ${error?.message || String(error)}`, `Image upload failed: ${error?.message || String(error)}`));
     }
   }
 

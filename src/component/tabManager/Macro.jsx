@@ -3,7 +3,7 @@ import { Button, Card, Input } from "@sunwu51/camel-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import MacroEditor from "./MacroEditor";
-import { useLocalizedDom } from "../../i18n";
+import { useLocalizedDom, tr } from "../../i18n";
 import { MACRO_KIND, MACRO_SCHEMA_VERSION } from "../../api/macro";
 
 const RECORDING_KEY = "macroRecording";
@@ -49,13 +49,13 @@ export default function Macro() {
             const oldest = macros[0];
             const del = await sendMacroMessage({ action: "delete", payload: { id: oldest.id } });
             if (del?.success) {
-                toast(`宏数量已达上限 (10)，已自动删除最早的「${oldest.name}」`);
+                toast(tr(`宏数量已达上限 (10)，已自动删除最早的「${oldest.name}」`, `Macro limit (10) reached. Deleted the oldest one: "${oldest.name}"`));
                 setMacros(prev => prev.filter(m => m.id !== oldest.id));
             }
         }
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!activeTab || !activeTab.url || !activeTab.url.startsWith("http")) {
-            toast.error("请先在一个 http(s) 页面上发起录制");
+            toast.error(tr("请先在一个 http(s) 页面上发起录制", "Start recording from an http(s) page first"));
             return;
         }
         const startUrl = activeTab.url;
@@ -65,11 +65,11 @@ export default function Macro() {
             payload: { name, startUrl, tabId: newTab.id }
         });
         if (!res?.success) {
-            toast.error(`启动录制失败: ${res?.error || "未知错误"}`);
+            toast.error(tr(`启动录制失败: ${res?.error || tr("未知错误", "Unknown error")}`, `Failed to start recording: ${res?.error || tr("未知错误", "Unknown error")}`));
             try { await chrome.tabs.remove(newTab.id); } catch { /* ignore */ }
             return;
         }
-        toast.success(`已开始录制「${name}」`);
+        toast.success(tr(`已开始录制「${name}」`, `Started recording "${name}"`));
         setShowStartForm(false);
         setNewName(defaultMacroName());
     }
@@ -81,7 +81,7 @@ export default function Macro() {
             const hasPassword = rec?.draft?.workflow?.steps?.some(s => s.do?.type === "type" && s.do?.inputType === "password");
             if (hasPassword) {
                 const keepRealPassword = window.confirm(
-                    "发现录制过程中有密码输入。\n\n选择“确定”：记录真实密码（将会明文存到本地宏数据中）。\n选择“取消”：用 1A2b3!4399 代替密码。"
+                    tr("发现录制过程中有密码输入。\n\n选择“确定”：记录真实密码（将会明文存到本地宏数据中）。\n选择“取消”：用 1A2b3!4399 代替密码。", "A password input was detected while recording.\nOK: record the real password (it will be stored in plain text in local macro data).\nCancel: replace it with 1A2b3!4399.")
                 );
                 replacePasswords = !keepRealPassword;
             }
@@ -89,12 +89,12 @@ export default function Macro() {
         const res = await sendMacroMessage({ action: "stop", payload: { commit, replacePasswords } });
         if (res?.success) {
             const data = res.data;
-            if (data?.committed) toast.success(`已保存宏「${data.macro?.name}」(${data.macro?.workflow?.steps?.length || 0} 步)`);
-            else if (data?.discarded) toast("已放弃录制");
-            else if (data?.reason === "draft is empty") toast("没有录到任何步骤");
-            else toast("已停止录制");
+            if (data?.committed) toast.success(tr(`已保存宏「${data.macro?.name}」(${data.macro?.workflow?.steps?.length || 0} 步)`, `Saved macro "${data.macro?.name}" (${data.macro?.workflow?.steps?.length || 0} steps)`));
+            else if (data?.discarded) toast(tr("已放弃录制", "Recording discarded"));
+            else if (data?.reason === "draft is empty") toast(tr("没有录到任何步骤", "No steps were recorded"));
+            else toast(tr("已停止录制", "Recording stopped"));
         } else {
-            toast.error(res?.error || "停止录制失败");
+            toast.error(res?.error || tr("停止录制失败", "Failed to stop recording"));
         }
     }
 
@@ -103,18 +103,18 @@ export default function Macro() {
         try {
             const res = await sendMacroMessage({ action: "replay", payload: { id, options: buildReplayOptions(replaySpeed) } });
             if (!res?.success) {
-                toast.error(`回放失败: ${res?.error || "未知错误"}`);
+                toast.error(tr(`回放失败: ${res?.error || tr("未知错误", "Unknown error")}`, `Replay failed: ${res?.error || tr("未知错误", "Unknown error")}`));
                 return;
             }
             const report = res.report;
             if (report?.ok) {
-                toast.success(`回放成功 (${report.success}/${report.total})`);
+                toast.success(tr(`回放成功 (${report.success}/${report.total})`, `Replay succeeded (${report.success}/${report.total})`));
             } else if (report) {
                 const failed = report.results?.find(r => r.index === report.failedAt);
                 const detail = failed?.usedSelector ? `，selector: ${failed.usedSelector}` : "";
-                toast.error(`回放在第 ${report.failedAt + 1} 步失败：${failed?.error || "未知"}${detail}`);
+                toast.error(tr(`回放在第 ${report.failedAt + 1} 步失败：${failed?.error || tr("未知", "unknown")}${detail}`, `Replay failed at step ${report.failedAt + 1}: ${failed?.error || tr("未知", "unknown")}${detail}`));
             } else {
-                toast.success("已发起回放");
+                toast.success(tr("已发起回放", "Replay started"));
             }
         } finally {
             setReplayingId(null);
@@ -125,10 +125,10 @@ export default function Macro() {
         const res = await sendMacroMessage({ action: "delete", payload: { id } });
         setConfirmDeleteId(null);
         if (res?.success) {
-            toast.success("已删除");
+            toast.success(tr("已删除", "Deleted"));
             loadAll();
         } else {
-            toast.error(res?.error || "删除失败");
+            toast.error(res?.error || tr("删除失败", "Delete failed"));
         }
     }
 
@@ -150,7 +150,7 @@ export default function Macro() {
         a.remove();
         // Keep the blob URL alive long enough for Chromium to start consuming it.
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast.success(`已导出 ${macros.length} 个宏`);
+        toast.success(tr(`已导出 ${macros.length} 个宏`, `Exported ${macros.length} macros`));
     }
 
     async function importMacrosFromFile(file) {
@@ -160,7 +160,7 @@ export default function Macro() {
             const parsed = JSON.parse(text);
             const imported = normalizeImportedMacros(parsed);
             if (imported.length === 0) {
-                toast.error("未找到可导入的宏");
+                toast.error(tr("未找到可导入的宏", "No importable macros found"));
                 return;
             }
             let saved = 0;
@@ -169,9 +169,9 @@ export default function Macro() {
                 if (res?.success) saved += 1;
             }
             await loadAll();
-            toast.success(`已导入 ${saved}/${imported.length} 个宏`);
+            toast.success(tr(`已导入 ${saved}/${imported.length} 个宏`, `Imported ${saved}/${imported.length} macros`));
         } catch (error) {
-            toast.error(`导入失败: ${error?.message || "文件格式不正确"}`);
+            toast.error(tr(`导入失败: ${error?.message || tr("文件格式不正确", "Invalid file format")}`, `Import failed: ${error?.message || tr("文件格式不正确", "Invalid file format")}`));
         } finally {
             if (importInputRef.current) importInputRef.current.value = "";
         }
@@ -179,7 +179,7 @@ export default function Macro() {
 
     return (
         <div ref={rootRef}>
-        <Card>
+        <Card className="!p-2">
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
                 <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>宏</span>
                 <div className="flex gap-1">
@@ -218,7 +218,7 @@ export default function Macro() {
                     <div className="flex-1 truncate">
                         <span className="font-bold">● 正在录制</span>
                         <span className="ml-1">{recording.draft?.name}</span>
-                        <span className="text-gray-500 ml-1">· {recording.draft?.workflow?.steps?.length || 0} 步</span>
+                        <span className="text-gray-500 ml-1">{tr(`· ${recording.draft?.workflow?.steps?.length || 0} 步`, `· ${recording.draft?.workflow?.steps?.length || 0} steps`)}</span>
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
                         <Button
@@ -292,7 +292,7 @@ export default function Macro() {
                     >
                         <div className="flex-1 truncate">
                             <span className="font-bold">{macro.name}</span>
-                            <span className="text-gray-400 ml-1">{macro.workflow?.steps?.length || 0} 步</span>
+                            <span className="text-gray-400 ml-1">{tr(`${macro.workflow?.steps?.length || 0} 步`, `${macro.workflow?.steps?.length || 0} steps`)}</span>
                         </div>
                         <div className="flex gap-1 flex-shrink-0">
                             <MacroEditor macro={macro} onSaved={loadAll} replayOptions={buildReplayOptions(replaySpeed)} />
