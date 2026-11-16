@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { loadSessionImageStore } from "../../../../api/agent/sessions";
 import { buildSessionExportMarkdown, downloadMarkdownFile } from "../export/sessionExport";
 import { copyTextToClipboard, shareMarkdown } from "../export/sessionShare";
-import { useLocalizedDom } from "../../../../i18n";
+import { useLocalizedDom, tr } from "../../../../i18n";
 
 export function SessionExportDialogBody({ sessionId = "", title = "", messages = [] }) {
   const rootRef = useLocalizedDom();
@@ -27,7 +27,7 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
 
   async function handleExport() {
     if (!hasContent) {
-      toast("当前会话还没有可导出的内容", { duration: 2500 });
+      toast(tr("当前会话还没有可导出的内容", "This session has nothing to export yet"), { duration: 2500 });
       return;
     }
 
@@ -36,10 +36,10 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
       const exportMarkdown = await buildMarkdownForAction();
       const result = await downloadMarkdownFile(`${sessionId}.md`, exportMarkdown);
       if (result?.error) throw new Error(result.error);
-      toast.success(`已导出 ${sessionId}.md`);
+      toast.success(tr(`已导出 ${sessionId}.md`, `Exported ${sessionId}.md`));
     } catch (error) {
       console.error("Failed to export session:", error);
-      toast.error(`导出失败: ${error?.message || String(error)}`);
+      toast.error(tr(`导出失败: ${error?.message || String(error)}`, `Export failed: ${error?.message || String(error)}`));
     } finally {
       setExporting(false);
     }
@@ -47,7 +47,7 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
 
   async function handleShare() {
     if (!hasContent) {
-      toast("当前会话还没有可分享的内容", { duration: 2500 });
+      toast(tr("当前会话还没有可分享的内容", "This session has nothing to share yet"), { duration: 2500 });
       return;
     }
 
@@ -62,11 +62,11 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
       if (!viewerUrl) throw new Error("分享结果里没有可用链接");
       const copied = await copyTextToClipboard(viewerUrl);
       toast.success(copied
-        ? (password.trim() ? "分享链接已复制，请单独告知密码" : "分享链接已复制")
-        : `分享成功：${viewerUrl}`);
+        ? (password.trim() ? tr("分享链接已复制，请单独告知密码", "Share link copied. Send the password separately.") : tr("分享链接已复制", "Share link copied"))
+        : tr(`分享成功：${viewerUrl}`, `Shared: ${viewerUrl}`));
     } catch (error) {
       console.error("Failed to share session:", error);
-      toast.error(`分享失败: ${error?.message || String(error)}`);
+      toast.error(tr(`分享失败: ${error?.message || String(error)}`, `Share failed: ${error?.message || String(error)}`));
     } finally {
       setSharing(false);
     }

@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@sunwu51/camel-ui";
 import toast from "react-hot-toast";
-import { useLocalizedDom } from "../../../../i18n";
+import { useLocalizedDom, tr } from "../../../../i18n";
 
 const SYSTEM_PROMPT_PLACEHOLDER =
   "例如：你是一位情感大师，擅长共情、倾听和温柔地拆解亲密关系问题。回答时先复述用户感受，再给出具体可执行的沟通建议；避免评判，语气温暖、真诚、稳定。";
@@ -25,7 +25,7 @@ export function SessionSystemPromptDialogBody({ initialValue = "", initiallyAppl
       const saved = await onSave?.(draft, applyToNewSessions);
       if (saved !== false) closeDialog();
     } catch (error) {
-      toast.error(`保存失败: ${error?.message || String(error)}`);
+      toast.error(tr(`保存失败: ${error?.message || String(error)}`, `Save failed: ${error?.message || String(error)}`));
     } finally {
       setSaving(false);
     }

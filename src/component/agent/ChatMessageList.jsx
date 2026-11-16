@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from "react";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import ChatMessage, { EditableChatImage } from "./ChatMessage";
-import { useI18n } from "../../i18n";
+import { useI18n, tr } from "../../i18n";
 import { hasVisibleText } from "./textVisibility";
 
 hljs.registerLanguage("javascript", javascript);
@@ -166,7 +166,7 @@ function CollapsedToolGroup({
           onKeyDown={(event) => handleToggleKeyDown(event, toggleExpanded)}
         >
           <span className="tool-result-arrow">{expanded ? "▼" : "▶"}</span>
-          <span className="tool-result-label">展开查看 {toolCallCount} 个工具调用详情</span>
+          <span className="tool-result-label">{tr(`展开查看 ${toolCallCount} 个工具调用详情`, `Show ${toolCallCount} tool call details`)}</span>
         </div>
         {expanded && (
           <div className="tool-group-content">

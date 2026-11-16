@@ -7,7 +7,7 @@ import {
   setProfileEnabled,
 } from "../../api/agent/userProfile";
 import toast from "react-hot-toast";
-import { useLocalizedDom } from "../../i18n";
+import { useLocalizedDom, tr } from "../../i18n";
 
 export default function UserProfilePanel() {
   const rootRef = useLocalizedDom();
@@ -29,10 +29,10 @@ export default function UserProfilePanel() {
     setAnalyzing(true);
     try {
       const updated = await analyzeRecentHistory();
-      if (!updated) toast("无浏览记录或未配置 LLM", { duration: 2500 });
+      if (!updated) toast(tr("无浏览记录或未配置 LLM", "No browsing history or LLM not configured"), { duration: 2500 });
     } catch (e) {
       console.error("[UserProfile] analyze error:", e);
-      toast.error("分析失败：" + (e?.message || String(e)));
+      toast.error(tr("分析失败：", "Analysis failed: ") + (e?.message || String(e)));
     }
     await loadData();
     setAnalyzing(false);
@@ -41,7 +41,7 @@ export default function UserProfilePanel() {
   async function handleToggle(next) {
     await setProfileEnabled(next);
     setEnabled(next);
-    toast(next ? "画像注入已开启" : "画像注入已关闭", { duration: 2000 });
+    toast(next ? tr("画像注入已开启", "Profile injection enabled") : tr("画像注入已关闭", "Profile injection disabled"), { duration: 2000 });
   }
 
   return (
@@ -67,7 +67,7 @@ export default function UserProfilePanel() {
       >
         {/* Header + analyze button + toggle */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
             <div className="text-sm font-bold text-gray-500">浏览偏好画像</div>
             <button
               onClick={handleAnalyze}

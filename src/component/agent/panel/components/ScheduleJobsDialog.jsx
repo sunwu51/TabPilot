@@ -47,7 +47,7 @@ export function ScheduleJobsDialogBody({ onOpenSession } = {}) {
   }
   const statuses = { pending: L("等待执行", "Scheduled"), running: L("运行中", "Running"), paused: L("已暂停", "Paused"), succeeded: L("成功", "Succeeded"), failed: L("失败", "Failed"), cancelled: L("已取消", "Cancelled") };
   return <div className="agent-schedules">
-    <header><div><h2>{L("定时助手", "Scheduled assistants")}</h2><p>{L("每次启动新会话，使用相同的任务指令自主执行。", "Each run starts a fresh session with the same task prompt.")}</p></div><button onClick={() => refresh().catch(err => setError(err.message))}>{L("刷新", "Refresh")}</button></header>
+    <header><div><h2>{L("定时助手", "Scheduled assistants")}</h2><div className="agent-schedules-actions"><button className="agent-schedules-refresh" onClick={() => refresh().catch(err => setError(err.message))}>{"↻ "}{L("刷新", "Refresh")}</button></div><p>{L("每次启动新会话，使用相同的任务指令自主执行。", "Each run starts a fresh session with the same task prompt.")}</p></div></header>
     <p className="agent-schedules-hint">{L("固定间隔或每日当地时间执行；重叠的轮次跳过，离线后最多补跑一次。", "Fixed intervals or daily local-time schedules. Overlaps are skipped; missed runs coalesce into one.")}</p>
     {error && <p role="alert">{error}</p>}
     {!jobs.length && <div className="agent-schedules-empty">{L("暂无任务。让助手按指定时间执行一段任务指令即可创建。", "No tasks yet. Ask the assistant to schedule a task prompt.")}</div>}

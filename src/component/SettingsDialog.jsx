@@ -31,7 +31,7 @@ import {
 } from "../api/settings/backup";
 import { ensureSettingsMigrated } from "../api/settings/migrations";
 import { SUBAGENT_TEMPLATES_STORAGE_KEY, normalizeSubagentTemplates } from "../api/agent/subagentTemplates";
-import { useI18n, useLocalizedDom } from "../i18n";
+import { useI18n, useLocalizedDom, tr } from "../i18n";
 import {
   SUPABASE_DEFAULT_CONFIG,
   hasUsableSupabaseConfig,
@@ -126,8 +126,6 @@ function SettingsDialogBody() {
   const [apiType, setApiType] = useState(DEFAULT_LLM_MODEL_DRAFT.apiType);
   const [baseUrl, setBaseUrl] = useState(DEFAULT_LLM_MODEL_DRAFT.baseUrl);
   const [apiKey, setApiKey] = useState(DEFAULT_LLM_MODEL_DRAFT.apiKey);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [model, setModel] = useState(DEFAULT_LLM_MODEL_DRAFT.model);
   const [nativeWebSearch, setNativeWebSearch] = useState(false);
   const [llmModels, setLlmModels] = useState(DEFAULT_SETTINGS.llmConfig.llmModels);
@@ -179,7 +177,6 @@ function SettingsDialogBody() {
   const [supabaseKey, setSupabaseKey] = useState(SUPABASE_DEFAULT_CONFIG.key);
   const [supabaseBucket, setSupabaseBucket] = useState(SUPABASE_DEFAULT_CONFIG.bucket);
   const [supabaseBasePath, setSupabaseBasePath] = useState(SUPABASE_DEFAULT_CONFIG.basePath);
-  const [showSupabaseKey, setShowSupabaseKey] = useState(false);
   const [supabaseRunning, setSupabaseRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -216,7 +213,7 @@ function SettingsDialogBody() {
       if (message?.type !== "openai_subscription_oauth_completed") return;
       setOpenAiLoginPending(false);
       if (message.success === false) {
-        toast.error(`OpenAI Subscription 登录失败: ${message.error || "未知错误"}`);
+        toast.error(tr(`OpenAI Subscription 登录失败: ${message.error || tr("未知错误", "Unknown error")}`, `OpenAI Subscription login failed: ${message.error || tr("未知错误", "Unknown error")}`));
         return;
       }
       setApiType(API_TYPES.OPENAI_SUBSCRIPTION);
@@ -232,7 +229,7 @@ function SettingsDialogBody() {
       setSubscriptionAvailableModels(message.availableModels || []);
       setSelectedSubscriptionModels([]);
       setSubscriptionModelManagerOpen(true);
-      toast.success("OpenAI Subscription 登录成功");
+      toast.success(tr("OpenAI Subscription 登录成功", "OpenAI Subscription login succeeded"));
     };
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
@@ -367,7 +364,7 @@ function SettingsDialogBody() {
     try {
       const normalizedWsServerUrl = normalizeWsServerUrlInput(wsServerUrl);
       if (bridgeEnabled && !normalizedWsServerUrl) {
-        toast.error("WS Server 地址必须是合法的 ws:// 或 wss:// URL");
+        toast.error(tr("WS Server 地址必须是合法的 ws:// 或 wss:// URL", "WS Server address must be a valid ws:// or wss:// URL"));
         return;
       }
 
@@ -418,7 +415,7 @@ function SettingsDialogBody() {
       toast.success(t("settingsSaved"));
       closeDialog();
     } catch (error) {
-      toast.error(`保存失败: ${error?.message || String(error)}`);
+      toast.error(tr(`保存失败: ${error?.message || String(error)}`, `Save failed: ${error?.message || String(error)}`));
     } finally {
       setSaving(false);
     }
@@ -587,7 +584,7 @@ function SettingsDialogBody() {
       setSubscriptionAvailableModels(models);
       setSelectedSubscriptionModels(models.filter(item => configured.has(item.id)).map(item => item.id));
     } catch (error) {
-      toast.error(`读取 OpenAI 模型失败: ${error?.message || String(error)}`);
+      toast.error(tr(`读取 OpenAI 模型失败: ${error?.message || String(error)}`, `Failed to load OpenAI models: ${error?.message || String(error)}`));
     } finally {
       setSubscriptionModelsLoading(false);
     }
@@ -599,7 +596,7 @@ function SettingsDialogBody() {
     if (!source) return;
     const selected = subscriptionAvailableModels.filter(item => selectedSubscriptionModels.includes(item.id));
     if (selected.length === 0) {
-      toast.error("请至少选择一个模型");
+      toast.error(tr("请至少选择一个模型", "Select at least one model"));
       return;
     }
     const credentialId = source.credentialId || source.id;
@@ -636,7 +633,7 @@ function SettingsDialogBody() {
     });
     setLlmModels(nextModels);
     setActiveLlmModelId(nextActiveLlmModelId);
-    toast.success(`已保存 ${selected.length} 个订阅模型`);
+    toast.success(tr(`已保存 ${selected.length} 个订阅模型`, `Saved ${selected.length} subscription models`));
   }
 
   function handleEditImageModel(profile) {
@@ -658,7 +655,7 @@ function SettingsDialogBody() {
     const normalizedType = normalizeApiType(apiType);
     const subscription = normalizedType === API_TYPES.OPENAI_SUBSCRIPTION;
     if (!subscription && (!trimmedModel || !trimmedBaseUrl || !trimmedApiKey)) {
-      toast.error("API 地址、API Key 和模型不能为空");
+      toast.error(tr("API 地址、API Key 和模型不能为空", "API URL, API Key and model are required"));
       return;
     }
     const profileId = editingLlmModelId || createModelProfileId("llm");
@@ -672,15 +669,15 @@ function SettingsDialogBody() {
           profileId
         });
         if (!response?.success) throw new Error(response?.error || "无法开始 OAuth 登录");
-        toast.success("已打开 OpenAI 登录页面");
+        toast.success(tr("已打开 OpenAI 登录页面", "Opened the OpenAI login page"));
       } catch (error) {
         setOpenAiLoginPending(false);
-        toast.error(`OpenAI 登录失败: ${error?.message || String(error)}`);
+        toast.error(tr(`OpenAI 登录失败: ${error?.message || String(error)}`, `OpenAI login failed: ${error?.message || String(error)}`));
       }
       return;
     }
     if (subscription) {
-      toast.error("请从订阅模型列表中勾选要添加的模型");
+      toast.error(tr("请从订阅模型列表中勾选要添加的模型", "Select the models to add from the subscription list"));
       return;
     }
     const profile = {
@@ -729,9 +726,9 @@ function SettingsDialogBody() {
         ? prev.map(item => item.id === editingLlmModelId ? profile : item)
         : [...prev, profile]));
       if (!activeLlmModelId) setActiveLlmModelId(profile.id);
-      toast.success(editingLlmModelId ? "模型已修改" : "模型已添加");
+      toast.success(editingLlmModelId ? tr("模型已修改", "Model updated") : tr("模型已添加", "Model added"));
     } catch (error) {
-      toast.error(`${editingLlmModelId ? "修改" : "添加"}模型失败: ${error?.message || String(error)}`);
+      toast.error(tr(`${editingLlmModelId ? tr("修改", "update") : tr("添加", "add")}模型失败: ${error?.message || String(error)}`, `Failed to ${editingLlmModelId ? tr("修改", "update") : tr("添加", "add")} model: ${error?.message || String(error)}`));
       return;
     }
     setApiType(DEFAULT_LLM_MODEL_DRAFT.apiType);
@@ -766,7 +763,7 @@ function SettingsDialogBody() {
     const builtin = imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN;
     const sourceProfile = builtinImageHostModels.find(item => item.id === imageSourceLlmModelId);
     if ((builtin && !sourceProfile) || (!builtin && (!trimmedBaseUrl || !trimmedApiKey || !trimmedModel))) {
-      toast.error("Image API 地址、Token 和模型不能为空");
+      toast.error(tr("Image API 地址、Token 和模型不能为空", "Image API URL, token and model are required"));
       return;
     }
     const effectiveModel = builtin ? (imageGenerationModel || `${sourceProfile.model}-built-in`) : trimmedModel;
@@ -798,9 +795,9 @@ function SettingsDialogBody() {
         ? prev.map(item => item.id === editingImageModelId ? profile : item)
         : [...prev, profile]);
       if (!activeImageModelId) setActiveImageModelId(profile.id);
-      toast.success(editingImageModelId ? "图片模型已修改" : "图片模型已添加");
+      toast.success(editingImageModelId ? tr("图片模型已修改", "Image model updated") : tr("图片模型已添加", "Image model added"));
     } catch (error) {
-      toast.error(`${editingImageModelId ? "修改" : "添加"}图片模型失败: ${error?.message || String(error)}`);
+      toast.error(tr(`${editingImageModelId ? tr("修改", "update") : tr("添加", "add")}图片模型失败: ${error?.message || String(error)}`, `Failed to ${editingImageModelId ? tr("修改", "update") : tr("添加", "add")} image model: ${error?.message || String(error)}`));
       return;
     }
     setImageBaseUrl("");
@@ -831,11 +828,11 @@ function SettingsDialogBody() {
   async function handleClearReusePolicies() {
     await clearReuseDomainPolicies();
     setReusePolicyCount(0);
-    toast.success("已清空域名复用记忆");
+    toast.success(tr("已清空域名复用记忆", "Cleared remembered domain reuse choices"));
   }
 
   async function handleScreenshotCurrentPage() {
-    const toastId = toast.loading("正在截取当前页面...");
+    const toastId = toast.loading(tr("正在截取当前页面...", "Capturing the current page..."));
     try {
       const result = await captureFullPageScreenshotToTab({ fullPage: true });
       toast.dismiss(toastId);
@@ -843,10 +840,10 @@ function SettingsDialogBody() {
         toast.error(result.error);
         return;
       }
-      toast.success("截图完成");
+      toast.success(tr("截图完成", "Screenshot captured"));
     } catch (error) {
       toast.dismiss(toastId);
-      toast.error(error?.message || "截图失败");
+      toast.error(error?.message || tr("截图失败", "Screenshot failed"));
     }
   }
 
@@ -857,27 +854,27 @@ function SettingsDialogBody() {
         toast.error(result.error);
         return;
       }
-      toast.success("已打开 Playground");
+      toast.success(tr("已打开 Playground", "Opened Playground"));
     } catch (error) {
-      toast.error(error?.message || "打开 Playground 失败");
+      toast.error(error?.message || tr("打开 Playground 失败", "Failed to open Playground"));
     }
   }
 
   async function handleOpenStash() {
     try {
       await chrome.tabs.create({ url: chrome.runtime.getURL("stash.html") });
-      toast.success("已打开 Stash");
+      toast.success(tr("已打开 Stash", "Opened Stash"));
     } catch (error) {
-      toast.error(error?.message || "打开 Stash 失败");
+      toast.error(error?.message || tr("打开 Stash 失败", "Failed to open Stash"));
     }
   }
 
   async function handleOpenAdvancedUsage() {
     try {
       await chrome.tabs.create({ url: ADVANCED_USAGE_URL });
-      toast.success("已打开高级用法");
+      toast.success(tr("已打开高级用法", "Opened Advanced usage"));
     } catch (error) {
-      toast.error(error?.message || "打开高级用法失败");
+      toast.error(error?.message || tr("打开高级用法失败", "Failed to open Advanced usage"));
     }
   }
 
@@ -885,9 +882,9 @@ function SettingsDialogBody() {
     try {
       await chrome.tabs.create({ url: chrome.runtime.getURL("postdog.html") });
       closeDialog();
-      toast.success("已打开 Postdog");
+      toast.success(tr("已打开 Postdog", "Opened Postdog"));
     } catch (error) {
-      toast.error(error?.message || "打开 Postdog 失败");
+      toast.error(error?.message || tr("打开 Postdog 失败", "Failed to open Postdog"));
     }
   }
 
@@ -895,7 +892,7 @@ function SettingsDialogBody() {
     try {
       await chrome.tabs.create({ url: chrome.runtime.getURL("hooks.html") });
     } catch (error) {
-      toast.error(error?.message || "打开 Hook 设置失败");
+      toast.error(error?.message || tr("打开 Hook 设置失败", "Failed to open Hook settings"));
     }
   }
 
@@ -955,9 +952,9 @@ function SettingsDialogBody() {
     try {
       const backup = await exportSettingsBackup();
       downloadSettingsBackup(backup);
-      toast.success("配置已导出");
+      toast.success(tr("配置已导出", "Settings exported"));
     } catch (error) {
-      toast.error(`导出配置失败: ${error?.message || String(error)}`);
+      toast.error(tr(`导出配置失败: ${error?.message || String(error)}`, `Failed to export settings: ${error?.message || String(error)}`));
     }
   }
 
@@ -975,9 +972,9 @@ function SettingsDialogBody() {
       const result = await importSettingsBackupFromText(text);
       await loadDraft();
       const updatedCount = result.updatedKeys.length;
-      toast.success(updatedCount > 0 ? `配置已导入（${updatedCount} 项）` : "未发现可导入的配置项");
+      toast.success(updatedCount > 0 ? tr(`配置已导入（${updatedCount} 项）`, `Settings imported (${updatedCount} items)`) : tr("未发现可导入的配置项", "No importable settings found"));
     } catch (error) {
-      toast.error(`导入配置失败: ${error?.message || String(error)}`);
+      toast.error(tr(`导入配置失败: ${error?.message || String(error)}`, `Failed to import settings: ${error?.message || String(error)}`));
     }
   }
 
@@ -1018,7 +1015,7 @@ function SettingsDialogBody() {
                     event.stopPropagation();
                     handleRemoveLlmModel(item.id);
                   }}
-                  aria-label={`删除 ${item.name}`}
+                  aria-label={tr(`删除 ${item.name}`, `Delete ${item.name}`)}
                   title="删除"
                 >
                   ×
@@ -1037,7 +1034,7 @@ function SettingsDialogBody() {
                     event.stopPropagation();
                     handleEditLlmModel(item);
                   }}
-                  aria-label={`编辑 ${item.name}`}
+                  aria-label={tr(`编辑 ${item.name}`, `Edit ${item.name}`)}
                   title="编辑"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1096,7 +1093,7 @@ function SettingsDialogBody() {
                 <div className="settings-api-url-hint">
                   使用 ChatGPT 订阅登录，API 地址由 OpenAI 固定提供，不需要填写 API Key。
                   {editingLlmModelId && llmModels.find(item => item.id === editingLlmModelId)?.email
-                    ? ` 当前账号：${llmModels.find(item => item.id === editingLlmModelId)?.email}`
+                    ? tr(` 当前账号：${llmModels.find(item => item.id === editingLlmModelId)?.email}`, ` Current account: ${llmModels.find(item => item.id === editingLlmModelId)?.email}`)
                     : ""}
                 </div>
               ) : (<>
@@ -1111,60 +1108,19 @@ function SettingsDialogBody() {
                 <div className="settings-api-url-hint">
                   finalURL: {resolvedApiUrl || "—"}
                 </div>
-                <div className="settings-secret-field">
-                <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-api-key">API Key</label>
-                <div className="settings-secret-input-wrapper">
-                  <input
-                    id="settings-api-key"
-                    className="settings-secret-input !min-h-8"
-                    type={showApiKey ? "text" : "password"}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={apiType === API_TYPES.ANTHROPIC ? "sk-ant-..." : "sk-..."}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="settings-secret-toggle"
-                    onClick={() => setShowApiKey((prev) => !prev)}
-                    aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
-                    title={showApiKey ? "隐藏" : "显示"}
-                  >
-                    {showApiKey ? (
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <circle
-                          cx="12"
-                          cy="12"
-                          r="3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                        />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-                </div>
+                <Input
+                  label="API Key"
+                  labelClassName="!text-sm !font-medium !text-gray-500"
+                  inputClassName="!min-h-8"
+                  type="password"
+                  value={apiKey}
+                  onChange={setApiKey}
+                  placeholder={apiType === API_TYPES.ANTHROPIC ? "sk-ant-..." : "sk-..."}
+                  autoComplete="off"
+                  spellCheck={false}
+                  showPasswordLabel="显示 API Key"
+                  hidePasswordLabel="隐藏 API Key"
+                />
               </>)}
               {apiType !== API_TYPES.OPENAI_SUBSCRIPTION && (
                 <Input
@@ -1244,10 +1200,10 @@ function SettingsDialogBody() {
                         profileId: subscriptionCredential?.credentialId || editingLlmModelId
                       });
                       if (!response?.success) throw new Error(response?.error || "无法开始 OAuth 登录");
-                      toast.success("已打开 OpenAI 登录页面");
+                      toast.success(tr("已打开 OpenAI 登录页面", "Opened the OpenAI login page"));
                     } catch (error) {
                       setOpenAiLoginPending(false);
-                      toast.error(error?.message || "无法开始 OAuth 登录");
+                      toast.error(error?.message || tr("无法开始 OAuth 登录", "Unable to start OAuth login"));
                     }
                   }}
                 >
@@ -1340,7 +1296,7 @@ function SettingsDialogBody() {
                     event.stopPropagation();
                     handleRemoveImageModel(item.id);
                   }}
-                  aria-label={`删除 ${item.name}`}
+                  aria-label={tr(`删除 ${item.name}`, `Delete ${item.name}`)}
                   title="删除"
                 >
                   ×
@@ -1359,7 +1315,7 @@ function SettingsDialogBody() {
                     event.stopPropagation();
                     handleEditImageModel(item);
                   }}
-                  aria-label={`编辑 ${item.name}`}
+                  aria-label={tr(`编辑 ${item.name}`, `Edit ${item.name}`)}
                   title="编辑"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1432,60 +1388,19 @@ function SettingsDialogBody() {
                   ? `Chat Completions ${resolvedImageChatUrl || "—"}`
                   : `gen: ${resolvedImageGenUrl || "—"}; edit: ${resolvedImageEditUrl || "—"}`}
               </div>
-              <div className="settings-secret-field">
-                <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-image-api-key">Image API Token</label>
-                <div className="settings-secret-input-wrapper">
-                  <input
-                    id="settings-image-api-key"
-                    className="settings-secret-input !min-h-8"
-                    type={showImageApiKey ? "text" : "password"}
-                    value={imageApiKey}
-                    onChange={(e) => setImageApiKey(e.target.value)}
-                    placeholder="sk-..."
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button
-                    type="button"
-                    className="settings-secret-toggle"
-                    onClick={() => setShowImageApiKey((prev) => !prev)}
-                    aria-label={showImageApiKey ? "隐藏 Image API Token" : "显示 Image API Token"}
-                    title={showImageApiKey ? "隐藏" : "显示"}
-                  >
-                    {showImageApiKey ? (
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <circle
-                          cx="12"
-                          cy="12"
-                          r="3"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                        />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </div>
+              <Input
+                label="Image API Token"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                inputClassName="!min-h-8"
+                type="password"
+                value={imageApiKey}
+                onChange={setImageApiKey}
+                placeholder="sk-..."
+                autoComplete="off"
+                spellCheck={false}
+                showPasswordLabel="显示 Image API Token"
+                hidePasswordLabel="隐藏 Image API Token"
+              />
               <Input
                 label="Image 模型"
                 labelClassName="!text-sm !font-medium !text-gray-500"
@@ -1543,11 +1458,12 @@ function SettingsDialogBody() {
                 : `已记住 ${reusePolicyCount} 个域名的复用决策`}
             </span>
             <Button
-              className="!min-h-6 !px-2 !py-0 !text-xs"
+              size="sm"
               isDisabled={reusePolicyCount === 0}
               onPress={handleClearReusePolicies}
+              title={locale === "en" ? "Clear remembered domain reuse choices" : "清空域名复用记忆"}
             >
-              清空域名复用记忆
+              {t("clear")}
             </Button>
           </div>
           <div className="mt-2">
@@ -1581,12 +1497,12 @@ function SettingsDialogBody() {
             placeholder="ws://localhost:3000/ws/tabmanager"
           />
           <div className="settings-api-url-hint">
-            Bridge 状态
+            {tr("Bridge 状态", "Bridge status")}
             {" "}
             <span style={{ color: wsBridgeStateMeta.color }}>{wsBridgeStateMeta.label}</span>
-            {wsBridgeStatus.tools > 0 ? ` · ${wsBridgeStatus.tools} 个工具` : ""}
+            {wsBridgeStatus.tools > 0 ? tr(` · ${wsBridgeStatus.tools} 个工具`, ` · ${wsBridgeStatus.tools} tools`) : ""}
             {wsBridgeStatus.error ? ` · ${wsBridgeStatus.error}` : ""}
-            {wsBridgeLastHeartbeat ? ` · 最近心跳 ${wsBridgeLastHeartbeat}` : ""}
+            {wsBridgeLastHeartbeat ? tr(` · 最近心跳 ${wsBridgeLastHeartbeat}`, ` · Last heartbeat ${wsBridgeLastHeartbeat}`) : ""}
           </div>
         </div>
 
@@ -1745,53 +1661,19 @@ function SettingsDialogBody() {
             onChange={setSupabaseBasePath}
             placeholder="tabmanager"
           />
-          <div className="settings-secret-field">
-            <label className="!text-sm !font-medium !text-gray-500" htmlFor="settings-supabase-key">{t("supabaseKey")}</label>
-            <div className="settings-secret-input-wrapper">
-              <input
-                id="settings-supabase-key"
-                className="settings-secret-input !min-h-8"
-                type={showSupabaseKey ? "text" : "password"}
-                value={supabaseKey}
-                onChange={event => setSupabaseKey(event.target.value)}
-                placeholder="Supabase anon key"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                className="settings-secret-toggle"
-                onClick={() => setShowSupabaseKey(value => !value)}
-                aria-label={showSupabaseKey ? t("hideSupabaseKey") : t("showSupabaseKey")}
-                title={showSupabaseKey ? t("hideSupabaseKey") : t("showSupabaseKey")}
-              >
-                {showSupabaseKey ? (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M3 3L21 21M10.6 10.7A3 3 0 0 0 13.3 13.4M9.9 5.1A10.9 10.9 0 0 1 12 4.9C17 4.9 21 12 21 12A20.6 20.6 0 0 1 17.4 16.6M14.1 14.3A3 3 0 0 1 9.7 9.9M6.5 7.5A20.3 20.3 0 0 0 3 12S7 19.1 12 19.1C13.3 19.1 14.5 18.8 15.6 18.3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M2.5 12S6.5 5 12 5s9.5 7 9.5 7-4 7-9.5 7S2.5 12 2.5 12Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  </svg>
-                )}
-              </button>
-            </div>
-          </div>
+          <Input
+            label={t("supabaseKey")}
+            labelClassName="!text-sm !font-medium !text-gray-500"
+            inputClassName="!min-h-8"
+            type="password"
+            value={supabaseKey}
+            onChange={setSupabaseKey}
+            placeholder="Supabase anon key"
+            autoComplete="off"
+            spellCheck={false}
+            showPasswordLabel={t("showSupabaseKey")}
+            hidePasswordLabel={t("hideSupabaseKey")}
+          />
           <div className="settings-api-url-hint">
             {t("supabaseHint")}
           </div>

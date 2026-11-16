@@ -189,7 +189,7 @@ import { buildSubagentStepTitle, runSubagent } from "./panel/api/subagentRuntime
 import { findSubagentTemplateByToolName, filterSubagentMcpTools, normalizeSubagentTemplates } from "../../api/agent/subagentTemplates";
 import { SESSION_IMAGE_UPLOADED_EVENT } from "../../api/supabase/images";
 import { streamTextComplete } from "../../api/llm/providers/textComplete";
-import { useI18n, useLocalizedDom } from "../../i18n";
+import { useI18n, useLocalizedDom, tr } from "../../i18n";
 import {
   mergeMcpToolLists,
   loadSkillsIndexFromSkillStation,
@@ -1104,19 +1104,19 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
     const currentSessionId = activeSessionIdRef.current;
     if (!currentSessionId) return;
     if (!imageEditTool) {
-      toast.error("未找到 image_edit 工具，请先配置 Image API 或连接 image_edit MCP 工具");
+      toast.error(tr("未找到 image_edit 工具，请先配置 Image API 或连接 image_edit MCP 工具", "image_edit tool not found. Configure an Image API or connect an image_edit MCP tool first."));
       return;
     }
 
     const source = normalizeImageRefSource(image?.src);
     if (!source) {
-      toast.error("无法识别这张图片的来源");
+      toast.error(tr("无法识别这张图片的来源", "Unable to identify the source of this image"));
       return;
     }
 
     const ref = registerSessionImageDataUrl(currentSessionId, source, image?.ref);
     if (!ref && !source) {
-      toast.error("无法为这张图片创建 ref");
+      toast.error(tr("无法为这张图片创建 ref", "Unable to create a ref for this image"));
       return;
     }
 
@@ -2012,7 +2012,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
   }
 
   async function focusLockedSessionWindow(lockResult) {
-    const shouldFocus = window.confirm("其他窗口已经打开这个会话。是否切换到该窗口？");
+    const shouldFocus = window.confirm(tr("其他窗口已经打开这个会话。是否切换到该窗口？", "This session is already open in another window. Switch to that window?"));
     if (!shouldFocus || !lockResult.conflict?.windowId) return false;
     const windowId = Number(lockResult.conflict.windowId);
     try {
@@ -2430,11 +2430,14 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
     if (toolCall.name === "download" || toolCall.name === "download_list" || toolCall.name === "download_search") {
       return {
         permissions: ["downloads"],
-        title: "需要新增权限：浏览器下载",
-        description:
+        title: tr("需要新增权限：浏览器下载", "Additional permission required: browser downloads"),
+        description: tr(
           `工具 \`${toolCall.name}\` 需要 Chrome 的 "downloads" 权限才能访问浏览器下载。` +
           "授权一次后将持续生效，可以在扩展详情页随时撤销。",
-        confirmLabel: "授权下载权限"
+          `The \`${toolCall.name}\` tool needs Chrome's "downloads" permission to access browser downloads. ` +
+          "Once granted, it stays in effect and can be revoked at any time on the extension details page."
+        ),
+        confirmLabel: tr("授权下载权限", "Grant downloads permission")
       };
     }
     return null;
@@ -2457,26 +2460,26 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
   function getDirectDangerousToolMeta(toolName, toolArgs) {
     if (toolName === "eval_js") {
       return {
-        title: "危险工具待确认",
+        title: tr("危险工具待确认", "Dangerous tool requires approval"),
         description: toolArgs?.path
-          ? `\`eval_js\` 将在页面中执行已保存的脚本 ${toolArgs.path}。请确认后再执行。`
-          : "`eval_js` 将在当前页面执行任意 JavaScript。请确认参数无误后再执行。",
+          ? tr(`\`eval_js\` 将在页面中执行已保存的脚本 ${toolArgs.path}。请确认后再执行。`, `\`eval_js\` will run the saved script ${toolArgs.path} on the page. Confirm before running.`)
+          : tr("`eval_js` 将在当前页面执行任意 JavaScript。请确认参数无误后再执行。", "`eval_js` will run arbitrary JavaScript on the current page. Check the arguments before running."),
         displayArgs: toolArgs || {},
-        confirmLabel: "确认执行",
+        confirmLabel: tr("确认执行", "Confirm execution"),
         executeArgs: toolArgs || {},
-        toolLabel: "危险工具 `eval_js`"
+        toolLabel: tr("危险工具 `eval_js`", "Dangerous tool `eval_js`")
       };
     }
     if (isMcpToolCallName(toolName)) {
       const mcpTool = findMcpToolByCallName(combinedMcpTools, toolName);
       if (mcpTool?._dangerous) {
         return {
-          title: "危险 MCP 工具待确认",
-          description: `MCP 工具「${mcpTool._serverName || "MCP Server"} / ${mcpTool.name}」被标记为危险工具。请确认参数无误后再执行。`,
+          title: tr("危险 MCP 工具待确认", "Dangerous MCP tool requires approval"),
+          description: tr(`MCP 工具「${mcpTool._serverName || "MCP Server"} / ${mcpTool.name}」被标记为危险工具。请确认参数无误后再执行。`, `The MCP tool "${mcpTool._serverName || "MCP Server"} / ${mcpTool.name}" is marked as dangerous. Check the arguments before running.`),
           displayArgs: toolArgs || {},
-          confirmLabel: "确认执行",
+          confirmLabel: tr("确认执行", "Confirm execution"),
           executeArgs: toolArgs || {},
-          toolLabel: `危险 MCP 工具「${mcpTool._serverName || "MCP Server"} / ${mcpTool.name}」`
+          toolLabel: tr(`危险 MCP 工具「${mcpTool._serverName || "MCP Server"} / ${mcpTool.name}」`, `Dangerous MCP tool "${mcpTool._serverName || "MCP Server"} / ${mcpTool.name}"`)
         };
       }
     }
@@ -2906,7 +2909,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
   async function handleLoadSkills(serverUrlInput) {
     const serverUrl = String(serverUrlInput || agentSkills.serverUrl || "").trim();
     if (!serverUrl) {
-      toast.error("请先填写 skill-bridge 地址");
+      toast.error(tr("请先填写 skill-bridge 地址", "Enter the skill-bridge URL first"));
       return;
     }
 
@@ -2920,10 +2923,10 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
       const saved = await saveAgentSkills(next);
       setAgentSkills(saved);
       setSkillStationTools(loadedTools);
-      toast.success(`已加载 ${saved.skills.length} 个 skill`);
+      toast.success(tr(`已加载 ${saved.skills.length} 个 skill`, `Loaded ${saved.skills.length} skills`));
     } catch (error) {
       console.error("Failed to load skills index:", error);
-      toast.error(`Skills 加载失败: ${error.message || String(error)}`);
+      toast.error(tr(`Skills 加载失败: ${error.message || String(error)}`, `Failed to load skills: ${error.message || String(error)}`));
     } finally {
       setSkillsLoading(false);
     }
@@ -2996,7 +2999,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
 
     const config = await getLLMConfig();
     if (!isLlmConfigUsable(config)) {
-      toast.error("请先在设置中配置 LLM API");
+      toast.error(tr("请先在设置中配置 LLM API", "Configure the LLM API in Settings first"));
       return;
     }
 
@@ -3015,7 +3018,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
     const nextQueued = [mergeQueuedMessages(latest[0], queuedMsg)];
     await saveSessionQueuedMessages(targetSessionId, nextQueued);
     setSessionQueuedMessages(targetSessionId, nextQueued);
-    toast("已加入队列", { duration: 1200 });
+    toast(tr("已加入队列", "Added to queue"), { duration: 1200 });
   }
 
   async function hydrateQueuedMessageForSession(targetSessionId, queuedMsg) {
@@ -3040,7 +3043,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
 
     void runAgentLifecycle(config, currentSessionId, newMessages, nextRunId).catch(err => {
       console.error("Failed to start conversation:", err);
-      toast.error(`发送失败: ${err.message || String(err)}`);
+      toast.error(tr(`发送失败: ${err.message || String(err)}`, `Send failed: ${err.message || String(err)}`));
       setSessionRuntime(currentSessionId, { loading: false, abort: null });
       void finishScheduledRun(err.message || String(err));
     });
@@ -3163,7 +3166,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
 
     const config = await getLLMConfig();
     if (!isLlmConfigUsable(config)) {
-      toast.error("请先在设置中配置 LLM API");
+      toast.error(tr("请先在设置中配置 LLM API", "Configure the LLM API in Settings first"));
       setSessionQueuedMessages(targetSessionId, latest);
       setSessionRuntime(targetSessionId, { loading: false, abort: null });
       return false;
@@ -3242,7 +3245,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
       consumeComposerCommandText(targetSessionId);
       const config = await getLLMConfig();
       if (!isLlmConfigUsable(config)) {
-        toast.error("请先在设置中配置 LLM API");
+        toast.error(tr("请先在设置中配置 LLM API", "Configure the LLM API in Settings first"));
         return;
       }
       const runtime = getSessionRuntime(targetSessionId);
@@ -3250,7 +3253,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
       const sessionMessages = getSessionMessages(targetSessionId);
       const cutIndex = findContextSummaryCutIndex(sessionMessages, { limitTokens: config.modelContextLimitTokens });
       if (cutIndex < 0 || getMessagesToSummarize(sessionMessages, previousSummary, cutIndex).length === 0) {
-        toast("没有新的早期上下文可压缩", { duration: 1800 });
+        toast(tr("没有新的早期上下文可压缩", "No new early context to compress"), { duration: 1800 });
         return;
       }
       setSessionRuntime(targetSessionId, { loading: true, abort: null });
@@ -3308,7 +3311,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
           displayMessageIndex
         }
       });
-      toast(options.force === true ? "正在主动压缩早期上下文..." : "上下文较长，正在压缩早期历史...", { duration: 1800 });
+      toast(options.force === true ? tr("正在主动压缩早期上下文...", "Compressing early context...") : tr("上下文较长，正在压缩早期历史...", "Context is long, compressing early history..."), { duration: 1800 });
       const prompt = buildContextSummaryPrompt({
         oldSummary: existingSummary?.summary || "",
         messages: messagesToSummarize
@@ -3355,13 +3358,13 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
       const normalized = setSessionContextSummary(targetSessionId, nextSummary);
       await saveSessionMeta(targetSessionId, { contextSummary: normalized });
       setSessionRuntime(targetSessionId, { contextCompaction: null });
-      toast("已压缩早期上下文", { duration: 1600 });
+      toast(tr("已压缩早期上下文", "Early context compressed"), { duration: 1600 });
       return normalized;
     } catch (error) {
       setSessionRuntime(targetSessionId, { contextCompaction: null });
       if (error?.name === "AbortError") return existingSummary;
       console.error("Failed to compact conversation context:", error);
-      toast.error(`上下文压缩失败：${error.message || String(error)}`);
+      toast.error(tr(`上下文压缩失败：${error.message || String(error)}`, `Context compression failed: ${error.message || String(error)}`));
       return existingSummary;
     }
   }
@@ -3497,7 +3500,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
           setStreamingToolArgs(null);
           setStreamingWebSearches(null);
         }
-        toast(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, { duration: 1800 });
+        toast(tr(`LLM 重试中 (${nextAttempt}/${maxAttempts})：${error.code || "LLM_ERROR"}`, `Retrying LLM (${nextAttempt}/${maxAttempts}): ${error.code || "LLM_ERROR"}`), { duration: 1800 });
       },
 
       onDone: async (msg) => {
@@ -3861,7 +3864,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
         } catch (err) {
           if (!isCurrentRun(targetSessionId, runId)) return;
           console.error("Failed to continue conversation after tool execution:", err);
-          toast.error(`工具执行后续跑失败: ${err.message || String(err)}`);
+          toast.error(tr(`工具执行后续跑失败: ${err.message || String(err)}`, `Failed to continue after tool execution: ${err.message || String(err)}`));
           setSessionRuntime(targetSessionId, { loading: false, abort: null });
           completion?.reject(err);
         }
@@ -3879,7 +3882,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
         sessionStreamingThinkingRef.current.delete(targetSessionId);
         sessionStreamingToolArgsRef.current.delete(targetSessionId);
         sessionStreamingWebSearchesRef.current.delete(targetSessionId);
-        toast.error(`LLM 错误: ${err.message}`);
+        toast.error(tr(`LLM 错误: ${err.message}`, `LLM error: ${err.message}`));
         const stampedMessages = stampLastUserDuration(conversationMessages);
         const finalMessages = [...stampedMessages, buildLlmErrorDisplayMessage(err)];
         setSessionMessages(targetSessionId, finalMessages);
@@ -3981,7 +3984,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
         if (item) newItems.push(item);
       } catch (error) {
         console.error("Failed to process image:", error);
-        toast.error(`图片处理失败: ${file.name}`);
+        toast.error(tr(`图片处理失败: ${file.name}`, `Image processing failed: ${file.name}`));
       }
     }
     if (newItems.length > 0) setPendingAttachments(prev => [...prev, ...newItems]);
@@ -4006,7 +4009,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
         });
       } catch (error) {
         console.error("Failed to read text file:", error);
-        toast.error(`文件读取失败: ${file.name}`);
+        toast.error(tr(`文件读取失败: ${file.name}`, `Failed to read file: ${file.name}`));
       }
     }
     if (newItems.length > 0) setPendingAttachments(prev => [...prev, ...newItems]);
@@ -4025,14 +4028,14 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
     const currentSessionId = activeSessionIdRef.current;
     if (!request || !currentSessionId) return;
     if (loading || pendingApproval) {
-      toast.error("当前会话正在处理其他请求");
+      toast.error(tr("当前会话正在处理其他请求", "This session is busy with another request"));
       return;
     }
 
     const source = normalizeImageRefSource(request.src);
     const imageRef = registerSessionImageDataUrl(currentSessionId, source, request.ref);
     if (!imageRef && !source) {
-      toast.error("无法为这张图片创建 ref");
+      toast.error(tr("无法为这张图片创建 ref", "Unable to create a ref for this image"));
       return;
     }
 
@@ -4178,7 +4181,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
       previousDefault.sessionId &&
       previousDefault.sessionId !== currentSessionId
     ) {
-      const ok = window.confirm("已经存在一个作用于新会话的系统提示，保存后将会覆盖之前的设置。是否继续？");
+      const ok = window.confirm(tr("已经存在一个作用于新会话的系统提示，保存后将会覆盖之前的设置。是否继续？", "A system prompt for new sessions already exists. Saving will overwrite it. Continue?"));
       if (!ok) return false;
     }
 
@@ -4198,9 +4201,9 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
 
     setSessions(await listSessions());
     if (normalizedPrompt && nextDefault.sessionId === currentSessionId) {
-      toast.success("系统提示已保存，并将用于新会话");
+      toast.success(tr("系统提示已保存，并将用于新会话", "System prompt saved and will be used for new sessions"));
     } else {
-      toast.success(normalizedPrompt ? "系统提示已保存" : "系统提示已清空");
+      toast.success(normalizedPrompt ? tr("系统提示已保存", "System prompt saved") : tr("系统提示已清空", "System prompt cleared"));
     }
     return true;
   }
@@ -4217,7 +4220,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
     setSessionTitle(nextTitle);
     setEditingTitle(false);
     setSessions(await listSessions());
-    toast.success("会话标题已更新");
+    toast.success(tr("会话标题已更新", "Session title updated"));
   }
 
   function cancelEditingSessionTitle() {
@@ -4434,7 +4437,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
     if (!query || globalSearchLoading) return;
     setGlobalSearchLoading(true);
     setGlobalSearchResults([]);
-    setGlobalSearchStatus("正在搜索历史会话…");
+    setGlobalSearchStatus(tr("正在搜索历史会话…", "Searching past sessions…"));
     try {
       const indexedSessions = await listSessions();
       const results = [];
@@ -4443,15 +4446,15 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
         sessionMessagesRef.current.set(item.id, sessionMessages || []);
         const result = buildGlobalSessionSearchResult(item, sessionMessages || [], query);
         if (result) results.push(result);
-        setGlobalSearchStatus(`正在搜索 ${results.length} 个命中会话 / ${indexedSessions.length} 个历史会话…`);
+        setGlobalSearchStatus(tr(`正在搜索 ${results.length} 个命中会话 / ${indexedSessions.length} 个历史会话…`, `Searching ${results.length} matching sessions / ${indexedSessions.length} past sessions…`));
         // Yield between sessions so large histories do not freeze the side panel.
         await new Promise(resolve => setTimeout(resolve, 0));
       }
       setGlobalSearchResults(results);
-      setGlobalSearchStatus(results.length > 0 ? `找到 ${results.length} 个会话` : "没有找到命中的会话");
+      setGlobalSearchStatus(results.length > 0 ? tr(`找到 ${results.length} 个会话`, `Found ${results.length} sessions`) : tr("没有找到命中的会话", "No matching sessions found"));
     } catch (error) {
       console.error("Global session search failed:", error);
-      setGlobalSearchStatus(`全局搜索失败: ${error?.message || String(error)}`);
+      setGlobalSearchStatus(tr(`全局搜索失败: ${error?.message || String(error)}`, `Global search failed: ${error?.message || String(error)}`));
     } finally {
       setGlobalSearchLoading(false);
     }
@@ -4753,10 +4756,10 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
   const contextUsageWarning = isContextUsageWarning(displayContextUsage, llmConfigInfo.modelContextLimitTokens);
   const formattedContextUsage = formatContextUsageK(displayContextUsage);
   const displayContextUsageText = locale === "en" && formattedContextUsage === "未返回" ? "-" : formattedContextUsage;
-  const contextStatusTitle = `上下文：${formatContextUsageK(displayContextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`;
+  const contextStatusTitle = tr(`上下文：${formatContextUsageK(displayContextUsage)} / 告警阈值：${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)} 的 90%`, `Context: ${displayContextUsageText} / warning at 90% of ${formatContextLimitK(llmConfigInfo.modelContextLimitTokens)}`);
   const showRequestBodySize = shouldShowRequestBodySize(requestBodySize);
   const requestBodySizeWarning = isRequestBodySizeWarning(requestBodySize);
-  const requestBodySizeTitle = `请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`;
+  const requestBodySizeTitle = tr(`请求体：${formatRequestBodySizeM(requestBodySize)} / 5M 后红色告警`, `Request body: ${formatRequestBodySizeM(requestBodySize)} / turns red above 5M`);
   const inputResizeDisabled = !!pendingApproval;
   const queuedMessageSummary = queuedMessages.length > 0 ? getQueuedMessageText(queuedMessages[0]) : "";
 
@@ -4917,7 +4920,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
                           {hasHistoryContextUsage(s.contextUsage) && (
                             <>
                               {" · "}
-                              上下文：{formatContextUsageK(s.contextUsage)}
+                              {tr("上下文：", "Context: ")}{formatContextUsageK(s.contextUsage)}
                             </>
                           )}
                         </span>
@@ -5126,7 +5129,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
             <div className="chat-search-controls">
               <span className={`chat-search-count ${searchQuery.trim() && searchScope === "current" && searchHitCount === 0 ? "chat-search-count-empty" : ""}`}>
                 {searchScope === "global"
-                  ? (globalSearchLoading ? "搜索中…" : (globalSearchResults.length > 0 ? `${globalSearchResults.length} 个会话` : "全局模式需要手动触发搜索"))
+                  ? (globalSearchLoading ? "搜索中…" : (globalSearchResults.length > 0 ? tr(`${globalSearchResults.length} 个会话`, `${globalSearchResults.length} sessions`) : "全局模式需要手动触发搜索"))
                   : (searchQuery.trim() ? (searchHitCount > 0 ? `${activeSearchHitIndex + 1}/${searchHitCount}` : "0/0") : "当前")}
               </span>
               <button type="button" className="chat-search-nav-btn" onClick={toggleSearchScope}>{searchScope === "global" ? "当前会话" : "全局搜索"}</button>
@@ -5158,7 +5161,7 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
                       <span className="chat-global-search-badge">{result.hitCount}</span>
                     </div>
                     <div className="chat-global-search-meta">
-                      创建 {formatTime(result.startedAt || result.updatedAt)} · 最后消息 {result.lastMessageTime ? formatTime(result.lastMessageTime) : "—"}
+                      {tr("创建 ", "Created ")}{formatTime(result.startedAt || result.updatedAt)}{tr(" · 最后消息 ", " · Last message ")}{result.lastMessageTime ? formatTime(result.lastMessageTime) : "—"}
                     </div>
                     <div className="chat-global-search-snippet">{result.snippet}</div>
                   </button>

@@ -1,7 +1,7 @@
 /* global chrome */
 import { Badge, Button, Card, Input, } from "@sunwu51/camel-ui"
 import { useEffect, useRef, useState } from "react"
-import { useLocalizedDom } from "../../i18n"
+import { useLocalizedDom, tr } from "../../i18n";
 import './Search.css'
 import { BOARD_KEY, loadBoard } from "../../api/sticky/store"
 
@@ -135,8 +135,8 @@ function Search() {
   return (
     <>
       <div ref={rootRef}>
-      <Card>
-        <div style={{ padding: "0" }} ref={searchRef} tabIndex="0" onKeyDown={handleKeyDown}>
+      <Card className="!p-2">
+        <div style={{ padding: "0", outline: "none" }} ref={searchRef} tabIndex="0" onKeyDown={handleKeyDown}>
           <span className="text-sm text-gray-500 font-bold block mb-1">搜索</span>
           <Input
             aria-label="搜索标签页"
@@ -146,8 +146,8 @@ function Search() {
             placeholder="输入关键词搜索标签页"
           />
           {fromTabs.length > 0 &&
-            <Card>
-              <ul>
+            <Card className="!p-2 mt-3">
+              <ul className="flex flex-col gap-2">
                 {
                   fromTabs.map((item, index) => (
                     <li key={index} className="font-bold" onMouseMove={() => { searchRef.current?.focus(); setSelectedIndex(index); }} onMouseLeave={() => searchRef.current?.focus()}>
@@ -159,7 +159,7 @@ function Search() {
                       }}
                         className={`search-result-button w-full static m-0 text-start active:transform-none p-0 ${selectedIndex === index ? 'search-result-button-selected' : ''}`}
                       >
-                        <div className="flex flex-col px-1 min-h-8 rounded-md justify-center">
+                        <div className="flex flex-col flex-1 min-w-0 px-1 min-h-8 rounded-md justify-center">
                           <div className="flex items-center">
                             {
                               stickyTabIds.has(item.tab.id) ?
@@ -219,7 +219,7 @@ function Search() {
                       }}
                         className={`search-result-button w-full static m-0 text-start active:transform-none p-0 ${selectedIndex === globalIndex ? 'search-result-button-selected' : ''}`}
                       >
-                        <div className="flex flex-col px-1 min-h-8 rounded-md justify-center">
+                        <div className="flex flex-col flex-1 min-w-0 px-1 min-h-8 rounded-md justify-center">
                           <div className="flex items-center">
                             <Badge className="search-result-badge search-result-badge-history min-w-20">{formatTime(Date.now() - item.history.lastVisitTime)}</Badge>
                             &nbsp;
@@ -254,9 +254,9 @@ function Search() {
 
 function formatTime(ms) {
   var m = ms / 1000 / 60;
-  if (m < 180) return Math.ceil(m) + '分钟前'
-  if (m < 24 * 60) return Math.floor(m / 60) + '小时前'
-  return Math.floor(m / 60 / 24) + '天前'
+  if (m < 180) return Math.ceil(m) + tr('分钟前', ' min ago')
+  if (m < 24 * 60) return Math.floor(m / 60) + tr('小时前', ' h ago')
+  return Math.floor(m / 60 / 24) + tr('天前', ' d ago')
 }
 
 /** Count how many search words appear in the text (simple keyword match) */

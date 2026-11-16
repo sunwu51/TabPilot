@@ -10,7 +10,7 @@ const TYPES = ["preference", "correction", "decision", "workflow", "entity", "re
 
 export default function MemoryManager() {
   const { t } = useI18n();
-  return <Dialog trigger={<Button className="!min-h-7 !px-2 !text-xs">{t("memoryView")}</Button>}><MemoryManagerBody /></Dialog>;
+  return <Dialog trigger={<Button size="sm" title={t("memoryTitle")}>{t("memoryView")}</Button>}><MemoryManagerBody /></Dialog>;
 }
 
 function MemoryManagerBody() {

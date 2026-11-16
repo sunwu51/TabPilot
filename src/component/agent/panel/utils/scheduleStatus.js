@@ -1,4 +1,5 @@
-export function isTerminalScheduleStatus(status) {
+
+import { tr } from "../../../../i18n";export function isTerminalScheduleStatus(status) {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 export function formatScheduleStatus(status) {
@@ -30,9 +31,9 @@ export function formatRemainingSeconds(seconds) {
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const secs = total % 60;
-  if (hours > 0) return `${hours}小时 ${minutes}分`;
-  if (minutes > 0) return `${minutes}分 ${secs}秒`;
-  return `${secs}秒`;
+  if (hours > 0) return tr(`${hours}小时 ${minutes}分`, `${hours}h ${minutes}m`);
+  if (minutes > 0) return tr(`${minutes}分 ${secs}秒`, `${minutes}m ${secs}s`);
+  return tr(`${secs}秒`, `${secs}s`);
 }
 
 export function getLiveRemainingSeconds(job, now = Date.now()) {

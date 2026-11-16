@@ -1,4 +1,5 @@
-/**
+
+import { tr } from "../../i18n";/**
  * Visual indicator shown in the message stream when the AI
  * is extracting content from a browser tab via tab_extract tool.
  */
@@ -9,8 +10,8 @@ export default function ToolCallIndicator({ tabTitle, loading }) {
       <span className="tool-call-icon">{loading ? "🔧" : "✅"}</span>
       <span className="tool-call-text">
         {loading
-          ? <>正在读取「<strong>{tabTitle}</strong>」的内容...</>
-          : <>已读取「<strong>{tabTitle}</strong>」</>
+          ? <>{tr("正在读取「", "Reading \"")}<strong>{tabTitle}</strong>{tr("」的内容...", "\" content...")}</>
+          : <>{tr("已读取「", "Read \"")}<strong>{tabTitle}</strong>{"\""}</>
         }
       </span>
     </div>

@@ -2,7 +2,7 @@
 import { Button, Card, Input } from "@sunwu51/camel-ui";
 import { useState } from "react";
 import toast from "react-hot-toast";
-import { useLocalizedDom } from "../../i18n";
+import { useLocalizedDom, tr } from "../../i18n";
 
 export default function Group() {
     const rootRef = useLocalizedDom();
@@ -17,7 +17,7 @@ export default function Group() {
             var tabs = await chrome.tabs.query({});
             tabs = tabs.filter(item => item.url && item.url.match(regex));
             if (tabs.length <= 0) {
-                toast.error("没有符合条件的tabs")
+                toast.error(tr("没有符合条件的tabs", "No matching tabs"))
                 return
             }
             var groups = await chrome.tabGroups.query({ title: groupName });
@@ -34,7 +34,7 @@ export default function Group() {
             }
             // await chrome.tabGroups.move(groupId, {index: 0, windowId: chrome.windows.WINDOW_ID_CURRENT});
         } else {
-            toast.error("输入不合法~");
+            toast.error(tr("输入不合法~", "Invalid input"));
         }
     }
 
@@ -75,9 +75,9 @@ export default function Group() {
             groupCount++;
         }
         if (groupCount > 0) {
-            toast.success(`已按域名创建 ${groupCount} 个分组`);
+            toast.success(tr(`已按域名创建 ${groupCount} 个分组`, `Created ${groupCount} groups by domain`));
         } else {
-            toast("没有可分组的标签页（至少需要同域名 2 个以上）");
+            toast(tr("没有可分组的标签页（至少需要同域名 2 个以上）", "No tabs to group (a domain needs at least 2 tabs)"));
         }
     }
 
@@ -86,25 +86,25 @@ export default function Group() {
         for (const g of groups) {
             await chrome.tabGroups.update(g.id, { collapsed: true });
         }
-        toast.success(`已折叠 ${groups.length} 个分组`);
+        toast.success(tr(`已折叠 ${groups.length} 个分组`, `Collapsed ${groups.length} groups`));
     }
 
     async function ungroupAll() {
         const tabs = await chrome.tabs.query({});
         const groupedTabs = tabs.filter(t => t.groupId && t.groupId !== -1);
         if (groupedTabs.length === 0) {
-            toast("没有已分组的标签页");
+            toast(tr("没有已分组的标签页", "No grouped tabs"));
             return;
         }
         for (const tab of groupedTabs) {
             await chrome.tabs.ungroup(tab.id);
         }
-        toast.success(`已取消 ${groupedTabs.length} 个标签的分组`);
+        toast.success(tr(`已取消 ${groupedTabs.length} 个标签的分组`, `Ungrouped ${groupedTabs.length} tabs`));
     }
 
     return <>
         <div ref={rootRef}>
-        <Card>
+        <Card className="!p-2">
             <span className="text-sm text-gray-500 font-bold block mb-1">分组</span>
             <div className="flex gap-1 mb-2">
                 <Input

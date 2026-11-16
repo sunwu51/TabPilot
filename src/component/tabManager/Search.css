@@ -6,29 +6,34 @@
     display: none;
 }
 
+/* camel-ui 的 Button 是 inline-flex 且内容居中; 搜索结果需要整行左对齐 */
 .search-result-button.button {
     width: 100%;
     position: static;
     margin: 0;
     padding: 0;
+    justify-content: flex-start;
     text-align: start;
     background: var(--w-white);
 }
 
-.search-result-button.button:hover,
-.search-result-button.button:active,
-.search-result-button.button.search-result-button-selected {
+/* 选择器多带 :not(:disabled), 优先级高于 camel-ui 自带的 hover 样式(白字/位移) */
+.search-result-button.button:hover:not(:disabled),
+.search-result-button.button:active:not(:disabled),
+.search-result-button.button.search-result-button-selected:not(:disabled) {
     background: var(--w-yellow);
     color: var(--w-black);
+    transform: none;
 }
 
-.search-result-button.button:active {
+.search-result-button.button:active:not(:disabled) {
     transform: none;
 }
 
 .search-result-button.button:focus-visible {
     outline: 2px solid var(--w-yellow-dark, var(--w-yellow));
     outline-offset: 1px;
+    box-shadow: none;
 }
 
 .search-result-badge.badge-container {

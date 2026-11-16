@@ -2,7 +2,7 @@
 import { Button, Card, Input } from "@sunwu51/camel-ui"
 import { useEffect, useState } from "react"
 import toast from "react-hot-toast"
-import { useI18n, useLocalizedDom } from "../../i18n"
+import { useI18n, useLocalizedDom, tr } from "../../i18n";
 
 export default function Workspace() {
     const rootRef = useLocalizedDom()
@@ -25,13 +25,13 @@ export default function Workspace() {
     async function saveWorkspace() {
         const name = newName.trim()
         if (!name) {
-            toast.error("请输入工作区名称")
+            toast.error(tr("请输入工作区名称", "Enter a workspace name"))
             return
         }
         const tabs = await chrome.tabs.query({})
         const httpTabs = tabs.filter(t => t.url && t.url.startsWith("http"))
         if (httpTabs.length === 0) {
-            toast.error("没有可保存的标签页")
+            toast.error(tr("没有可保存的标签页", "No tabs to save"))
             return
         }
         const ws = {
@@ -43,7 +43,7 @@ export default function Workspace() {
         const { workspaces: existing } = await chrome.storage.local.get({ workspaces: [] })
         existing.unshift(ws)
         await chrome.storage.local.set({ workspaces: existing })
-        toast.success(`已保存工作区「${name}」(${httpTabs.length} 个标签)`)
+        toast.success(tr(`已保存工作区「${name}」(${httpTabs.length} 个标签)`, `Saved workspace "${name}" (${httpTabs.length} tabs)`))
         setShowSave(false)
         setNewName("")
         loadWorkspaces()
@@ -69,11 +69,11 @@ export default function Workspace() {
             }
 
             if (opened > 0 && skipped > 0) {
-                toast.success(`已恢复 ${opened} 个标签，跳过 ${skipped} 个已打开的`)
+                toast.success(tr(`已恢复 ${opened} 个标签，跳过 ${skipped} 个已打开的`, `Restored ${opened} tabs, skipped ${skipped} already open`))
             } else if (opened > 0) {
-                toast.success(`已恢复「${ws.name}」(${opened} 个标签)`)
+                toast.success(tr(`已恢复「${ws.name}」(${opened} 个标签)`, `Restored "${ws.name}" (${opened} tabs)`))
             } else {
-                toast("所有标签页都已经打开了，无需恢复")
+                toast(tr("所有标签页都已经打开了，无需恢复", "All tabs are already open, nothing to restore"))
             }
         } finally {
             setRestoringId(null)
@@ -85,7 +85,7 @@ export default function Workspace() {
         const updated = existing.filter(w => w.id !== id)
         await chrome.storage.local.set({ workspaces: updated })
         setConfirmDeleteId(null)
-        toast.success("已删除")
+        toast.success(tr("已删除", "Deleted"))
         loadWorkspaces()
     }
 
@@ -96,7 +96,7 @@ export default function Workspace() {
 
     return (
         <div ref={rootRef}>
-        <Card>
+        <Card className="!p-2">
             <div className="flex justify-between items-center pb-1 mb-1" style={{ borderBottom: "1px dashed #d1d5db" }}>
                 <span className="text-sm text-gray-500 font-bold" style={{ marginTop: '-10px' }}>工作区</span>
                 <Button className="w-24 !text-xs" onPress={() => setShowSave(!showSave)}>

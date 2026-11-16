@@ -25,6 +25,12 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* 面板内边距: camel-ui 默认 16px, 这里收紧为 5px(与旧版一致), 让卡片更贴近边框 */
+.tabs-panel,
+.tabs-panel-selected {
+  padding: 5px !important;
+}
+
 .tabs-panel-selected {
   flex: 1;
   position: relative;
@@ -37,19 +43,33 @@ html, body, #root {
   z-index: 2;
 }
 
+/* 标签栏高度(40px)与设置按钮默认高度一致, 顶部对齐 */
 .settings-float {
   position: fixed;
-  top: 6px;
+  top: 0;
   right: 8px;
   z-index: 100;
 }
 
-/* Compact tabs to avoid overlap with settings button */
-.tabs-button {
+/* Compact tabs to avoid overlap with settings button.
+   选中/未选中两种 tab 统一尺寸; 选中的 tab 比未选中多 2px 底部 padding 并下移 2px, 用来盖住面板顶边 */
+.tabs-button,
+.tabs-button-selected {
   min-width: auto !important;
-  padding: 4px 12px !important;
+  padding: 10px 12px !important;
   font-size: 12px !important;
+  line-height: 18px !important;
   margin: 0 2px !important;
+}
+
+.tabs-button-selected {
+  padding-bottom: 12px !important;
+  margin-bottom: -2px !important;
+}
+
+/* 第一个 tab 贴齐面板左边框, 不留 2px 左外边距 */
+.tabs-button-container > :first-child {
+  margin-left: 0 !important;
 }
 
 /* Unify label styles inside settings dialog */
@@ -62,13 +82,6 @@ html, body, #root {
 .dialog-dialog .input-container label,
 .dialog-dialog .select-container label {
   margin: 3px 0 !important;
-}
-
-.dialog-dialog .settings-secret-field {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  gap: 0.25rem;
 }
 
 .dialog-dialog .settings-api-url-hint {
@@ -86,62 +99,6 @@ html, body, #root {
   color: #374151;
   font-size: 0.8125rem;
   font-weight: 600;
-}
-
-.dialog-dialog .settings-secret-field label {
-  margin: 3px 0 !important;
-}
-
-.dialog-dialog .settings-secret-input-wrapper {
-  position: relative;
-  width: 100%;
-}
-
-.dialog-dialog .settings-secret-input {
-  width: 100%;
-  min-height: 3rem;
-  border: 1px solid;
-  padding: 0.5rem 2.75rem 0.5rem 0.75rem;
-  border-radius: 0.125rem;
-  box-shadow: 1px 1px var(--w-green-dark), 2px 2px var(--w-black-dark), inset 0 0 0 2px var(--w-indigo-dark);
-  margin: 0 2px 2px 0;
-  font-size: 1rem;
-  font-weight: 400;
-  transition: 0.4s;
-}
-
-.dialog-dialog .settings-secret-input:hover,
-.dialog-dialog .settings-secret-input:focus {
-  box-shadow: 2px 2px var(--w-green-light), 3px 3px var(--w-black-dark), inset 0 0 0 2px var(--w-black);
-}
-
-.dialog-dialog .settings-secret-toggle {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #111827;
-  border-radius: 6px;
-  background: #fff;
-  color: #4b5563;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-
-.dialog-dialog .settings-secret-toggle:hover,
-.dialog-dialog .settings-secret-toggle:focus {
-  background: #fef3c7;
-  color: #111827;
-  border-color: #92400e;
-}
-
-.dialog-dialog .settings-secret-toggle svg {
-  width: 16px;
-  height: 16px;
 }
 
 .dialog-dialog .settings-dialog-body {
@@ -396,7 +353,8 @@ html, body, #root {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.75rem;
-  padding-top: 0.75rem;
+  /* 右/下预留空间: 父容器 overflow:hidden 会裁掉按钮的硬阴影 */
+  padding: 0.75rem var(--shadow-reserve, 4px) var(--shadow-reserve, 4px) 0;
   border-top: 1px solid #e5e7eb;
   background: white;
 }

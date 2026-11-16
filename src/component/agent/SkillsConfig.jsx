@@ -1,7 +1,7 @@
 /* eslint-disable react/prop-types */
 import { Button, Checkbox, Dialog, Input } from "@sunwu51/camel-ui";
 import { useEffect, useState } from "react";
-import { useLocalizedDom } from "../../i18n";
+import { useLocalizedDom, tr } from "../../i18n";
 
 export default function SkillsConfig({
   agentSkills,
@@ -84,7 +84,7 @@ export default function SkillsConfig({
 
         {agentSkills.loadedAt && count > 10 && (
           <div className="text-xs text-amber-700 mb-3">
-            当前已加载 {count} 个 skill，建议将 skill 数量控制在 10 个以内。
+            {tr(`当前已加载 ${count} 个 skill，建议将 skill 数量控制在 10 个以内。`, `${count} skills loaded. Keep the number of skills within 10.`)}
           </div>
         )}
 

@@ -64,11 +64,13 @@
 .stk-seg {
   position: relative;
   display: inline-grid;
-  grid-template-columns: repeat(3, 22px);
-  height: 24px;
-  border: 1.5px solid #111;
-  border-radius: 6px;
-  background: #fff;
+  grid-template-columns: repeat(3, 26px);
+  height: 1.75rem;
+  box-sizing: border-box;
+  border: 2px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -76,52 +78,27 @@
 .stk-seg-thumb {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 22px;
-  background: var(--w-blue, #73bcec);
-  transform: translateX(calc(var(--i, 0) * 22px));
+  width: 26px;
+  background: var(--c-primary);
+  transform: translateX(calc(var(--i, 0) * 26px));
   transition: transform .28s var(--stk-spring);
 }
 
 .stk-seg button {
   position: relative;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
-  color: #6b7280;
+  color: var(--c-fg-muted);
   transition: color .2s;
 }
 
 .stk-seg button[aria-pressed="true"] {
-  color: #111;
+  color: var(--c-on-soft);
 }
 
+/* 贴住当前页: 外观由 camel-ui Button(size="sm") 提供, 这里只保留图标摆动 */
 .stk-pin-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  margin: 0 4px 4px 0;
-  border: 2px solid #000;
-  border-radius: .5rem;
-  background: var(--w-blue, #73bcec);
-  box-shadow: 2px 2px var(--w-green-dark, #00a600), 4px 4px #000;
-  font-size: 12px;
-  font-weight: 700;
   white-space: nowrap;
-  transition: transform .1s ease, box-shadow .1s ease, background .15s, color .15s;
-}
-
-.stk-pin-btn:hover {
-  background: var(--w-blue-dark, #1e3a8a);
-  color: #fff;
-}
-
-.stk-pin-btn:active {
-  box-shadow: 0 0;
-  transform: translate(3px, 3px);
-}
-
-.stk-pin-btn:disabled {
-  opacity: .5;
 }
 
 .stk-pin-icon {
