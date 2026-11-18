@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { listVfsEntries } from "./utils/vfsBrowser";
 import { chromeStorageVfs } from "./utils/chromeStorageVfs";
 import { LocaleProvider, useI18n } from "./i18n";
+import { UiButton, UiInput, UiSelect } from "./component/ui/Controls";
 import { SCRIPTS_DIR, _execEvalJs } from "./api/llm/tools/builtins/evalAndPlayground";
 import "./files.css";
 
@@ -62,17 +63,18 @@ function ScriptRunner({ path }) {
     }
   }
 
+  const tabOptions = tabs.length === 0
+    ? [{ value: "", label: t("filesRunNoTabs") }]
+    : tabs.map(tab => ({ value: String(tab.id), label: `${(tab.title || tab.url).slice(0, 60)} — ${hostOf(tab.url)}` }));
+
   return <div className="script-runner">
     <div className="script-runner-row">
-      <label>{t("filesRunIn")}
-        <select aria-label={t("filesRunIn")} value={tabId} onChange={event => setTabId(event.target.value)} onFocus={() => void loadTabs()}>
-          {tabs.length === 0 && <option value="">{t("filesRunNoTabs")}</option>}
-          {tabs.map(tab => <option key={tab.id} value={tab.id}>{(tab.title || tab.url).slice(0, 60)} — {hostOf(tab.url)}</option>)}
-        </select>
-      </label>
-      <button className="primary" onClick={run} disabled={running || !tabId}>{running ? t("filesRunning") : t("filesRun")}</button>
+      <span className="script-runner-label">{t("filesRunIn")}</span>
+      <UiSelect className="script-runner-select" ariaLabel={t("filesRunIn")} value={tabId} options={tabOptions} onChange={setTabId} />
+      <UiButton size="md" title={t("filesRefresh")} ariaLabel={t("filesRefresh")} onClick={() => void loadTabs()}>↻</UiButton>
+      <UiButton size="md" variant="primary" onClick={run} disabled={running || !tabId}>{running ? t("filesRunning") : t("filesRun")}</UiButton>
     </div>
-    <input aria-label={t("filesRunArgs")} placeholder={t("filesRunArgs")} value={argsText} onChange={event => setArgsText(event.target.value)} />
+    <UiInput ariaLabel={t("filesRunArgs")} placeholder={t("filesRunArgs")} value={argsText} onChange={setArgsText} />
     {outcome && (outcome.error
       ? <p role="alert">{outcome.error}</p>
       : <pre className="script-result" aria-label={t("filesRunResult")}>{outcome.value === undefined ? "undefined" : JSON.stringify(outcome.value, null, 2)}</pre>)}
@@ -125,15 +127,15 @@ export function FileManager() {
   }
 
   return <main>
-    <header><h1>{t("fileManager")}</h1><button onClick={() => setRefresh(value => value + 1)}>{t("filesRefresh")}</button></header>
-    <nav aria-label={t("filesNavigation")}><button onClick={() => setPath("/")}>{t("filesRoot")}</button>{path.split("/").filter(Boolean).map((part, index, parts) => <button key={index} onClick={() => setPath(`/${parts.slice(0, index + 1).join("/")}`)}>/ {part}</button>)}</nav>
+    <header><h1>{t("fileManager")}</h1><UiButton onClick={() => setRefresh(value => value + 1)}>{t("filesRefresh")}</UiButton></header>
+    <nav aria-label={t("filesNavigation")}><UiButton onClick={() => setPath("/")}>{t("filesRoot")}</UiButton>{path.split("/").filter(Boolean).map((part, index, parts) => <UiButton key={index} onClick={() => setPath(`/${parts.slice(0, index + 1).join("/")}`)}>/ {part}</UiButton>)}</nav>
     {error && <p role="alert">{error}</p>}
     <div className="file-workspace">
       <section className="file-list" aria-label={t("filesList")}>
         <p className="directory-path">{path}</p>
-        {path !== "/" && <button onClick={() => setPath(chromeStorageVfs.parentPath(path))}>📁 ..</button>}
+        {path !== "/" && <div className="file-row"><button className="file-item" onClick={() => setPath(chromeStorageVfs.parentPath(path))}>📁 ..</button></div>}
         {loading ? <p>{t("filesLoading")}</p> : entries.length === 0 ? <p>{t("filesEmpty")}</p> : entries.map(entry => <div className="file-row" key={entry.path}>
-          <button className={selected?.path === entry.path ? "selected" : ""} onClick={() => entry.type === "directory" ? setPath(entry.path) : void select(entry)}>
+          <button className={`file-item${selected?.path === entry.path ? " selected" : ""}`} onClick={() => entry.type === "directory" ? setPath(entry.path) : void select(entry)}>
             <span>{entry.type === "directory" ? "📁" : "📄"} {entry.title || entry.name}</span><small>{kindLabel(entry.kind)}{entry.type === "file" ? ` · ${entry.size} B` : ""}</small>
           </button>
           {entry.url && <a href={entry.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(entry.kind) })}</a>}

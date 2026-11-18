@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { tr } from "../../i18n";
 import { Badge } from "@sunwu51/camel-ui";
-import { PdCheck } from "./PostdogControls";
+import { UiCheck } from "../ui/Controls";
 import { HEADER_NAME_SUGGESTIONS, HEADER_VALUE_SUGGESTIONS, fileToBase64, formatDateTime, getStatusClass } from "./postdogUtils";
 
 export const MAX_UPLOAD_FILE_BYTES = 5 * 1024 * 1024;
@@ -76,7 +76,7 @@ export function KeyValueEditor({ rows = [], onChange, secretToggle = false, keyP
         const hidden = maskSecrets && row.secret === true && !revealed.has(index);
         return (
           <div className={`pd-kv-row${row.enabled === false ? " disabled" : ""}`} key={index}>
-            <PdCheck checked={row.enabled !== false} onChange={enabled => update(index, { enabled })} title={tr("启用", "Enabled")} />
+            <UiCheck checked={row.enabled !== false} onChange={enabled => update(index, { enabled })} title={tr("启用", "Enabled")} />
             <input className="pd-kv-key" title={row.key || ""} value={row.key || ""} onChange={e => update(index, { key: e.target.value })} placeholder={keyPlaceholder} spellCheck={false} autoComplete="off" list={headerSuggestions ? "pd-header-names" : undefined} />
             <div className="pd-kv-value-wrap">
               <input
@@ -97,7 +97,7 @@ export function KeyValueEditor({ rows = [], onChange, secretToggle = false, keyP
               )}
             </div>
             {secretToggle && (
-              <PdCheck checked={row.secret === true} onChange={secret => update(index, { secret })} title={tr("敏感值", "Secret")} />
+              <UiCheck checked={row.secret === true} onChange={secret => update(index, { secret })} title={tr("敏感值", "Secret")} />
             )}
             <button type="button" className="pd-icon-button pd-kv-remove" onClick={() => remove(index)} title={tr("删除", "Remove")}>×</button>
           </div>
@@ -144,7 +144,7 @@ export function MultipartEditor({ rows = [], onChange }) {
       </div>
       {rows.map((row, index) => (
         <div className={`pd-kv-row${row.enabled === false ? " disabled" : ""}`} key={index}>
-          <PdCheck checked={row.enabled !== false} onChange={enabled => update(index, { enabled })} title={tr("启用", "Enabled")} />
+          <UiCheck checked={row.enabled !== false} onChange={enabled => update(index, { enabled })} title={tr("启用", "Enabled")} />
           <input className="pd-kv-key" title={row.key || ""} value={row.key || ""} onChange={e => update(index, { key: e.target.value })} placeholder="key" spellCheck={false} />
           <select value={row.kind === "file" ? "file" : "text"} onChange={e => update(index, { kind: e.target.value, value: "", fileName: "", mimeType: "", dataBase64: "" })}>
             <option value="text">Text</option>

@@ -6,6 +6,7 @@ import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
+import { UiButton, UiInput, UiSelect } from "./component/ui/Controls";
 import { installWarnFilter } from "./warnFilter";
 import {
   loadStashMapFromVfs,
@@ -215,9 +216,9 @@ function StashPage() {
             <p>{loading ? "加载中..." : `${stashes.length} 条记录`}</p>
           </div>
           <div className="stash-header-actions">
-            <button type="button" className="stash-icon-btn" onClick={loadStashes} title="刷新">↻</button>
-            <button type="button" className="stash-icon-btn" onClick={exportJsonl} title="导出 JSONL">导出</button>
-            <button type="button" className="stash-icon-btn" onClick={() => fileInputRef.current?.click()} title="导入 JSONL 文件">导入</button>
+            <UiButton onClick={loadStashes} title="刷新" aria-label="刷新">↻</UiButton>
+            <UiButton onClick={exportJsonl} title="导出 JSONL">导出</UiButton>
+            <UiButton onClick={() => fileInputRef.current?.click()} title="导入 JSONL 文件">导入</UiButton>
             <input ref={fileInputRef} className="stash-hidden-input" type="file" accept=".jsonl,.ndjson,.txt,application/jsonl,application/x-ndjson,text/plain" onChange={handleImportFileChange} />
           </div>
         </div>
@@ -229,8 +230,8 @@ function StashPage() {
               placeholder={"每行一个 JSON，例如：\n{\"title\":\"note\",\"info\":\"# hello\",\"expireAt\":-1}"}
             />
             <div className="stash-import-actions">
-              <button type="button" className="stash-cancel-btn" disabled={importing} onClick={() => setShowImport(false)}>取消</button>
-              <button type="button" className="stash-primary-btn" disabled={importing} onClick={handleImportJsonl}>{importing ? "导入中..." : "确认导入"}</button>
+              <UiButton disabled={importing} onClick={() => setShowImport(false)}>取消</UiButton>
+              <UiButton variant="primary" disabled={importing} onClick={handleImportJsonl}>{importing ? "导入中..." : "确认导入"}</UiButton>
             </div>
           </div>
         ) : null}
@@ -293,8 +294,8 @@ function StashPage() {
                 </div>
               </div>
               <div className="stash-content-actions">
-                <button type="button" className="stash-primary-btn" onClick={startCreate}>新增 Stash</button>
-                <button type="button" className="stash-secondary-btn" onClick={startEdit}>Edit</button>
+                <UiButton variant="primary" onClick={startCreate}>新增 Stash</UiButton>
+                <UiButton onClick={startEdit}>Edit</UiButton>
               </div>
             </div>
             <MarkdownPreview markdown={selectedStash.info || ""} />
@@ -303,7 +304,7 @@ function StashPage() {
           <div className="stash-empty-content">
             <div className="stash-empty-icon">🗂️</div>
             <div>还没有可展示的 stash</div>
-            <button type="button" className="stash-primary-btn" onClick={startCreate}>新增 Stash</button>
+            <UiButton variant="primary" size="md" onClick={startCreate}>新增 Stash</UiButton>
           </div>
         )}
       </main>
@@ -316,12 +317,12 @@ function StashPage() {
               确定要删除「<span>{deleteTarget.title}</span>」吗？此操作不可恢复。
             </p>
             <div className="stash-confirm-actions">
-              <button type="button" className="stash-cancel-btn" disabled={deleting} onClick={() => setDeleteTarget(null)}>
+              <UiButton size="md" disabled={deleting} onClick={() => setDeleteTarget(null)}>
                 取消
-              </button>
-              <button type="button" className="stash-danger-btn" disabled={deleting} onClick={confirmDelete}>
+              </UiButton>
+              <UiButton size="md" variant="danger" disabled={deleting} onClick={confirmDelete}>
                 {deleting ? "删除中..." : "删除"}
-              </button>
+              </UiButton>
             </div>
           </div>
         </div>
@@ -331,45 +332,44 @@ function StashPage() {
 }
 
 function StashEditor({ draft, setDraft, onSave, onCancel }) {
+  const expireOptions = [
+    { value: "permanent", label: "永久" },
+    { value: "custom", label: "自定义时间" }
+  ];
   return (
     <>
       <div className="stash-editor-header">
-        <div className="stash-editor-title">
+        <div className="stash-editor-heading">
           <h2>{draft.originalTitle ? "Edit Stash" : "新增 Stash"}</h2>
-          <div className="stash-editor-fields">
-            <label>
-              <span>Title</span>
-              <input
-                value={draft.title}
-                onChange={(event) => setDraft(prev => ({ ...prev, title: event.target.value }))}
-                placeholder="stash title"
-              />
-            </label>
-            <label>
-              <span>过期</span>
-              <select
-                value={draft.expireMode}
-                onChange={(event) => setDraft(prev => ({ ...prev, expireMode: event.target.value }))}
-              >
-                <option value="permanent">永久</option>
-                <option value="custom">自定义时间</option>
-              </select>
-            </label>
-            {draft.expireMode === "custom" ? (
-              <label>
-                <span>过期时间</span>
-                <input
-                  type="datetime-local"
-                  value={draft.expireAtText}
-                  onChange={(event) => setDraft(prev => ({ ...prev, expireAtText: event.target.value }))}
-                />
-              </label>
-            ) : null}
+          <div className="stash-content-actions">
+            <UiButton size="md" onClick={onCancel}>取消</UiButton>
+            <UiButton size="md" variant="primary" onClick={onSave}>保存</UiButton>
           </div>
         </div>
-        <div className="stash-content-actions">
-          <button type="button" className="stash-cancel-btn" onClick={onCancel}>取消</button>
-          <button type="button" className="stash-primary-btn" onClick={onSave}>保存</button>
+        <div className="stash-editor-fields">
+          <UiInput
+            className="stash-field-title"
+            label="Title"
+            value={draft.title}
+            onChange={title => setDraft(prev => ({ ...prev, title }))}
+            placeholder="stash title"
+          />
+          <UiSelect
+            className="stash-field-expire"
+            label="过期"
+            value={draft.expireMode}
+            options={expireOptions}
+            onChange={expireMode => setDraft(prev => ({ ...prev, expireMode }))}
+          />
+          {draft.expireMode === "custom" ? (
+            <UiInput
+              className="stash-field-expire-at"
+              label="过期时间"
+              type="datetime-local"
+              value={draft.expireAtText}
+              onChange={expireAtText => setDraft(prev => ({ ...prev, expireAtText }))}
+            />
+          ) : null}
         </div>
       </div>
       <div className="stash-editor-body">

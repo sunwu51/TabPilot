@@ -1,0 +1,10 @@
+/* Shared wrappers around camel-ui controls (see Controls.jsx). */
+
+.ui-check {
+  display: inline-flex;
+  justify-self: center;
+}
+
+.ui-check .checkbox-container {
+  transform: scale(0.8);
+}

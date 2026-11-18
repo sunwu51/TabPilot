@@ -1627,15 +1627,6 @@
   padding: 10px;
 }
 
-.pd-check {
-  display: inline-flex;
-  justify-self: center;
-}
-
-.pd-check .checkbox-container {
-  transform: scale(0.8);
-}
-
 .pd-status-badge {
   font-family: var(--pd-mono);
 }

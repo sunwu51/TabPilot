@@ -24,7 +24,7 @@ import {
 } from "./PostdogParts";
 import { DEFAULT_USER_AGENT, formatDateTime, syncContentTypeHeader } from "./postdogUtils";
 import useAutosave from "./useAutosave";
-import { PdButton, PdInput, PdSelect } from "./PostdogControls";
+import { UiButton, UiInput, UiSelect } from "../ui/Controls";
 import "./postdog.css";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -656,12 +656,12 @@ export default function PostdogPanel() {
           <SaveStatus status={autosave.status} />
         </div>
         <div className="pd-side-actions">
-          <PdButton variant="primary" onClick={() => createRequest(draft?.folderId || null)}>+ {tr("请求", "Request")}</PdButton>
-          <PdButton variant="neutral" onClick={createFolder}>+ {tr("文件夹", "Folder")}</PdButton>
-          <PdButton variant="neutral" onClick={() => setCurlModalOpen(true)}>{tr("导入 curl", "Import curl")}</PdButton>
+          <UiButton variant="primary" onClick={() => createRequest(draft?.folderId || null)}>+ {tr("请求", "Request")}</UiButton>
+          <UiButton variant="neutral" onClick={createFolder}>+ {tr("文件夹", "Folder")}</UiButton>
+          <UiButton variant="neutral" onClick={() => setCurlModalOpen(true)}>{tr("导入 curl", "Import curl")}</UiButton>
         </div>
         <div className="pd-search">
-          <PdInput value={search} onChange={setSearch} placeholder={tr("搜索名称 / URL", "Search name / URL")} />
+          <UiInput value={search} onChange={setSearch} placeholder={tr("搜索名称 / URL", "Search name / URL")} />
           {search && <button type="button" className="pd-icon-button" onClick={() => setSearch("")}>×</button>}
         </div>
         <div className="pd-tree">
@@ -717,13 +717,13 @@ export default function PostdogPanel() {
         <header className="pd-topbar">
           {draft ? (
             <div className="pd-title-group">
-              <PdInput
+              <UiInput
                 className="pd-name-input"
                 value={draft.name}
                 onChange={name => updateDraft({ name })}
                 placeholder={tr("请求名称", "Request name")}
               />
-              <PdSelect
+              <UiSelect
                 className="pd-folder-select"
                 ariaLabel={tr("所属文件夹", "Folder")}
                 value={draft.folderId || ""}
@@ -734,16 +734,16 @@ export default function PostdogPanel() {
           ) : <div className="pd-title-group" />}
           <div className="pd-env-group">
             <span className="pd-env-label">{tr("环境", "Env")}</span>
-            <PdSelect
+            <UiSelect
               className="pd-env-select"
               ariaLabel={tr("环境", "Environment")}
               value={activeEnvironmentId}
               options={[{ value: "", label: tr("无环境", "No environment") }, ...environments.map(env => ({ value: env.id, label: env.name }))]}
               onChange={switchEnvironment}
             />
-            <PdButton size="md" variant="neutral" onClick={() => setEnvModalOpen(true)} title={tr("管理环境变量", "Manage environment variables")}>
+            <UiButton size="md" variant="neutral" onClick={() => setEnvModalOpen(true)} title={tr("管理环境变量", "Manage environment variables")}>
               {tr("变量", "Variables")}{activeEnvironment ? ` (${activeEnvironment.variables.length})` : ""}
-            </PdButton>
+            </UiButton>
           </div>
         </header>
 
@@ -757,13 +757,13 @@ export default function PostdogPanel() {
             </div>
             {loaded && loadError && (
               <div className="pd-empty-actions">
-                <PdButton variant="primary" onClick={() => loadAll({ initial: true })}>{tr("重试", "Retry")}</PdButton>
+                <UiButton variant="primary" onClick={() => loadAll({ initial: true })}>{tr("重试", "Retry")}</UiButton>
               </div>
             )}
             {loaded && !loadError && (
               <div className="pd-empty-actions">
-                <PdButton variant="primary" onClick={() => createRequest(null)}>+ {tr("新建请求", "New request")}</PdButton>
-                <PdButton variant="neutral" onClick={() => setCurlModalOpen(true)}>{tr("导入 curl", "Import curl")}</PdButton>
+                <UiButton variant="primary" onClick={() => createRequest(null)}>+ {tr("新建请求", "New request")}</UiButton>
+                <UiButton variant="neutral" onClick={() => setCurlModalOpen(true)}>{tr("导入 curl", "Import curl")}</UiButton>
               </div>
             )}
           </div>
@@ -771,7 +771,7 @@ export default function PostdogPanel() {
           <>
             <section className="pd-urlbar">
               <div className="pd-url-group">
-                <PdSelect
+                <UiSelect
                   className={`pd-method-select method-${draft.method}`}
                   ariaLabel="Method"
                   value={draft.method}
@@ -788,12 +788,12 @@ export default function PostdogPanel() {
                   spellCheck={false}
                 />
               </div>
-              <PdButton size="md" variant="primary" onClick={runRequest} disabled={running} title="Ctrl/⌘ + Enter">
+              <UiButton size="md" variant="primary" onClick={runRequest} disabled={running} title="Ctrl/⌘ + Enter">
                 {running ? tr("发送中…", "Sending…") : tr("发送", "Send")}
-              </PdButton>
-              <PdButton size="md" variant="neutral" onClick={exportCurrentCurl} title={tr("复制为 curl（会代入当前环境变量）", "Copy as curl (with environment variables applied)")}>
+              </UiButton>
+              <UiButton size="md" variant="neutral" onClick={exportCurrentCurl} title={tr("复制为 curl（会代入当前环境变量）", "Copy as curl (with environment variables applied)")}>
                 {tr("复制 curl", "Copy curl")}
-              </PdButton>
+              </UiButton>
               <button type="button" className="pd-icon-button danger pd-delete-request" onClick={() => deleteRequest(draft)} title={tr("删除当前请求", "Delete this request")}>🗑</button>
             </section>
             {urlPreview && (
@@ -842,7 +842,7 @@ export default function PostdogPanel() {
                             {jsonBodyError
                               ? <span className="pd-json-status error" title={jsonBodyError}>✕ {tr("JSON 无效", "Invalid JSON")}</span>
                               : bodyText.trim() ? <span className="pd-json-status ok">✓ JSON</span> : null}
-                            <PdButton variant="neutral" onClick={beautifyRequestJson}>{tr("格式化", "Format")}</PdButton>
+                            <UiButton variant="neutral" onClick={beautifyRequestJson}>{tr("格式化", "Format")}</UiButton>
                           </>
                         )}
                       </div>
@@ -1155,7 +1155,7 @@ function ResponsePane({ response, running, tab, onTab, bodyView, onBodyView, his
         ) : res.bodyKind === "binary" ? (
           <div className="pd-scroll pd-file-response">
             <div>{formatBinaryResponseMessage(res)}</div>
-            {res.download?.dataBase64 && <PdButton variant="primary" onClick={downloadFile}>{tr("下载文件", "Download file")}</PdButton>}
+            {res.download?.dataBase64 && <UiButton variant="primary" onClick={downloadFile}>{tr("下载文件", "Download file")}</UiButton>}
           </div>
         ) : (
           <div className="pd-response-body">
@@ -1168,7 +1168,7 @@ function ResponsePane({ response, running, tab, onTab, bodyView, onBodyView, his
               )}
               {res.bodyNote && <span className="pd-body-note">{res.bodyNote}</span>}
               <div className="pd-tabs-spacer" />
-              {(res.bodyText || bodyJson?.ok) && <PdButton variant="neutral" onClick={copyBody}>{tr("复制", "Copy")}</PdButton>}
+              {(res.bodyText || bodyJson?.ok) && <UiButton variant="neutral" onClick={copyBody}>{tr("复制", "Copy")}</UiButton>}
             </div>
             <div className="pd-scroll">
               {bodyJson?.ok && bodyView === "tree" ? (
@@ -1209,19 +1209,19 @@ function EnvironmentModal({ environments, activeEnvironmentId, onSwitch, onCreat
             </button>
           ))}
           {environments.length === 0 && <div className="pd-tree-empty">{tr("还没有环境", "No environments yet")}</div>}
-          <PdButton variant="neutral" onClick={create}>+ {tr("新建环境", "New environment")}</PdButton>
+          <UiButton variant="neutral" onClick={create}>+ {tr("新建环境", "New environment")}</UiButton>
         </div>
         <div className="pd-env-detail">
           {selected ? (
             <>
               <div className="pd-env-detail-head">
-                <PdInput className="pd-name-input" value={selected.name} onChange={name => onChange({ ...selected, name })} placeholder={tr("环境名称", "Environment name")} />
+                <UiInput className="pd-name-input" value={selected.name} onChange={name => onChange({ ...selected, name })} placeholder={tr("环境名称", "Environment name")} />
                 {selected.id === activeEnvironmentId ? (
                   <Badge variant="success">{tr("当前环境", "Active environment")}</Badge>
                 ) : (
-                  <PdButton size="md" variant="primary" onClick={() => onSwitch(selected.id)}>{tr("设为当前", "Set active")}</PdButton>
+                  <UiButton size="md" variant="primary" onClick={() => onSwitch(selected.id)}>{tr("设为当前", "Set active")}</UiButton>
                 )}
-                <PdButton size="md" variant="danger" onClick={() => onDelete(selected)}>{tr("删除", "Delete")}</PdButton>
+                <UiButton size="md" variant="danger" onClick={() => onDelete(selected)}>{tr("删除", "Delete")}</UiButton>
               </div>
               <div className="pd-env-vars">
                 <KeyValueEditor
@@ -1258,16 +1258,16 @@ function FolderModal({ folder, requestCount, onChange, onDelete, onClose }) {
       className="pd-folder-modal"
       footer={(
         <>
-          <PdButton variant="danger" onClick={onDelete}>{tr("删除文件夹", "Delete folder")}</PdButton>
+          <UiButton variant="danger" onClick={onDelete}>{tr("删除文件夹", "Delete folder")}</UiButton>
           <span className="pd-help inline">{tr("修改会自动保存", "Changes save automatically")}</span>
-          <PdButton variant="primary" onClick={onClose}>{tr("完成", "Done")}</PdButton>
+          <UiButton variant="primary" onClick={onClose}>{tr("完成", "Done")}</UiButton>
         </>
       )}
     >
       <div className="pd-folder-form">
         <label className="pd-field">
           <span>{tr("名称", "Name")}</span>
-          <PdInput className="pd-name-input" ariaLabel={tr("文件夹名称", "Folder name")} value={folder.name} onChange={name => onChange({ ...folder, name })} autoFocus />
+          <UiInput className="pd-name-input" ariaLabel={tr("文件夹名称", "Folder name")} value={folder.name} onChange={name => onChange({ ...folder, name })} autoFocus />
         </label>
         <span className="pd-help inline">{tr(`包含 ${requestCount} 个请求`, `${requestCount} request(s)`)}</span>
       </div>
@@ -1321,14 +1321,14 @@ function CurlImportModal({ folders, defaultFolderId, onImport, onClose }) {
       footer={(
         <>
           <div className="pd-tabs-spacer" />
-          <PdButton variant="neutral" onClick={onClose}>{tr("取消", "Cancel")}</PdButton>
-          <PdButton variant="primary" onClick={submit} disabled={busy || !text.trim()}>{tr("导入", "Import")}</PdButton>
+          <UiButton variant="neutral" onClick={onClose}>{tr("取消", "Cancel")}</UiButton>
+          <UiButton variant="primary" onClick={submit} disabled={busy || !text.trim()}>{tr("导入", "Import")}</UiButton>
         </>
       )}
     >
       <div className="pd-field pd-curl-folder">
         <span>{tr("放入", "Into")}</span>
-        <PdSelect
+        <UiSelect
           ariaLabel={tr("放入文件夹", "Target folder")}
           value={folderId}
           options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...folders.map(folder => ({ value: folder.id, label: folder.name }))]}
