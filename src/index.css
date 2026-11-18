@@ -140,6 +140,18 @@ html, body, #root {
   gap: 0.5rem;
 }
 
+/* 行尾的操作按钮保持单行, 提示文字在剩余空间里换行 */
+.dialog-dialog .settings-reuse-memory-row > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dialog-dialog .settings-reuse-memory-row > :not(:first-child),
+.dialog-dialog .settings-reuse-memory-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .dialog-dialog .settings-tab-action-row {
   display: flex;
   align-items: center;
@@ -475,11 +487,6 @@ html, body, #root {
   font-size: 11px;
   color: #9ca3af;
   flex-shrink: 0;
-}
-
-/* Override camel-ui scrollbar: make horizontal same thickness as vertical */
-::-webkit-scrollbar {
-  height: 0.5rem;
 }
 
 .settings-intro {

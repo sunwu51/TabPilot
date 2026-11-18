@@ -49,7 +49,7 @@ import {
     setActivePostdogEnvironment
 } from "./api/postdog";
 import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
-import { runPostdogRequest } from "./api/postdog/runtime";
+import { exportPostdogCurl, runPostdogRequest } from "./api/postdog/runtime";
 import { markSupabaseSettingsDirtyFromStorageChanges } from "./api/supabase/backup";
 import { registerStickyBackground } from "./api/sticky/background";
 import {
@@ -752,14 +752,17 @@ async function replayMacroSteps(macro, options = {}) {
 async function handlePostdogManagerMessage(action, payload = {}) {
     switch (action) {
         case "list_all": {
-            const [folders, requests, environments, activeEnvironment, history] = await Promise.all([
+            // History (full response bodies, up to hundreds of runs) is fetched per request via
+            // list_history; sending it here made every reload very heavy.
+            const [folders, requests, environments, activeEnvironment] = await Promise.all([
                 listPostdogFolders(),
                 listPostdogRequests(),
                 listPostdogEnvironments(),
-                getActivePostdogEnvironment(),
-                listPostdogHistory()
+                getActivePostdogEnvironment()
             ]);
-            return { success: true, data: { folders, requests, environments, activeEnvironmentId: activeEnvironment?.id || "", history } };
+            const data = { folders, requests, environments, activeEnvironmentId: activeEnvironment?.id || "" };
+            if (payload.includeHistory) data.history = await listPostdogHistory();
+            return { success: true, data };
         }
         case "list_folders":
             return { success: true, data: await listPostdogFolders() };
@@ -814,7 +817,7 @@ async function handlePostdogManagerMessage(action, payload = {}) {
         }
         case "export_curl": {
             const request = payload.request || await getPostdogRequest(payload.id);
-            return { success: true, data: { text: exportCurl(request) } };
+            return { success: true, data: { text: payload.raw ? exportCurl(request) : await exportPostdogCurl(request) } };
         }
         case "export_json": {
             const [folders, requests, environments] = await Promise.all([

@@ -1,5 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("@sunwu51/camel-ui", async () => await import("../test/camelUiMock"));
+
 import { MarkdownPreview, normalizeStashMediaSrc } from "./stash";
 
 describe("stash markdown raw html", () => {

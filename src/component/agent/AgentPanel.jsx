@@ -2664,6 +2664,12 @@ export default function AgentPanel({ scheduledRunId = "" } = {}) {
 ` +
       `- Use memory_search when the user asks about prior context, previous decisions, preferences, recurring projects or topics, configurations, workflows, people/entities, or phrases such as "do you remember", "last time", "again", "as before", "my usual way", "你还记得", "之前", "上次", "还是按以前".
 ` +
+      `- If the user's request mentions a named tool, script, feature, workflow, or term you do not recognize or cannot resolve from the available tools and the current page (for example "开启讲解画笔", "run my usual script"), call memory_search BEFORE concluding it is unavailable or asking the user. It may be a saved script or workflow with a reusable path.
+` +
+      `- When you lack the context for the user's input (unclear references, unknown names, "that one", "the script I saved"), try memory_search with the user's own wording first.
+` +
+      `- If memory_search returns nothing, retry once with alternative wording (synonyms, the user's exact phrase, English/Chinese variants, single key terms) before giving up. Also consider saved scripts under /scripts in the VFS.
+` +
       `- You may also search memory for a complex or recurring task when prior decisions or preferences are likely to materially affect the result, but do not search merely because a request is long or non-trivial.
 ` +
       `- Write a concise search query with distinctive entities and likely retrieval phrases, such as project/topic names, websites, products, tools, people, error codes, symptoms, preferences, constraints, or decisions. Avoid vague queries such as only "last time".

@@ -155,13 +155,30 @@ export function scoreMemory(memory, query) {
   const distinctiveMatches = new Set([...matchedEntities, ...matchedKeywords].map(item => normalizeText(item))).size;
   const importance = Math.max(0, Math.min(1, Number(memory.importance) || 0));
 
+  // Subject hits: query terms (or Chinese bigrams) found inside the subject. Users usually
+  // refer to a memory by the name it was saved under, even when keywords use other wording.
+  const subjectTermBoost = Math.min(12, terms
+    .filter(term => term.length >= 2 && subject.includes(term))
+    .reduce((sum, term) => sum + (term.length >= 4 ? 5 : 3), 0));
+  const queryBigrams = chineseBigrams(query);
+  const subjectBigrams = chineseBigrams(memory.subject);
+  const sharedSubjectBigrams = [...queryBigrams].filter(item => subjectBigrams.has(item)).length;
+  // Most of the query's Chinese content sits inside the subject (e.g. "开启讲解画笔" vs "可复用讲解画笔脚本").
+  const bigramSubjectBoost = sharedSubjectBigrams >= 3 && sharedSubjectBigrams / queryBigrams.size >= 0.5 ? 6 : 0;
+  const subjectBoost = Math.max(subjectTermBoost, bigramSubjectBoost);
+  const contentCoverage = terms.length && memory.content
+    ? terms.filter(term => normalizeText(memory.content).includes(term)).length / terms.length
+    : 0;
+
   let score = exactSubjectPhrase * 12
     + matchedEntities.length * 8
     + matchedKeywords.length * 5
     + queryCoverage * 4
+    + contentCoverage * 1.5
     + bigramDice * 2
     + importance;
-  if (!matchedEntities.length && !matchedKeywords.length) score *= 0.35;
+  if (!matchedEntities.length && !matchedKeywords.length && subjectBoost < 6) score *= 0.35;
+  score += subjectBoost;
   if (distinctiveMatches >= 2) score += 5;
 
   return {
@@ -174,7 +191,8 @@ export function scoreMemory(memory, query) {
       bigramDice,
       importance,
       distinctiveBonus: distinctiveMatches >= 2 ? 5 : 0,
-      weakMatchPenalty: !matchedEntities.length && !matchedKeywords.length ? 0.35 : 1
+      subjectBoost,
+      weakMatchPenalty: !matchedEntities.length && !matchedKeywords.length && subjectBoost < 6 ? 0.35 : 1
     }
   };
 }

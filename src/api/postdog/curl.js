@@ -112,7 +112,26 @@ export function exportCurl(request) {
     if (header.enabled === false || !header.key) continue;
     lines.push(`  -H ${quoteShell(`${header.key}: ${header.value ?? ""}`)}`);
   }
-  if (request.body?.type && request.body.type !== "none" && request.body.text) {
+  const bodyType = request.body?.type || "none";
+  if (bodyType === "form") {
+    const params = new URLSearchParams();
+    for (const field of request.body.fields || []) {
+      if (field.enabled === false || !field.key) continue;
+      params.append(field.key, field.value ?? "");
+    }
+    const encoded = params.toString();
+    if (encoded) lines.push(`  --data-raw ${quoteShell(encoded)}`);
+  } else if (bodyType === "multipart") {
+    for (const field of request.body.fields || []) {
+      if (field.enabled === false || !field.key) continue;
+      if (field.kind === "file") {
+        const type = field.mimeType ? `;type=${field.mimeType}` : "";
+        lines.push(`  -F ${quoteShell(`${field.key}=@${field.fileName || "file"}${type}`)}`);
+      } else {
+        lines.push(`  -F ${quoteShell(`${field.key}=${field.value ?? ""}`)}`);
+      }
+    }
+  } else if (bodyType !== "none" && request.body?.text) {
     lines.push(`  --data-raw ${quoteShell(request.body.text)}`);
   }
   return lines.join(" \\\n");

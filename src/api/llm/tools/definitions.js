@@ -861,7 +861,7 @@ export const TOOLS = [
   },
   {
     name: "memory_search",
-    description: "Search built-in long-term memory when the user refers to earlier conversations, prior decisions, established preferences, recurring workflows, or asks whether you remember something. Search only when historical context could materially help. The search is local and lexical; write a concise query containing distinctive project names, products, people, error codes, decisions, symptoms, and likely alternative wording. Results must score at least 6. A zero-result response means no sufficiently relevant memory was found; continue normally and do not claim to remember.",
+    description: "Search built-in long-term memory when the user refers to earlier conversations, prior decisions, established preferences, recurring workflows, or asks whether you remember something. Search only when historical context could materially help. The search is local and lexical; also use it when the user names a tool, script, or workflow you cannot find elsewhere, or when you lack context for their request; use the user's own wording first and retry with alternative wording if empty; write a concise query containing distinctive project names, products, people, error codes, decisions, symptoms, and likely alternative wording. Results must score at least 6. A zero-result response means no sufficiently relevant memory was found; continue normally and do not claim to remember.",
     schema: {
       type: "object",
       properties: {
@@ -884,7 +884,7 @@ export const TOOLS = [
   },
   {
     name: "memory_save",
-    description: "Selectively save a durable long-term memory, or update an existing memory with the same scope, type, and subject. Use for explicit user preferences, corrections, stable decisions, recurring workflows, durable entity facts, and useful references. Do not save raw transcripts, secrets, temporary browser state, one-off task details, speculation, or facts readily derived from current code/page content. Choose a stable subject so repeated saves upsert instead of creating duplicates. Entities are specific named objects; keywords are alternative phrases, symptoms, actions, and use cases the user may later search for.",
+    description: "Selectively save a durable long-term memory, or update an existing memory with the same scope, type, and subject. Use for explicit user preferences, corrections, stable decisions, recurring workflows, durable entity facts, and useful references. Do not save raw transcripts, secrets, temporary browser state, one-off task details, speculation, or facts readily derived from current code/page content. Choose a stable subject so repeated saves upsert instead of creating duplicates. Entities are specific named objects; keywords are alternative phrases, symptoms, actions, and use cases the user may later search for; always include the exact names the user used for it (e.g. their name for a script or feature).",
     schema: {
       type: "object",
       properties: {
@@ -1113,7 +1113,7 @@ export const TOOLS = [
   },
   {
     name: "postdog_save_request",
-    description: "Create or update a Postdog API request. Scripts can read/write environment variables with postdog.env.get/set/unset; variables are referenced as {{name}} in URL, headers, query, and body. Built-in template functions include {{$guid()}}, {{$now()}}, and {{$timestamp()}}.",
+    description: "Create or update a Postdog API request. Scripts can use `postdog` (alias `$`): $.env.get/set/unset (set also accepts an object for batch updates), $.request.headers/query.set(k, v) or .set({ k: v }), $.request.body.set(obj), $.response.json(), $.test(name, passed); variables are referenced as {{name}} in URL, headers, query, and body. Built-in template functions include {{$guid()}}, {{$now()}}, and {{$timestamp()}}.",
     schema: {
       type: "object",
       properties: {

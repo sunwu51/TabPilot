@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+vi.mock("@sunwu51/camel-ui", async () => await import("../test/camelUiMock"));
+
 import { FileManager } from "./files";
 import { chromeStorageVfs as vfs } from "./utils/chromeStorageVfs";
 import { LocaleProvider } from "./i18n";
@@ -58,9 +60,10 @@ describe("file manager scripts", () => {
     fireEvent.click(await screen.findByRole("button", { name: /📁 scripts/ }));
     fireEvent.click(await screen.findByRole("button", { name: /📄 title.js/ }));
 
-    const picker = await screen.findByRole("combobox", { name: "运行于" });
     await screen.findByRole("option", { name: /MR 1/ });
-    expect(picker).toHaveValue("7");
+    // camel's Select is uncontrolled and re-mounts when its options change, so query it afresh
+    const picker = screen.getByRole("combobox", { name: "运行于" });
+    expect(picker).toHaveDisplayValue(/MR 1/);
     expect(screen.queryByRole("option", { name: /Extensions/ })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("textbox", { name: /参数 args/ }), { target: { value: '{"n":1}' } });

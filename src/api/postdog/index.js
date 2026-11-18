@@ -6,7 +6,8 @@ export const POSTDOG_ENVIRONMENTS_KEY = "postdogEnvironments";
 export const POSTDOG_ACTIVE_ENVIRONMENT_KEY = "postdogActiveEnvironmentId";
 export const POSTDOG_HISTORY_KEY = "postdogHistory";
 
-const MAX_HISTORY = 100;
+const MAX_HISTORY = 300;
+const MAX_HISTORY_PER_REQUEST = 30;
 
 export function newPostdogId(prefix) {
   const rand = Math.random().toString(36).slice(2, 7);
@@ -265,7 +266,15 @@ export async function appendPostdogHistory(entry) {
   const res = await chrome.storage.local.get({ [POSTDOG_HISTORY_KEY]: [] });
   const history = Array.isArray(res[POSTDOG_HISTORY_KEY]) ? res[POSTDOG_HISTORY_KEY] : [];
   const runId = String(entry?.runId || entry?.id || newPostdogId("pdh"));
-  const next = [{ ...entry, id: runId, runId, createdAt: Number(entry?.createdAt) || Date.now() }, ...history]
+  const created = { ...entry, id: runId, runId, createdAt: Number(entry?.createdAt) || Date.now() };
+  // Keep the newest N runs per request so a busy request cannot evict everyone else's history.
+  let sameRequest = 0;
+  const next = [created, ...history]
+    .filter(item => {
+      if (!created.requestId || item.requestId !== created.requestId) return true;
+      sameRequest += 1;
+      return sameRequest <= MAX_HISTORY_PER_REQUEST;
+    })
     .slice(0, MAX_HISTORY);
   await chrome.storage.local.set({ [POSTDOG_HISTORY_KEY]: next });
   return next[0];

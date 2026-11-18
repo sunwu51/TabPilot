@@ -1,7 +1,7 @@
 /* global chrome */
 /* eslint-disable react/prop-types, react-hooks/exhaustive-deps */
-import { Button } from "@sunwu51/camel-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "@sunwu51/camel-ui";
 import toast from "react-hot-toast";
 import {
   POSTDOG_ACTIVE_ENVIRONMENT_KEY,
@@ -11,260 +11,456 @@ import {
   POSTDOG_REQUESTS_KEY
 } from "../../api/postdog";
 import { formatJsonWithComments, parseJsonWithComments } from "../../api/postdog/json";
-import JsonCodeEditor from "./JsonCodeEditor";
+import { tr, useI18n } from "../../i18n";
+import CodeEditor from "./CodeEditor";
+import {
+  HeaderTable,
+  HistoryList,
+  JsonViewer,
+  StatusBadge,
+  KeyValueEditor,
+  Modal,
+  MultipartEditor
+} from "./PostdogParts";
+import { DEFAULT_USER_AGENT, formatDateTime, syncContentTypeHeader } from "./postdogUtils";
+import useAutosave from "./useAutosave";
+import { UiButton, UiInput, UiSelect } from "../ui/Controls";
 import "./postdog.css";
 
+const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+const BODY_TYPES = ["none", "json", "text", "form", "multipart"];
 const EMPTY_REQUEST = {
   name: "New Request",
   method: "GET",
   url: "",
   folderId: null,
-  headers: [],
+  headers: [{ key: "User-Agent", value: DEFAULT_USER_AGENT, enabled: true }],
   query: [],
   body: { type: "none", text: "", fields: [] },
   preScript: "",
   postScript: ""
 };
 const SIDEBAR_WIDTH_KEY = "postdogSidebarWidth";
-const DEFAULT_SIDEBAR_WIDTH = 230;
-const MIN_SIDEBAR_WIDTH = 180;
+const SPLIT_RATIO_KEY = "postdogSplitRatio";
+const COLLAPSED_FOLDERS_KEY = "postdogCollapsedFolders";
+const LAST_REQUEST_KEY = "postdogLastRequestId";
+const REQUEST_TAB_KEY = "postdogRequestTab";
+const DEFAULT_SIDEBAR_WIDTH = 250;
+const MIN_SIDEBAR_WIDTH = 190;
 const MAX_SIDEBAR_WIDTH = 520;
-const MAX_UPLOAD_FILE_BYTES = 5 * 1024 * 1024;
+
+const requestKey = id => `request:${id}`;
+const folderKey = id => `folder:${id}`;
+const envKey = id => `env:${id}`;
 
 export default function PostdogPanel() {
+  useI18n(); // re-render when the UI language changes
   const [folders, setFolders] = useState([]);
   const [requests, setRequests] = useState([]);
   const [environments, setEnvironments] = useState([]);
   const [activeEnvironmentId, setActiveEnvironmentId] = useState("");
-  const [selectedId, setSelectedId] = useState("");
-  const [draft, setDraft] = useState(EMPTY_REQUEST);
-  const [response, setResponse] = useState(null);
-  const [running, setRunning] = useState(false);
-  const [envDraft, setEnvDraft] = useState(null);
-  const [importText, setImportText] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [draft, setDraftState] = useState(null);
+  const [responses, setResponses] = useState({});
+  const [runningIds, setRunningIds] = useState(() => new Set());
+  const [requestTab, setRequestTab] = useState(() => readLocal(REQUEST_TAB_KEY, "params"));
   const [responseTab, setResponseTab] = useState("body");
-  const [requestTab, setRequestTab] = useState("headers");
-  const [envExpanded, setEnvExpanded] = useState(false);
-  const [collapsedFolders, setCollapsedFolders] = useState(() => new Set());
+  const [bodyView, setBodyView] = useState("tree");
   const [historyRuns, setHistoryRuns] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistoryRunId, setSelectedHistoryRunId] = useState("");
-  const [sidebarWidth, setSidebarWidth] = useState(() => readSavedSidebarWidth());
+  const [collapsedFolders, setCollapsedFolders] = useState(() => new Set(readJsonLocal(COLLAPSED_FOLDERS_KEY, [])));
+  const [search, setSearch] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(() => clamp(Number(readLocal(SIDEBAR_WIDTH_KEY, DEFAULT_SIDEBAR_WIDTH)), MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH));
+  const [splitRatio, setSplitRatio] = useState(() => clampRatio(Number(readLocal(SPLIT_RATIO_KEY, 0.5))));
+  const [envModalOpen, setEnvModalOpen] = useState(false);
+  const [folderModalId, setFolderModalId] = useState("");
+  const [curlModalOpen, setCurlModalOpen] = useState(false);
+
+  const draftRef = useRef(null);
+  const requestsRef = useRef([]);
+  const knownRef = useRef(new Map()); // entity key -> updatedAt we already have locally
+  const loadTimerRef = useRef(null);
   const importFileRef = useRef(null);
-  const sidebarDragRef = useRef(null);
-  const knownFolderIdsRef = useRef(new Set());
-  const foldersInitializedRef = useRef(false);
+  const splitRef = useRef(null);
+  const urlInputRef = useRef(null);
+  requestsRef.current = requests;
+
+  const autosave = useAutosave({
+    save: saveEntity,
+    onSaved: (key, result) => {
+      if (result?.updatedAt) knownRef.current.set(key, Number(result.updatedAt));
+    },
+    onError: (_key, error) => {
+      toast.error(`${tr("自动保存失败", "Autosave failed")}: ${error?.message || error}`, { id: "postdog-autosave-error" });
+    }
+  });
+  const autosaveRef = useRef(autosave);
+  autosaveRef.current = autosave;
+
+  // ---------------------------------------------------------------- loading / sync
 
   useEffect(() => {
-    void loadAll();
-  }, []);
-
-  useEffect(() => {
+    void loadAll({ initial: true });
     function handleStorageChange(changes, areaName) {
       if (areaName !== "local") return;
-      if (
-        changes[POSTDOG_FOLDERS_KEY] ||
-        changes[POSTDOG_REQUESTS_KEY] ||
-        changes[POSTDOG_ENVIRONMENTS_KEY] ||
-        changes[POSTDOG_ACTIVE_ENVIRONMENT_KEY] ||
-        changes[POSTDOG_HISTORY_KEY]
-      ) {
-        void loadAll();
+      if (changes[POSTDOG_HISTORY_KEY] && draftRef.current?.id) void loadHistory(draftRef.current.id);
+      if (changes[POSTDOG_FOLDERS_KEY] || changes[POSTDOG_REQUESTS_KEY] || changes[POSTDOG_ENVIRONMENTS_KEY] || changes[POSTDOG_ACTIVE_ENVIRONMENT_KEY]) {
+        clearTimeout(loadTimerRef.current);
+        loadTimerRef.current = setTimeout(() => { void loadAll(); }, 120);
       }
     }
-
+    function flushOnHide() {
+      if (document.visibilityState === "hidden") void autosaveRef.current.flushAll();
+    }
+    function flushOnUnload() {
+      void autosaveRef.current.flushAll();
+    }
     chrome.storage.onChanged.addListener(handleStorageChange);
-    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+    document.addEventListener("visibilitychange", flushOnHide);
+    window.addEventListener("beforeunload", flushOnUnload);
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+      document.removeEventListener("visibilitychange", flushOnHide);
+      window.removeEventListener("beforeunload", flushOnUnload);
+      clearTimeout(loadTimerRef.current);
+    };
   }, []);
 
-  useEffect(() => () => {
-    document.body.classList.remove("postdog-resizing-sidebar");
-    window.removeEventListener("mousemove", resizeSidebar);
-    window.removeEventListener("mouseup", stopSidebarResize);
-  }, []);
+  useEffect(() => {
+    function onKeyDown(event) {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void runRequest();
+      } else if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void autosaveRef.current.flushAll().then(() => toast.success(tr("已保存", "Saved"), { id: "postdog-saved", duration: 1000 }));
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   useEffect(() => {
-    if (!selectedId) {
-      setDraft(EMPTY_REQUEST);
-      return;
+    setSelectedHistoryRunId("");
+    void loadHistory(draft?.id);
+  }, [draft?.id]);
+
+  async function saveEntity(key, value) {
+    const [type] = key.split(":");
+    let res;
+    if (type === "request") {
+      res = await sendPostdog("save_request", { request: { ...value, name: String(value.name || "").trim() || "Untitled" } });
+    } else if (type === "folder") {
+      res = await sendPostdog("save_folder", { folder: { ...value, name: String(value.name || "").trim() || "Folder" } });
+    } else if (type === "env") {
+      res = await sendPostdog("save_environment", { environment: { ...value, name: String(value.name || "").trim() || "Environment" } });
+    } else {
+      throw new Error(`unknown entity ${key}`);
     }
-    const selected = requests.find(item => item.id === selectedId);
-    if (selected) {
-      setDraft(clone(selected));
-    }
-  }, [selectedId, requests]);
-
-  useEffect(() => {
-    const env = environments.find(item => item.id === activeEnvironmentId) || environments[0] || null;
-    setEnvDraft(env ? clone(env) : null);
-  }, [activeEnvironmentId, environments]);
-
-  useEffect(() => {
-    void loadHistoryForRequest(draft.id || selectedId);
-  }, [draft.id, selectedId]);
-
-  const grouped = useMemo(() => {
-    const byFolder = new Map();
-    for (const folder of folders) byFolder.set(folder.id, []);
-    const loose = [];
-    for (const request of requests) {
-      if (request.folderId && byFolder.has(request.folderId)) byFolder.get(request.folderId).push(request);
-      else loose.push(request);
-    }
-    return { byFolder, loose };
-  }, [folders, requests]);
-
-  function startSidebarResize(event) {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-    sidebarDragRef.current = { startX, startWidth, currentWidth: startWidth };
-    document.body.classList.add("postdog-resizing-sidebar");
-    window.addEventListener("mousemove", resizeSidebar);
-    window.addEventListener("mouseup", stopSidebarResize);
+    if (!res?.success) throw new Error(res?.error || "save failed");
+    return res.data;
   }
 
-  function resizeSidebar(event) {
-    const drag = sidebarDragRef.current;
-    if (!drag) return;
-    const next = clamp(drag.startWidth + event.clientX - drag.startX, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
-    drag.currentWidth = next;
-    setSidebarWidth(next);
+  /** Merge stored entities with local ones without clobbering unsaved/just-saved local edits. */
+  function mergeStored(storedList, keyOf, localList) {
+    const localById = new Map((localList || []).map(item => [item.id, item]));
+    return storedList.map(stored => {
+      const key = keyOf(stored.id);
+      const pending = autosaveRef.current.pending(key);
+      if (pending) return pending;
+      const local = localById.get(stored.id);
+      const known = knownRef.current.get(key);
+      if (local && known != null && Number(stored.updatedAt) <= known) return local;
+      knownRef.current.set(key, Number(stored.updatedAt) || 0);
+      return stored;
+    });
   }
 
-  function stopSidebarResize() {
-    const next = sidebarDragRef.current?.currentWidth;
-    if (next) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
-    sidebarDragRef.current = null;
-    document.body.classList.remove("postdog-resizing-sidebar");
-    window.removeEventListener("mousemove", resizeSidebar);
-    window.removeEventListener("mouseup", stopSidebarResize);
+  async function loadAll({ initial = false } = {}) {
+    try {
+      await loadAllUnsafe({ initial });
+      setLoadError("");
+    } catch (error) {
+      setLoadError(error?.message || String(error));
+    } finally {
+      setLoaded(true);
+    }
   }
 
-  async function loadAll() {
+  async function loadAllUnsafe({ initial = false } = {}) {
     const res = await sendPostdog("list_all");
     if (!res?.success) {
-      toast.error(res?.error || "加载 Postdog 失败");
+      throw new Error(res?.error || tr("加载 Postdog 失败", "Failed to load Postdog"));
+    }
+    const storedRequests = res.data.requests || [];
+
+    // Keep the open request in sync with external changes (AI tools, other tabs),
+    // but never overwrite what the user is typing.
+    const current = draftRef.current;
+    let nextDraft;
+    if (current?.id) {
+      const key = requestKey(current.id);
+      const stored = storedRequests.find(item => item.id === current.id);
+      if (!stored && !autosaveRef.current.hasPending(key)) {
+        nextDraft = null;
+      } else if (stored && !autosaveRef.current.hasPending(key) && Number(stored.updatedAt) > (knownRef.current.get(key) ?? 0)) {
+        nextDraft = clone(stored);
+      }
+    }
+
+    setFolders(prev => mergeStored(res.data.folders || [], folderKey, prev));
+    setEnvironments(prev => mergeStored(res.data.environments || [], envKey, prev));
+    setRequests(prev => mergeStored(storedRequests, requestKey, prev));
+    setActiveEnvironmentId(res.data.activeEnvironmentId || "");
+
+    if (nextDraft !== undefined) {
+      if (nextDraft) knownRef.current.set(requestKey(nextDraft.id), Number(nextDraft.updatedAt) || 0);
+      setDraft(nextDraft);
+    }
+    if (!draftRef.current) {
+      const lastId = initial ? readLocal(LAST_REQUEST_KEY, "") : "";
+      const target = storedRequests.find(item => item.id === lastId) || storedRequests[0];
+      if (target) {
+        knownRef.current.set(requestKey(target.id), Number(target.updatedAt) || 0);
+        setDraft(clone(target));
+      }
+    }
+  }
+
+  function setDraft(next) {
+    draftRef.current = next;
+    setDraftState(next);
+    if (next?.id) {
+      try { localStorage.setItem(LAST_REQUEST_KEY, next.id); } catch { /* ignore */ }
+      if (next.folderId) {
+        setCollapsedFolders(prev => {
+          if (!prev.has(next.folderId)) return prev;
+          const copy = new Set(prev);
+          copy.delete(next.folderId);
+          return copy;
+        });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- request editing
+
+  function updateDraft(patch) {
+    const current = draftRef.current;
+    if (!current) return;
+    const next = typeof patch === "function" ? patch(current) : { ...current, ...patch };
+    draftRef.current = next;
+    setDraftState(next);
+    setRequests(list => list.map(item => item.id === next.id ? next : item));
+    autosave.schedule(requestKey(next.id), next);
+  }
+
+  function updateBody(patch) {
+    updateDraft(current => {
+      const body = { type: "none", text: "", fields: [], ...(current.body || {}), ...patch };
+      const headers = patch.type && patch.type !== current.body?.type
+        ? syncContentTypeHeader(current.headers, patch.type)
+        : current.headers;
+      return { ...current, headers, body };
+    });
+  }
+
+  function selectRequest(id) {
+    if (draftRef.current?.id === id) return;
+    if (draftRef.current?.id) void autosave.flush(requestKey(draftRef.current.id));
+    const target = requestsRef.current.find(item => item.id === id);
+    if (!target) return;
+    if (!knownRef.current.has(requestKey(id))) knownRef.current.set(requestKey(id), Number(target.updatedAt) || 0);
+    setDraft(clone(target));
+  }
+
+  async function createRequest(folderId = null, base = null) {
+    const request = base ? { ...clone(base), id: undefined, name: `${base.name} copy` } : { ...clone(EMPTY_REQUEST), folderId };
+    const res = await sendPostdog("save_request", { request });
+    if (!res?.success) {
+      toast.error(res?.error || tr("创建失败", "Create failed"));
       return;
     }
-    const nextFolders = res.data.folders || [];
-    const nextFolderIds = new Set(nextFolders.map(folder => folder.id));
-    setFolders(nextFolders);
-    setCollapsedFolders(prev => {
-      if (!foldersInitializedRef.current) {
-        foldersInitializedRef.current = true;
-        return nextFolderIds;
-      }
-      const next = new Set([...prev].filter(id => nextFolderIds.has(id)));
+    knownRef.current.set(requestKey(res.data.id), Number(res.data.updatedAt) || 0);
+    if (draftRef.current?.id) void autosave.flush(requestKey(draftRef.current.id));
+    setRequests(list => [res.data, ...list.filter(item => item.id !== res.data.id)]);
+    setDraft(clone(res.data));
+    if (!base) {
+      setTimeout(() => urlInputRef.current?.focus(), 30);
+    }
+  }
+
+  async function deleteRequest(request) {
+    if (!request?.id || !window.confirm(tr(`删除请求「${request.name}」？`, `Delete request "${request.name}"?`))) return;
+    autosave.discard(requestKey(request.id));
+    const res = await sendPostdog("delete_request", { id: request.id });
+    if (!res?.success) {
+      toast.error(res?.error || tr("删除失败", "Delete failed"));
+      return;
+    }
+    const remaining = requestsRef.current.filter(item => item.id !== request.id);
+    setRequests(remaining);
+    setResponses(prev => {
+      const next = { ...prev };
+      delete next[request.id];
       return next;
     });
-    knownFolderIdsRef.current = nextFolderIds;
-    setRequests(res.data.requests || []);
-    setEnvironments(res.data.environments || []);
-    setActiveEnvironmentId(res.data.activeEnvironmentId || "");
-    if (!selectedId && res.data.requests?.[0]?.id) setSelectedId(res.data.requests[0].id);
-  }
-
-  async function createFolder() {
-    const name = window.prompt("文件夹名称", "API");
-    if (!name) return;
-    const res = await sendPostdog("save_folder", { folder: { name } });
-    if (res?.success) {
-      toast.success("文件夹已创建");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "创建失败");
+    if (draftRef.current?.id === request.id) {
+      const sameFolder = remaining.find(item => item.folderId === request.folderId);
+      setDraft(sameFolder || remaining[0] ? clone(sameFolder || remaining[0]) : null);
     }
-  }
-
-  async function saveFolderScript(folder, patch) {
-    const res = await sendPostdog("save_folder", { folder: { ...folder, ...patch } });
-    if (res?.success) {
-      setFolders(prev => prev.map(item => item.id === res.data.id ? res.data : item));
-      toast.success("文件夹脚本已保存");
-    } else {
-      toast.error(res?.error || "保存文件夹脚本失败");
-    }
-  }
-
-  async function deleteFolder(folder) {
-    if (!folder?.id || !window.confirm(`删除文件夹「${folder.name}」以及里面的所有请求？`)) return;
-    const res = await sendPostdog("delete_folder", { id: folder.id });
-    if (res?.success) {
-      if (draft.folderId === folder.id) {
-        setSelectedId("");
-        setResponse(null);
-        setSelectedHistoryRunId("");
-      }
-      toast.success(`文件夹已删除${res.data?.removedRequests ? `，同时删除 ${res.data.removedRequests} 个请求` : ""}`);
-      await loadAll();
-    } else {
-      toast.error(res?.error || "删除文件夹失败");
-    }
-  }
-
-  async function createRequest(folderId = null) {
-    const request = { ...EMPTY_REQUEST, folderId, name: "New Request" };
-    const res = await sendPostdog("save_request", { request });
-    if (res?.success) {
-      setResponse(null);
-      setSelectedHistoryRunId("");
-      setSelectedId(res.data.id);
-      toast.success("请求已创建");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "创建失败");
-    }
-  }
-
-  async function saveRequest() {
-    const res = await sendPostdog("save_request", { request: draft });
-    if (res?.success) {
-      setSelectedId(res.data.id);
-      toast.success("请求已保存");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "保存失败");
-    }
+    toast.success(tr("请求已删除", "Request deleted"));
   }
 
   async function runRequest() {
-    setRunning(true);
+    const current = draftRef.current;
+    if (!current?.id) return;
+    if (!String(current.url || "").trim()) {
+      toast.error(tr("请先填写 URL", "Enter a URL first"));
+      urlInputRef.current?.focus();
+      return;
+    }
+    const id = current.id;
+    if (runningIds.has(id)) return;
+    setRunningIds(prev => new Set(prev).add(id));
     try {
-      const saved = await sendPostdog("save_request", { request: draft });
-      if (!saved?.success) {
-        toast.error(saved?.error || "保存失败");
+      await autosave.flush(requestKey(id));
+      if (autosave.hasPending(requestKey(id))) {
+        toast.error(tr("请求保存失败，未发送", "Could not save the request, not sent"));
         return;
       }
-      setSelectedId(saved.data.id);
-      const res = await sendPostdog("run_request", { id: saved.data.id });
-      if (res?.success) {
-        setResponse(res.data);
-        setResponseTab("body");
+      const res = await sendPostdog("run_request", { id });
+      if (!res?.success) {
+        toast.error(res?.error || tr("执行失败", "Run failed"));
+        return;
+      }
+      setResponses(prev => ({ ...prev, [id]: res.data }));
+      const scriptError = (res.data.logs || []).find(log => log.level === "error");
+      if (draftRef.current?.id === id) {
         setSelectedHistoryRunId(res.data.runId || "");
-        toast.success(`完成 ${res.data.response?.status || ""}`);
-        await loadAll();
-        await loadHistoryForRequest(saved.data.id);
-      } else {
-        toast.error(res?.error || "执行失败");
+        setResponseTab(tab => (scriptError ? "logs" : tab === "history" ? "body" : tab));
+        void loadHistory(id);
+      }
+      if (scriptError) {
+        toast.error(`${tr("脚本出错", "Script error")} (${scriptError.phase}): ${scriptError.message}`, { duration: 6000 });
       }
     } finally {
-      setRunning(false);
+      setRunningIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   }
 
-  async function deleteRequest() {
-    if (!draft.id || !window.confirm(`删除请求「${draft.name}」？`)) return;
-    const res = await sendPostdog("delete_request", { id: draft.id });
-    if (res?.success) {
-      toast.success("请求已删除");
-      setSelectedId("");
-      setResponse(null);
-      setSelectedHistoryRunId("");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "删除失败");
+  async function exportCurrentCurl() {
+    const current = draftRef.current;
+    if (!current) return;
+    const res = await sendPostdog("export_curl", { request: current });
+    if (!res?.success) {
+      toast.error(res?.error || tr("复制失败", "Copy failed"));
+      return;
     }
+    await copyText(res.data.text);
+    toast.success(activeEnvironment
+      ? tr(`curl 已复制（已代入环境「${activeEnvironment.name}」的变量）`, `curl copied (variables from "${activeEnvironment.name}" applied)`)
+      : tr("curl 已复制", "curl copied"));
+  }
+
+  function beautifyRequestJson() {
+    try {
+      updateBody({ text: formatJsonWithComments(draftRef.current?.body?.text || "", 2) });
+    } catch (error) {
+      toast.error(error?.message || tr("JSON 格式错误", "Invalid JSON"));
+    }
+  }
+
+  // ---------------------------------------------------------------- history
+
+  async function loadHistory(requestId) {
+    const id = String(requestId || "").trim();
+    if (!id) {
+      setHistoryRuns([]);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const res = await sendPostdog("list_history", { requestId: id });
+      if (res?.success && draftRef.current?.id === id) setHistoryRuns(res.data || []);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function openHistoryRun(runId) {
+    const id = draftRef.current?.id;
+    const res = await sendPostdog("get_history_run", { runId });
+    if (!res?.success || !res.data) {
+      toast.error(res?.error || tr("历史记录不存在", "History run not found"));
+      return;
+    }
+    setSelectedHistoryRunId(runId);
+    if (id) {
+      setResponses(prev => ({
+        ...prev,
+        [id]: {
+          runId: res.data.runId || res.data.id,
+          request: res.data.request,
+          response: res.data.response,
+          durationMs: res.data.durationMs,
+          tests: res.data.tests || {},
+          logs: res.data.logs || [],
+          historyCreatedAt: res.data.createdAt
+        }
+      }));
+    }
+    setResponseTab("body");
+  }
+
+  // ---------------------------------------------------------------- folders
+
+  async function createFolder() {
+    const res = await sendPostdog("save_folder", { folder: { name: tr("新文件夹", "New Folder") } });
+    if (!res?.success) {
+      toast.error(res?.error || tr("创建失败", "Create failed"));
+      return;
+    }
+    knownRef.current.set(folderKey(res.data.id), Number(res.data.updatedAt) || 0);
+    setFolders(list => [res.data, ...list.filter(item => item.id !== res.data.id)]);
+    setFolderModalId(res.data.id);
+  }
+
+  function updateFolder(folder) {
+    setFolders(list => list.map(item => item.id === folder.id ? folder : item));
+    autosave.schedule(folderKey(folder.id), folder);
+  }
+
+  async function deleteFolder(folder) {
+    if (!folder?.id) return;
+    const count = requestsRef.current.filter(item => item.folderId === folder.id).length;
+    const message = count
+      ? tr(`删除文件夹「${folder.name}」以及里面的 ${count} 个请求？`, `Delete folder "${folder.name}" and its ${count} request(s)?`)
+      : tr(`删除文件夹「${folder.name}」？`, `Delete folder "${folder.name}"?`);
+    if (!window.confirm(message)) return;
+    autosave.discard(folderKey(folder.id));
+    const res = await sendPostdog("delete_folder", { id: folder.id });
+    if (!res?.success) {
+      toast.error(res?.error || tr("删除文件夹失败", "Failed to delete folder"));
+      return;
+    }
+    setFolderModalId("");
+    setFolders(list => list.filter(item => item.id !== folder.id));
+    const remaining = requestsRef.current.filter(item => item.folderId !== folder.id);
+    for (const item of requestsRef.current) {
+      if (item.folderId === folder.id) autosave.discard(requestKey(item.id));
+    }
+    setRequests(remaining);
+    if (draftRef.current?.folderId === folder.id) setDraft(remaining[0] ? clone(remaining[0]) : null);
+    toast.success(tr("文件夹已删除", "Folder deleted"));
   }
 
   function toggleFolder(folderId) {
@@ -272,135 +468,70 @@ export default function PostdogPanel() {
       const next = new Set(prev);
       if (next.has(folderId)) next.delete(folderId);
       else next.add(folderId);
+      try { localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
       return next;
     });
   }
 
-  function selectRequest(id) {
-    setResponse(null);
-    setSelectedHistoryRunId("");
-    setSelectedId(id);
-  }
-
-  async function loadHistoryForRequest(requestId) {
-    const id = String(requestId || "").trim();
-    if (!id) {
-      setHistoryRuns([]);
-      setSelectedHistoryRunId("");
-      return;
-    }
-    setHistoryLoading(true);
-    try {
-      const res = await sendPostdog("list_history", { requestId: id });
-      if (res?.success) setHistoryRuns(res.data || []);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
-
-  async function openHistoryRun(runId) {
-    const res = await sendPostdog("get_history_run", { runId });
-    if (!res?.success || !res.data) {
-      toast.error(res?.error || "历史记录不存在");
-      return;
-    }
-    setSelectedHistoryRunId(runId);
-    setResponse({
-      runId: res.data.runId || res.data.id,
-      request: res.data.request,
-      response: res.data.response,
-      durationMs: res.data.durationMs,
-      tests: res.data.tests || {},
-      logs: res.data.logs || [],
-      historyCreatedAt: res.data.createdAt
-    });
-    setResponseTab("body");
-  }
+  // ---------------------------------------------------------------- environments
 
   async function createEnvironment() {
-    const name = window.prompt("环境名称", "local");
-    if (!name) return;
-    const res = await sendPostdog("save_environment", { environment: { name, variables: [] } });
-    if (res?.success) {
-      setActiveEnvironmentId(res.data.id);
-      await sendPostdog("set_active_environment", { id: res.data.id });
-      toast.success("环境已创建");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "创建环境失败");
+    const res = await sendPostdog("save_environment", { environment: { name: tr("新环境", "New Environment"), variables: [] } });
+    if (!res?.success) {
+      toast.error(res?.error || tr("创建环境失败", "Failed to create environment"));
+      return null;
     }
+    knownRef.current.set(envKey(res.data.id), Number(res.data.updatedAt) || 0);
+    setEnvironments(list => [res.data, ...list.filter(item => item.id !== res.data.id)]);
+    if (!activeEnvironmentId) await switchEnvironment(res.data.id);
+    return res.data;
   }
 
-  async function saveEnvironment() {
-    if (!envDraft) return;
-    const res = await sendPostdog("save_environment", { environment: envDraft });
-    if (res?.success) {
-      toast.success("环境已保存");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "保存环境失败");
+  function updateEnvironment(env) {
+    setEnvironments(list => list.map(item => item.id === env.id ? env : item));
+    autosave.schedule(envKey(env.id), env);
+  }
+
+  async function deleteEnvironment(env) {
+    if (!env?.id || !window.confirm(tr(`删除环境「${env.name}」？`, `Delete environment "${env.name}"?`))) return;
+    autosave.discard(envKey(env.id));
+    const res = await sendPostdog("delete_environment", { id: env.id });
+    if (!res?.success) {
+      toast.error(res?.error || tr("删除失败", "Delete failed"));
+      return;
     }
+    setEnvironments(list => list.filter(item => item.id !== env.id));
+    await loadAll();
   }
 
   async function switchEnvironment(id) {
     setActiveEnvironmentId(id);
-    await sendPostdog("set_active_environment", { id });
+    const res = await sendPostdog("set_active_environment", { id });
+    if (!res?.success) toast.error(res?.error || tr("切换环境失败", "Failed to switch environment"));
   }
 
-  async function importCurlText() {
-    if (!importText.trim()) return;
-    const res = await sendPostdog("import_curl", { text: importText, folderId: draft.folderId });
-    if (res?.success) {
-      setSelectedId(res.data.id);
-      setImportText("");
-      toast.success("curl 已导入");
-      await loadAll();
-    } else {
-      toast.error(res?.error || "导入失败");
-    }
-  }
+  // ---------------------------------------------------------------- import / export
 
-  async function exportCurrentCurl() {
-    const res = await sendPostdog("export_curl", { request: draft });
+  async function importCurlText(text, folderId) {
+    if (!String(text || "").trim()) return false;
+    const res = await sendPostdog("import_curl", { text, folderId: folderId || null });
     if (!res?.success) {
-      toast.error(res?.error || "复制失败");
-      return;
+      toast.error(res?.error || tr("导入失败", "Import failed"));
+      return false;
     }
-    await copyText(res.data.text);
-    toast.success("curl 已复制");
+    knownRef.current.set(requestKey(res.data.id), Number(res.data.updatedAt) || 0);
+    if (draftRef.current?.id) void autosave.flush(requestKey(draftRef.current.id));
+    setRequests(list => [res.data, ...list.filter(item => item.id !== res.data.id)]);
+    setDraft(clone(res.data));
+    toast.success(tr("curl 已导入", "curl imported"));
+    return true;
   }
-
-  async function copyResponseBody() {
-    const text = response?.response?.bodyText || "";
-    if (!text) {
-      toast.error("没有可复制的 response body");
-      return;
-    }
-    await copyText(text);
-    toast.success("response body 已复制");
-  }
-
-  const requestBodyJson = useMemo(() => {
-    if (draft.body?.type !== "json" || !draft.body?.text?.trim()) return null;
-    return parseJsonForView(draft.body.text);
-  }, [draft.body?.type, draft.body?.text]);
-
-  const responseBodyJson = useMemo(() => {
-    if (!response?.response) return null;
-    if (response.response.bodyKind === "binary") return null;
-    if (response.response.bodyJson != null) return { ok: true, value: response.response.bodyJson };
-    if (!response.response.bodyText) return null;
-    return parseJsonForView(response.response.bodyText);
-  }, [response]);
-
-  const responseStatusClass = getStatusClass(response?.response?.status);
-  const requestBodyType = draft.body?.type || "none";
-  const requestBodyText = draft.body?.text || "";
 
   async function exportJson() {
+    await autosave.flushAll();
     const res = await sendPostdog("export_json");
     if (res?.success) downloadText(`postdog-${formatDate(new Date())}.json`, res.data.text, "application/json;charset=utf-8");
-    else toast.error(res?.error || "导出失败");
+    else toast.error(res?.error || tr("导出失败", "Export failed"));
   }
 
   async function importJsonFile(file) {
@@ -408,462 +539,866 @@ export default function PostdogPanel() {
     try {
       const text = await file.text();
       const res = await sendPostdog("import_json", { text });
-      if (!res?.success) throw new Error(res?.error || "导入失败");
-      toast.success("Postdog JSON 已导入");
+      if (!res?.success) throw new Error(res?.error || tr("导入失败", "Import failed"));
+      toast.success(tr("Postdog JSON 已导入", "Postdog JSON imported"));
       await loadAll();
     } catch (error) {
-      toast.error(error?.message || "导入失败");
+      toast.error(error?.message || tr("导入失败", "Import failed"));
     } finally {
       if (importFileRef.current) importFileRef.current.value = "";
     }
   }
 
-  function downloadResponseFile() {
-    const file = response?.response?.download;
+  // ---------------------------------------------------------------- layout drag
+
+  function startSidebarResize(event) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    let latest = startWidth;
+    document.body.classList.add("pd-resizing-x");
+    function move(moveEvent) {
+      latest = clamp(startWidth + moveEvent.clientX - startX, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
+      setSidebarWidth(latest);
+    }
+    function up() {
+      try { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(latest)); } catch { /* ignore */ }
+      document.body.classList.remove("pd-resizing-x");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    }
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  function startSplitResize(event) {
+    event.preventDefault();
+    const container = splitRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const vertical = getComputedStyle(container).flexDirection === "column";
+    let latest = splitRatio;
+    document.body.classList.add(vertical ? "pd-resizing-y" : "pd-resizing-x");
+    function move(moveEvent) {
+      latest = clampRatio(vertical
+        ? (moveEvent.clientY - rect.top) / rect.height
+        : (moveEvent.clientX - rect.left) / rect.width);
+      setSplitRatio(latest);
+    }
+    function up() {
+      try { localStorage.setItem(SPLIT_RATIO_KEY, String(latest)); } catch { /* ignore */ }
+      document.body.classList.remove("pd-resizing-x", "pd-resizing-y");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    }
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  // ---------------------------------------------------------------- derived data
+
+  const activeEnvironment = environments.find(item => item.id === activeEnvironmentId) || null;
+  const envVars = useMemo(() => {
+    const out = {};
+    for (const item of activeEnvironment?.variables || []) {
+      if (item.enabled !== false && item.key) out[item.key] = item.value;
+    }
+    return out;
+  }, [activeEnvironment]);
+
+  const searchText = search.trim().toLowerCase();
+  const tree = useMemo(() => {
+    const matches = request => !searchText || `${request.name} ${request.method} ${request.url}`.toLowerCase().includes(searchText);
+    const folderIds = new Set(folders.map(folder => folder.id));
+    const byFolder = new Map(folders.map(folder => [folder.id, []]));
+    const loose = [];
+    for (const request of requests) {
+      if (!matches(request)) continue;
+      if (request.folderId && folderIds.has(request.folderId)) byFolder.get(request.folderId).push(request);
+      else loose.push(request);
+    }
+    const visibleFolders = folders.filter(folder => !searchText || byFolder.get(folder.id).length > 0 || folder.name.toLowerCase().includes(searchText));
+    return { byFolder, loose, visibleFolders };
+  }, [folders, requests, searchText]);
+
+  const currentFolder = draft?.folderId ? folders.find(item => item.id === draft.folderId) : null;
+  const currentResponse = draft?.id ? responses[draft.id] : null;
+  const running = draft?.id ? runningIds.has(draft.id) : false;
+  const bodyType = draft?.body?.type || "none";
+  const bodyText = draft?.body?.text || "";
+  const jsonBodyError = useMemo(() => {
+    if (bodyType !== "json" || !bodyText.trim()) return "";
+    // Template placeholders like {{id}} (unquoted) are valid after substitution.
+    try {
+      parseJsonWithComments(bodyText.replace(/\{\{[^{}]+\}\}/g, "0"));
+      return "";
+    } catch (error) {
+      return error?.message || "JSON";
+    }
+  }, [bodyType, bodyText]);
+
+  const urlPreview = useMemo(() => buildUrlPreview(draft?.url || "", draft?.query || [], envVars), [draft?.url, draft?.query, envVars]);
+  const folderModal = folderModalId ? folders.find(item => item.id === folderModalId) : null;
+
+  function changeRequestTab(tab) {
+    setRequestTab(tab);
+    try { localStorage.setItem(REQUEST_TAB_KEY, tab); } catch { /* ignore */ }
+  }
+
+  // ---------------------------------------------------------------- render
+
+  return (
+    <div className="pd-page" style={{ "--pd-sidebar-width": `${sidebarWidth}px` }}>
+      <aside className="pd-sidebar">
+        <div className="pd-brand">
+          <span className="pd-brand-logo">🐶</span>
+          <strong>Postdog</strong>
+          <SaveStatus status={autosave.status} />
+        </div>
+        <div className="pd-side-actions">
+          <UiButton variant="primary" onClick={() => createRequest(draft?.folderId || null)}>+ {tr("请求", "Request")}</UiButton>
+          <UiButton variant="neutral" onClick={createFolder}>+ {tr("文件夹", "Folder")}</UiButton>
+          <UiButton variant="neutral" onClick={() => setCurlModalOpen(true)}>{tr("导入 curl", "Import curl")}</UiButton>
+        </div>
+        <div className="pd-search">
+          <UiInput value={search} onChange={setSearch} placeholder={tr("搜索名称 / URL", "Search name / URL")} />
+          {search && <button type="button" className="pd-icon-button" onClick={() => setSearch("")}>×</button>}
+        </div>
+        <div className="pd-tree">
+          {tree.visibleFolders.map(folder => {
+            const children = tree.byFolder.get(folder.id) || [];
+            const collapsed = !searchText && collapsedFolders.has(folder.id);
+            const hasScripts = !!(folder.preScript?.trim() || folder.postScript?.trim());
+            return (
+              <div key={folder.id} className="pd-folder">
+                <div className="pd-folder-row" onDoubleClick={() => setFolderModalId(folder.id)}>
+                  <button type="button" className="pd-folder-toggle" onClick={() => toggleFolder(folder.id)} title={folder.name}>
+                    <span className={`pd-chevron${collapsed ? "" : " open"}`}>▸</span>
+                    <span className="pd-folder-icon">{collapsed ? "📁" : "📂"}</span>
+                    <strong>{folder.name}</strong>
+                    <span className="pd-count">{children.length}</span>
+                  </button>
+                  <div className="pd-row-actions">
+                    <button type="button" className="pd-icon-button" onClick={() => createRequest(folder.id)} title={tr("在此文件夹新建请求", "New request in folder")}>+</button>
+                    <button type="button" className={`pd-icon-button${hasScripts ? " has-dot" : ""}`} onClick={() => setFolderModalId(folder.id)} title={tr("文件夹设置与脚本", "Folder settings & scripts")}>⚙</button>
+                    <button type="button" className="pd-icon-button danger" onClick={() => deleteFolder(folder)} title={tr("删除文件夹", "Delete folder")}>×</button>
+                  </div>
+                </div>
+                {!collapsed && (
+                  <div className="pd-folder-children">
+                    {children.length === 0 && <div className="pd-tree-empty">{tr("空文件夹", "Empty folder")}</div>}
+                    {children.map(request => (
+                      <RequestItem key={request.id} request={request} selected={draft?.id === request.id} running={runningIds.has(request.id)} onSelect={selectRequest} onDuplicate={req => createRequest(req.folderId, req)} onDelete={deleteRequest} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {tree.loose.map(request => (
+            <RequestItem key={request.id} request={request} selected={draft?.id === request.id} running={runningIds.has(request.id)} onSelect={selectRequest} onDuplicate={req => createRequest(req.folderId, req)} onDelete={deleteRequest} />
+          ))}
+          {loaded && requests.length === 0 && folders.length === 0 && (
+            <div className="pd-tree-empty">{tr("还没有请求，点击上方「+ 请求」开始", "No requests yet. Click \"+ Request\" to start.")}</div>
+          )}
+          {searchText && tree.loose.length === 0 && tree.visibleFolders.length === 0 && (
+            <div className="pd-tree-empty">{tr("没有匹配的请求", "No matching requests")}</div>
+          )}
+        </div>
+        <div className="pd-side-footer">
+          <button type="button" className="pd-link-button" onClick={() => importFileRef.current?.click()}>{tr("导入 JSON", "Import JSON")}</button>
+          <button type="button" className="pd-link-button" onClick={exportJson}>{tr("导出 JSON", "Export JSON")}</button>
+          <input ref={importFileRef} type="file" accept="application/json,.json" hidden onChange={e => importJsonFile(e.target.files?.[0])} />
+        </div>
+      </aside>
+      <div className="pd-sidebar-resizer" role="separator" aria-orientation="vertical" title={tr("拖拽调整宽度", "Drag to resize")} onMouseDown={startSidebarResize} />
+
+      <main className="pd-main">
+        <header className="pd-topbar">
+          {draft ? (
+            <div className="pd-title-group">
+              <UiInput
+                className="pd-name-input"
+                value={draft.name}
+                onChange={name => updateDraft({ name })}
+                placeholder={tr("请求名称", "Request name")}
+              />
+              <UiSelect
+                className="pd-folder-select"
+                ariaLabel={tr("所属文件夹", "Folder")}
+                value={draft.folderId || ""}
+                options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...folders.map(folder => ({ value: folder.id, label: `📁 ${folder.name}` }))]}
+                onChange={value => updateDraft({ folderId: value || null })}
+              />
+            </div>
+          ) : <div className="pd-title-group" />}
+          <div className="pd-env-group">
+            <span className="pd-env-label">{tr("环境", "Env")}</span>
+            <UiSelect
+              className="pd-env-select"
+              ariaLabel={tr("环境", "Environment")}
+              value={activeEnvironmentId}
+              options={[{ value: "", label: tr("无环境", "No environment") }, ...environments.map(env => ({ value: env.id, label: env.name }))]}
+              onChange={switchEnvironment}
+            />
+            <UiButton size="md" variant="neutral" onClick={() => setEnvModalOpen(true)} title={tr("管理环境变量", "Manage environment variables")}>
+              {tr("变量", "Variables")}{activeEnvironment ? ` (${activeEnvironment.variables.length})` : ""}
+            </UiButton>
+          </div>
+        </header>
+
+        {!draft ? (
+          <div className="pd-empty-state">
+            <div className="pd-empty-icon">🐶</div>
+            <div>
+              {!loaded ? tr("加载中...", "Loading...")
+                : loadError ? `${tr("加载失败", "Failed to load")}: ${loadError}`
+                : tr("选择左侧的请求，或新建一个", "Pick a request on the left, or create one")}
+            </div>
+            {loaded && loadError && (
+              <div className="pd-empty-actions">
+                <UiButton variant="primary" onClick={() => loadAll({ initial: true })}>{tr("重试", "Retry")}</UiButton>
+              </div>
+            )}
+            {loaded && !loadError && (
+              <div className="pd-empty-actions">
+                <UiButton variant="primary" onClick={() => createRequest(null)}>+ {tr("新建请求", "New request")}</UiButton>
+                <UiButton variant="neutral" onClick={() => setCurlModalOpen(true)}>{tr("导入 curl", "Import curl")}</UiButton>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <section className="pd-urlbar">
+              <div className="pd-url-group">
+                <UiSelect
+                  className={`pd-method-select method-${draft.method}`}
+                  ariaLabel="Method"
+                  value={draft.method}
+                  options={METHODS.map(method => ({ value: method, label: method }))}
+                  onChange={method => updateDraft({ method })}
+                />
+                <input
+                  ref={urlInputRef}
+                  className="pd-url-input"
+                  value={draft.url}
+                  onChange={e => updateDraft({ url: e.target.value })}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); void runRequest(); } }}
+                  placeholder="https://api.example.com/items/{{objId}}"
+                  spellCheck={false}
+                />
+              </div>
+              <UiButton size="md" variant="primary" onClick={runRequest} disabled={running} title="Ctrl/⌘ + Enter">
+                {running ? tr("发送中…", "Sending…") : tr("发送", "Send")}
+              </UiButton>
+              <UiButton size="md" variant="neutral" onClick={exportCurrentCurl} title={tr("复制为 curl（会代入当前环境变量）", "Copy as curl (with environment variables applied)")}>
+                {tr("复制 curl", "Copy curl")}
+              </UiButton>
+              <button type="button" className="pd-icon-button danger pd-delete-request" onClick={() => deleteRequest(draft)} title={tr("删除当前请求", "Delete this request")}>🗑</button>
+            </section>
+            {urlPreview && (
+              <div className="pd-url-preview" title={tr("代入环境变量后的实际 URL", "Resolved URL with environment variables")}>
+                <span className="pd-url-preview-arrow">→</span>
+                {urlPreview.map((part, index) => (
+                  <span key={index} className={part.kind === "missing" ? "missing" : part.kind === "var" ? "var" : ""} title={part.kind === "missing" ? tr(`变量 ${part.name} 未定义`, `Variable ${part.name} is not defined`) : undefined}>
+                    {part.text}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="pd-split" ref={splitRef} style={{ "--pd-split": `${(splitRatio * 100).toFixed(2)}%` }}>
+              <section className="pd-pane pd-request-pane">
+                <div className="pd-tabs">
+                  <TabButton active={requestTab === "params"} onClick={() => changeRequestTab("params")} label="Params" count={countEnabled(draft.query)} />
+                  <TabButton active={requestTab === "headers"} onClick={() => changeRequestTab("headers")} label="Headers" count={countEnabled(draft.headers)} />
+                  <TabButton active={requestTab === "body"} onClick={() => changeRequestTab("body")} label="Body" badge={bodyType !== "none" ? bodyType : ""} />
+                  <TabButton active={requestTab === "pre"} onClick={() => changeRequestTab("pre")} label="Pre Script" dot={!!draft.preScript?.trim()} />
+                  <TabButton active={requestTab === "post"} onClick={() => changeRequestTab("post")} label="Post Script" dot={!!draft.postScript?.trim()} />
+                </div>
+                <div className="pd-pane-body">
+                  {requestTab === "params" && (
+                    <div className="pd-scroll">
+                      <KeyValueEditor rows={draft.query} onChange={query => updateDraft({ query })} />
+                      <p className="pd-help">{tr("参数会追加到 URL 上，支持 {{变量}}。", "Params are appended to the URL. {{variables}} are supported.")}</p>
+                    </div>
+                  )}
+                  {requestTab === "headers" && (
+                    <div className="pd-scroll">
+                      <KeyValueEditor rows={draft.headers} onChange={headers => updateDraft({ headers })} secretToggle maskSecrets headerSuggestions keyPlaceholder="Header" />
+                      <p className="pd-help">{tr("选择 Body 类型时会自动添加 / 更新 Content-Type（你手写的值不会被改）。勾选「敏感」后，该值在日志与历史记录里显示为 ***。", "Choosing a Body type adds / updates Content-Type (values you typed yourself are kept). Secret values are shown as *** in logs and history.")}</p>
+                    </div>
+                  )}
+                  {requestTab === "body" && (
+                    <div className="pd-body-editor">
+                      <div className="pd-body-toolbar">
+                        <div className="pd-segmented">
+                          {BODY_TYPES.map(type => (
+                            <button key={type} type="button" className={bodyType === type ? "active" : ""} onClick={() => updateBody({ type })}>{type}</button>
+                          ))}
+                        </div>
+                        {bodyType === "json" && (
+                          <>
+                            {jsonBodyError
+                              ? <span className="pd-json-status error" title={jsonBodyError}>✕ {tr("JSON 无效", "Invalid JSON")}</span>
+                              : bodyText.trim() ? <span className="pd-json-status ok">✓ JSON</span> : null}
+                            <UiButton variant="neutral" onClick={beautifyRequestJson}>{tr("格式化", "Format")}</UiButton>
+                          </>
+                        )}
+                      </div>
+                      {bodyType === "none" ? (
+                        <div className="pd-empty">{tr("该请求没有 body", "This request has no body")}</div>
+                      ) : bodyType === "form" ? (
+                        <div className="pd-scroll"><KeyValueEditor rows={draft.body?.fields || []} onChange={fields => updateBody({ fields })} /></div>
+                      ) : bodyType === "multipart" ? (
+                        <div className="pd-scroll"><MultipartEditor rows={draft.body?.fields || []} onChange={fields => updateBody({ fields })} /></div>
+                      ) : (
+                        <CodeEditor
+                          docKey={`${draft.id}:body`}
+                          language={bodyType === "json" ? "json" : "text"}
+                          value={bodyText}
+                          onChange={text => updateBody({ text })}
+                          placeholder={bodyType === "json"
+                            ? '{\n  // comments are removed before send\n  "request_id": "{{$uuid()}}",\n  "created_at": "{{$now()}}",\n  "name": "{{name}}"\n}'
+                            : "raw text body, supports {{variables}}"}
+                        />
+                      )}
+                    </div>
+                  )}
+                  {(requestTab === "pre" || requestTab === "post") && (
+                    <div className="pd-script-editor">
+                      <ScriptHint
+                        phase={requestTab}
+                        folder={currentFolder}
+                        onOpenFolder={() => currentFolder && setFolderModalId(currentFolder.id)}
+                      />
+                      <CodeEditor
+                        docKey={`${draft.id}:${requestTab}`}
+                        language="javascript"
+                        value={requestTab === "pre" ? draft.preScript || "" : draft.postScript || ""}
+                        onChange={text => updateDraft(requestTab === "pre" ? { preScript: text } : { postScript: text })}
+                        placeholder={requestTab === "pre" ? PRE_SCRIPT_PLACEHOLDER : POST_SCRIPT_PLACEHOLDER}
+                      />
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <div className="pd-split-resizer" role="separator" onMouseDown={startSplitResize} title={tr("拖拽调整大小", "Drag to resize")} />
+
+              <section className="pd-pane pd-response-pane">
+                <ResponsePane
+                  response={currentResponse}
+                  running={running}
+                  tab={responseTab}
+                  onTab={setResponseTab}
+                  bodyView={bodyView}
+                  onBodyView={setBodyView}
+                  historyRuns={historyRuns}
+                  historyLoading={historyLoading}
+                  selectedHistoryRunId={selectedHistoryRunId}
+                  onOpenHistory={openHistoryRun}
+                />
+              </section>
+            </div>
+          </>
+        )}
+      </main>
+
+      {envModalOpen && (
+        <EnvironmentModal
+          environments={environments}
+          activeEnvironmentId={activeEnvironmentId}
+          onSwitch={switchEnvironment}
+          onCreate={createEnvironment}
+          onChange={updateEnvironment}
+          onDelete={deleteEnvironment}
+          onClose={() => { setEnvModalOpen(false); void autosave.flushAll(); }}
+        />
+      )}
+      {folderModal && (
+        <FolderModal
+          folder={folderModal}
+          requestCount={requests.filter(item => item.folderId === folderModal.id).length}
+          onChange={updateFolder}
+          onDelete={() => deleteFolder(folderModal)}
+          onClose={() => { setFolderModalId(""); void autosave.flush(folderKey(folderModal.id)); }}
+        />
+      )}
+      {curlModalOpen && (
+        <CurlImportModal
+          folders={folders}
+          defaultFolderId={draft?.folderId || ""}
+          onImport={importCurlText}
+          onClose={() => setCurlModalOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+const PRE_SCRIPT_PLACEHOLDER = [
+  "// Runs before the request is sent. `$` is a shortcut for `postdog`.",
+  "$.request.headers.set({",
+  "  \"X-Trace-Id\": $.uuid(),",
+  "  \"X-Timestamp\": $.timestamp()",
+  "});",
+  "$.request.query.set(\"page\", 1);"
+].join("\n");
+
+const POST_SCRIPT_PLACEHOLDER = [
+  "// Runs after the response arrives.",
+  "const data = $.response.json();",
+  "await $.env.set({ token: data?.token, userId: data?.user?.id });",
+  "$.test(\"status is 200\", $.response.status === 200);"
+].join("\n");
+
+function SaveStatus({ status }) {
+  const label = {
+    saved: tr("已自动保存", "Saved"),
+    pending: tr("编辑中…", "Editing…"),
+    saving: tr("保存中…", "Saving…"),
+    error: tr("保存失败", "Save failed")
+  }[status] || "";
+  return <span className={`pd-save-status ${status}`} title={tr("所有修改都会自动保存（Ctrl/⌘+S 立即保存）", "Changes save automatically (Ctrl/⌘+S to save now)")}>{label}</span>;
+}
+
+function TabButton({ active, onClick, label, count = 0, dot = false, badge = "" }) {
+  return (
+    <button type="button" className={`pd-tab${active ? " active" : ""}`} onClick={onClick}>
+      {label}
+      {count > 0 && <span className="pd-tab-count">{count}</span>}
+      {badge && <span className="pd-tab-badge">{badge}</span>}
+      {dot && <span className="pd-tab-dot" />}
+    </button>
+  );
+}
+
+function RequestItem({ request, selected, running, onSelect, onDuplicate, onDelete }) {
+  return (
+    <div className={`pd-request-item${selected ? " selected" : ""}`} onClick={() => onSelect(request.id)} title={`${request.method} ${request.url || ""}`}>
+      <span className={`pd-method method-${request.method}`}>{shortMethod(request.method)}</span>
+      <span className="pd-request-name">{request.name || "Untitled"}</span>
+      {running && <span className="pd-running-dot" />}
+      <div className="pd-row-actions">
+        <button type="button" className="pd-icon-button" onClick={e => { e.stopPropagation(); onDuplicate(request); }} title={tr("复制请求", "Duplicate")}>⧉</button>
+        <button type="button" className="pd-icon-button danger" onClick={e => { e.stopPropagation(); onDelete(request); }} title={tr("删除请求", "Delete")}>×</button>
+      </div>
+    </div>
+  );
+}
+
+function ScriptHint({ phase, folder, onOpenFolder }) {
+  const [open, setOpen] = useState(false);
+  const folderScript = phase === "pre" ? folder?.preScript : folder?.postScript;
+  return (
+    <div className="pd-script-hint">
+      <div className="pd-script-hint-row">
+        <span>
+          {phase === "pre"
+            ? tr("发送前执行，可修改请求。", "Runs before sending; can modify the request.")
+            : tr("收到响应后执行，可读取响应、写环境变量、做断言。", "Runs after the response; read it, set variables, add tests.")}
+          {" "}<code>$</code> = <code>postdog</code>
+        </span>
+        {folder && (
+          <button type="button" className="pd-link-button" onClick={onOpenFolder}>
+            {folderScript?.trim()
+              ? tr(`文件夹「${folder.name}」也有 ${phase === "pre" ? "Pre" : "Post"} Script`, `Folder "${folder.name}" has a ${phase === "pre" ? "pre" : "post"} script`)
+              : tr(`编辑文件夹「${folder.name}」脚本`, `Edit folder "${folder.name}" scripts`)}
+          </button>
+        )}
+        <button type="button" className="pd-link-button" onClick={() => setOpen(value => !value)}>{open ? tr("收起 API", "Hide API") : tr("API 速查", "API cheatsheet")}</button>
+      </div>
+      {open && <ScriptCheatsheet />}
+    </div>
+  );
+}
+
+function ScriptCheatsheet() {
+  const rows = [
+    ["$.env.get(\"k\") / $.env.has(\"k\")", tr("读环境变量", "Read a variable")],
+    ["await $.env.set(\"k\", v)", tr("写入当前环境", "Write to the active environment")],
+    ["await $.env.set({ a: 1, b: 2 })", tr("批量写入", "Write many at once")],
+    ["await $.env.unset(\"a\", \"b\")", tr("删除变量", "Remove variables")],
+    ["$.request.headers.set({ k: v, ... })", tr("批量设置 Header（也可 set(k, v)）", "Set headers (or set(k, v))")],
+    ["$.request.query.set({ page: 1 })", tr("设置 Query 参数", "Set query params")],
+    ["$.request.body.set({ ... })", tr("替换 body（对象自动转 JSON）", "Replace body (objects become JSON)")],
+    ["$.request.url / $.request.method", tr("可读写", "Read / write")],
+    ["$.response.status / .headers / .json() / .text()", tr("Post Script 中可用", "Post script only")],
+    ["$.test(\"name\", bool)", tr("记录测试结果", "Record a test")],
+    ["$.uuid() / $.now() / $.timestamp()", tr("工具函数", "Helpers")],
+    ["console.log(...)", tr("输出到 Script Logs", "Print to Script Logs")]
+  ];
+  return (
+    <div className="pd-cheatsheet">
+      {rows.map(([code, text]) => (
+        <div key={code}><code>{code}</code><span>{text}</span></div>
+      ))}
+      <div className="pd-cheatsheet-note">{tr("执行顺序：文件夹 Pre → 请求 Pre → 发送 → 请求 Post → 文件夹 Post", "Order: folder pre → request pre → send → request post → folder post")}</div>
+    </div>
+  );
+}
+
+function ResponsePane({ response, running, tab, onTab, bodyView, onBodyView, historyRuns, historyLoading, selectedHistoryRunId, onOpenHistory }) {
+  const res = response?.response;
+  const bodyJson = useMemo(() => {
+    if (!res || res.bodyKind === "binary") return null;
+    if (res.bodyJson != null) return { ok: true, value: res.bodyJson };
+    if (!res.bodyText) return null;
+    try {
+      return { ok: true, value: parseJsonWithComments(res.bodyText) };
+    } catch {
+      return null;
+    }
+  }, [res]);
+  const testEntries = Object.entries(response?.tests || {});
+  const logs = response?.logs || [];
+  const headerCount = Object.keys(res?.headers || {}).length;
+
+  async function copyBody() {
+    const text = bodyJson?.ok && bodyView === "raw" ? JSON.stringify(bodyJson.value, null, 2) : res?.bodyText || "";
+    if (!text) {
+      toast.error(tr("没有可复制的 response body", "No response body to copy"));
+      return;
+    }
+    await copyText(text);
+    toast.success(tr("response body 已复制", "Response body copied"));
+  }
+
+  function downloadFile() {
+    const file = res?.download;
     if (!file?.dataBase64) {
-      toast.error("没有可下载的文件内容");
+      toast.error(tr("没有可下载的文件内容", "No file content to download"));
       return;
     }
     downloadBase64(file.fileName, file.dataBase64, file.mimeType);
   }
 
-  function beautifyRequestJson() {
-    try {
-      setDraft({ ...draft, body: { ...draft.body, text: formatJsonWithComments(requestBodyText, 2) } });
-    } catch (error) {
-      toast.error(error?.message || "JSON 格式错误");
-    }
-  }
-
   return (
-    <div className="postdog-page" style={{ "--postdog-sidebar-width": `${sidebarWidth}px` }}>
-      <aside className="postdog-sidebar">
-        <div className="postdog-toolbar">
-          <Button className="!min-h-7 !px-2 !text-xs" onPress={() => createRequest(null)}>新增请求</Button>
-          <Button className="!min-h-7 !px-2 !text-xs" onPress={createFolder}>新增文件夹</Button>
-          <Button className="!min-h-7 !px-2 !text-xs" onPress={exportJson}>导出 JSON</Button>
-          <Button className="!min-h-7 !px-2 !text-xs" onPress={() => importFileRef.current?.click()}>导入 JSON</Button>
-          <input ref={importFileRef} type="file" accept="application/json,.json" hidden onChange={e => importJsonFile(e.target.files?.[0])} />
+    <>
+      <div className="pd-tabs">
+        <TabButton active={tab === "body"} onClick={() => onTab("body")} label="Body" />
+        <TabButton active={tab === "headers"} onClick={() => onTab("headers")} label="Headers" count={headerCount} />
+        <TabButton active={tab === "request"} onClick={() => onTab("request")} label="Request" />
+        <TabButton active={tab === "logs"} onClick={() => onTab("logs")} label="Logs" count={logs.length} dot={logs.some(log => log.level === "error")} />
+        <TabButton active={tab === "history"} onClick={() => onTab("history")} label={tr("历史", "History")} count={historyRuns.length} />
+        <div className="pd-tabs-spacer" />
+        {res && (
+          <div className="pd-response-meta">
+            <StatusBadge status={res.status}>{res.status || "ERR"} {res.statusText || ""}</StatusBadge>
+            <span>{response.durationMs} ms</span>
+            {Number.isFinite(Number(res.bodySizeBytes)) && <span>{formatBytes(res.bodySizeBytes)}</span>}
+          </div>
+        )}
+      </div>
+      {(response?.historyCreatedAt || testEntries.length > 0) && (
+        <div className="pd-response-sub">
+          {response?.historyCreatedAt && <Badge variant="warning">{tr("历史记录", "From history")} · {formatDateTime(response.historyCreatedAt)}</Badge>}
+          {testEntries.map(([name, passed]) => (
+            <Badge key={name} variant={passed ? "success" : "danger"}>{passed ? "✓" : "✕"} {name}</Badge>
+          ))}
         </div>
-        {!selectedId && <RequestButton request={null} selected onPress={() => selectRequest("")} label="未保存草稿" />}
-        {folders.map(folder => (
-          <div key={folder.id} className="postdog-folder">
-            <div className="postdog-folder-title">
-              <button type="button" className="postdog-folder-toggle" onClick={() => toggleFolder(folder.id)}>
-                <span>{collapsedFolders.has(folder.id) ? ">" : "v"}</span>
-                <strong>{folder.name}</strong>
-              </button>
-              <button type="button" className="postdog-folder-add" onClick={() => createRequest(folder.id)}>+</button>
-              <button type="button" className="postdog-folder-delete" onClick={() => deleteFolder(folder)} title="删除文件夹">×</button>
+      )}
+      <div className="pd-pane-body">
+        {tab === "history" ? (
+          <div className="pd-scroll">
+            <HistoryList runs={historyRuns} loading={historyLoading} selectedRunId={selectedHistoryRunId} onSelect={onOpenHistory} />
+          </div>
+        ) : !res ? (
+          <div className="pd-empty pd-response-empty">
+            {running ? tr("发送中…", "Sending…") : <>{tr("点击「发送」或按", "Click Send or press")} <kbd>Ctrl</kbd>+<kbd>Enter</kbd></>}
+          </div>
+        ) : tab === "headers" ? (
+          <div className="pd-scroll"><HeaderTable headers={res.headers || {}} emptyText={tr("无响应 Header", "No response headers")} /></div>
+        ) : tab === "request" ? (
+          <div className="pd-scroll pd-request-snapshot">
+            <div className="pd-snapshot-line"><strong>{response.request?.method}</strong> <span>{response.request?.url}</span></div>
+            <div className="pd-snapshot-meta">
+              {response.request?.environment?.name && <span>{tr("环境", "Env")}: {response.request.environment.name}</span>}
+              {response.request?.bodyType && <span>Body: {response.request.bodyType}</span>}
+              {response.request?.sent === false && <span className="pd-not-sent">{tr("未发送（脚本或请求出错）", "Not sent (script or request error)")}</span>}
+              {response.response?.url && response.response.url !== response.request?.url && <span>{tr("最终 URL", "Final URL")}: {response.response.url}</span>}
             </div>
-            {!collapsedFolders.has(folder.id) && (
-              <div className="postdog-folder-children">
-                <FolderScriptEditor folder={folder} onSave={saveFolderScript} />
-                {(grouped.byFolder.get(folder.id) || []).map(request => (
-                  <RequestButton key={request.id} request={request} selected={selectedId === request.id} onPress={() => selectRequest(request.id)} />
+            <div className="pd-section-title">Headers</div>
+            <HeaderTable headers={response.request?.headers || {}} emptyText={tr("无请求 Header", "No request headers")} />
+            <div className="pd-section-title">Body</div>
+            {response.request?.body ? <pre className="pd-pre">{formatRequestBodyForDisplay(response.request.body)}</pre> : <div className="pd-empty">{tr("无 request body", "No request body")}</div>}
+            {response.request?.template && (
+              <details className="pd-template">
+                <summary>{tr("原始模板（变量替换、脚本修改之前）", "Original template (before variables and scripts)")}</summary>
+                <div className="pd-snapshot-line"><strong>{response.request.template.method}</strong> <span>{response.request.template.url}</span></div>
+                <HeaderTable headers={response.request.template.headers || []} emptyText={tr("无 Header", "No headers")} />
+                {(response.request.template.query || []).length > 0 && (
+                  <>
+                    <div className="pd-section-title">Params</div>
+                    <HeaderTable headers={response.request.template.query} />
+                  </>
+                )}
+                {response.request.template.body?.text && <pre className="pd-pre">{response.request.template.body.text}</pre>}
+              </details>
+            )}
+          </div>
+        ) : tab === "logs" ? (
+          <div className="pd-scroll">
+            {logs.length === 0 ? <div className="pd-empty">{tr("脚本没有输出", "No script output")}</div> : (
+              <div className="pd-log-list">
+                {logs.map((log, index) => (
+                  <div key={index} className={`pd-log ${log.level || "info"}`}>
+                    <span className="pd-log-phase">{log.phase || "script"}</span>
+                    <span className="pd-log-level">{String(log.level || "info").toUpperCase()}</span>
+                    <code>{log.message}</code>
+                  </div>
                 ))}
               </div>
             )}
           </div>
-        ))}
-        {grouped.loose.map(request => (
-          <RequestButton key={request.id} request={request} selected={selectedId === request.id} onPress={() => selectRequest(request.id)} />
-        ))}
-      </aside>
-      <div
-        className="postdog-sidebar-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="调整请求列表宽度"
-        title="拖拽调整请求列表宽度"
-        onMouseDown={startSidebarResize}
-      />
-
-      <main className="postdog-main">
-        <section className="postdog-meta-bar">
-          <div className="postdog-field">
-            <label>名称</label>
-            <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} />
+        ) : res.bodyKind === "binary" ? (
+          <div className="pd-scroll pd-file-response">
+            <div>{formatBinaryResponseMessage(res)}</div>
+            {res.download?.dataBase64 && <UiButton variant="primary" onClick={downloadFile}>{tr("下载文件", "Download file")}</UiButton>}
           </div>
-          <div className="postdog-field">
-            <label>文件夹</label>
-            <select value={draft.folderId || ""} onChange={e => setDraft({ ...draft, folderId: e.target.value || null })}>
-              <option value="">无</option>
-              {folders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-            </select>
-          </div>
-        </section>
-
-        <section className="postdog-request-bar">
-          <select className="postdog-method-select" value={draft.method} onChange={e => setDraft({ ...draft, method: e.target.value })}>
-            {["GET", "POST", "PUT", "PATCH", "DELETE"].map(method => <option key={method}>{method}</option>)}
-          </select>
-          <input className="postdog-url-input" value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} placeholder="https://api.example.com/items/{{objId}}" />
-          <Button className="!min-h-8 !px-3 !text-xs" onPress={runRequest} isDisabled={running}>{running ? "发送中" : "发送"}</Button>
-          <Button className="!min-h-8 !px-3 !text-xs" onPress={saveRequest}>保存</Button>
-        </section>
-
-        <section className="postdog-grid">
-          <div className="postdog-workspace">
-            <div className="postdog-editor">
-              <div className="postdog-tab-buttons postdog-request-tabs">
-                <button type="button" className={requestTab === "headers" ? "active" : ""} onClick={() => setRequestTab("headers")}>Headers</button>
-                <button type="button" className={requestTab === "body" ? "active" : ""} onClick={() => setRequestTab("body")}>Body</button>
-                <button type="button" className={requestTab === "query" ? "active" : ""} onClick={() => setRequestTab("query")}>Params</button>
-              </div>
-              {requestTab === "headers" ? (
-                <KeyValueEditor rows={draft.headers} onChange={headers => setDraft({ ...draft, headers })} secretToggle />
-              ) : requestTab === "query" ? (
-                <KeyValueEditor rows={draft.query} onChange={query => setDraft({ ...draft, query })} />
+        ) : (
+          <div className="pd-response-body">
+            <div className="pd-body-toolbar">
+              {bodyJson?.ok && (
+                <div className="pd-segmented">
+                  <button type="button" className={bodyView === "tree" ? "active" : ""} onClick={() => onBodyView("tree")}>{tr("树形", "Tree")}</button>
+                  <button type="button" className={bodyView === "raw" ? "active" : ""} onClick={() => onBodyView("raw")}>{tr("文本", "Raw")}</button>
+                </div>
+              )}
+              {res.bodyNote && <span className="pd-body-note">{res.bodyNote}</span>}
+              <div className="pd-tabs-spacer" />
+              {(res.bodyText || bodyJson?.ok) && <UiButton variant="neutral" onClick={copyBody}>{tr("复制", "Copy")}</UiButton>}
+            </div>
+            <div className="pd-scroll">
+              {bodyJson?.ok && bodyView === "tree" ? (
+                <JsonViewer value={bodyJson.value} />
+              ) : bodyJson?.ok ? (
+                <pre className="pd-pre">{JSON.stringify(bodyJson.value, null, 2)}</pre>
+              ) : res.bodyText ? (
+                <pre className="pd-pre">{res.bodyText}</pre>
               ) : (
-                <div className="postdog-body-editor">
-                  <div className="postdog-body-toolbar">
-                    <select value={requestBodyType} onChange={e => setDraft({ ...draft, body: { ...draft.body, type: e.target.value } })}>
-                      <option value="none">none</option>
-                      <option value="json">json</option>
-                      <option value="text">text</option>
-                      <option value="form">form</option>
-                      <option value="multipart">multipart</option>
-                    </select>
-                    {requestBodyType === "json" && (
-                      <Button className="postdog-beautify-button !min-h-7 !px-2 !text-xs" onPress={beautifyRequestJson}>格式化 JSON</Button>
-                    )}
-                  </div>
-                  {requestBodyType === "form" ? (
-                    <KeyValueEditor
-                      rows={draft.body?.fields || []}
-                      onChange={fields => setDraft({ ...draft, body: { ...draft.body, fields } })}
-                    />
-                  ) : requestBodyType === "multipart" ? (
-                    <MultipartEditor
-                      rows={draft.body?.fields || []}
-                      onChange={fields => setDraft({ ...draft, body: { ...draft.body, fields } })}
-                    />
-                  ) : requestBodyType === "json" ? (
-                    <JsonCodeEditor
-                      value={requestBodyText}
-                      onChange={text => setDraft({ ...draft, body: { ...draft.body, text } })}
-                      placeholder={'{\n  // comments are removed before send\n  "request_id": "{{$uuid()}}",\n  "created_at": "{{$now()}}",\n  "name": "{{name}}"\n}'}
-                    />
-                  ) : (
-                    <textarea
-                      wrap="off"
-                      spellCheck={false}
-                      value={requestBodyText}
-                      onChange={e => setDraft({ ...draft, body: { ...draft.body, text: e.target.value } })}
-                      placeholder={'{\n  "request_id": "{{$uuid()}}",\n  "created_at": "{{$now()}}",\n  "name": "{{name}}"\n}'}
-                    />
-                  )}
-                  {requestBodyJson && (
-                    <div className="postdog-json-preview">
-                      <div className="postdog-json-preview-title">Body JSON Preview</div>
-                      {requestBodyJson.ok ? <JsonViewer value={requestBodyJson.value} /> : <pre>{requestBodyJson.error}</pre>}
-                    </div>
-                  )}
-                </div>
-              )}
-              <details className="postdog-script-section">
-                <summary>Pre Script</summary>
-                <textarea wrap="off" spellCheck={false} value={draft.preScript || ""} onChange={e => setDraft({ ...draft, preScript: e.target.value })} placeholder='postdog.request.headers.set("X-Trace", Date.now())' />
-              </details>
-              <details className="postdog-script-section">
-                <summary>Post Script</summary>
-                <textarea wrap="off" spellCheck={false} value={draft.postScript || ""} onChange={e => setDraft({ ...draft, postScript: e.target.value })} placeholder='postdog.env.set("objId", postdog.response.json()?.id)' />
-              </details>
-            </div>
-
-            <div className="postdog-card postdog-response">
-              <div className="postdog-response-header">
-                <div>
-                  <div className="postdog-card-title">响应</div>
-                  {response?.historyCreatedAt && <div className="postdog-run-id">历史: {formatDateTime(response.historyCreatedAt)}</div>}
-                  {response?.runId && <div className="postdog-run-id">runId: {response.runId}</div>}
-                </div>
-                {response?.response ? (
-                  <div className="postdog-response-meta">
-                    <span className={`postdog-status ${responseStatusClass}`}>{response.response.status || 0}</span>
-                    <span>{response.durationMs}ms</span>
-                  </div>
-                ) : null}
-              </div>
-              {response?.tests && Object.keys(response.tests).length > 0 && (
-                <div className="postdog-tests">
-                  {Object.entries(response.tests).map(([name, passed]) => (
-                    <span key={name} className={passed ? "postdog-pass" : "postdog-fail"}>{passed ? "PASS" : "FAIL"} {name}</span>
-                  ))}
-                </div>
-              )}
-              {response?.logs?.length > 0 && (
-                <details className="postdog-script-logs" open>
-                  <summary>Script Logs</summary>
-                  <div className="postdog-script-log-list">
-                    {response.logs.map((log, index) => (
-                      <div key={index} className={`postdog-script-log ${log.level || "info"}`}>
-                        <span>{log.phase || "script"}</span>
-                        <strong>{String(log.level || "info").toUpperCase()}</strong>
-                        <code>{log.message}</code>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-              )}
-              {response?.request && (
-                <details className="postdog-request-snapshot" open>
-                  <summary>Request</summary>
-                  <div className="postdog-request-snapshot-line">
-                    <strong>{response.request.method}</strong>
-                    <span>{response.request.url}</span>
-                  </div>
-                  {response.request.body ? (
-                    <pre>{formatRequestBodyForDisplay(response.request.body)}</pre>
-                  ) : (
-                    <div className="postdog-empty-response">无 request body</div>
-                  )}
-                </details>
-              )}
-              <div className="postdog-tabs">
-                <div className="postdog-tab-buttons">
-                  <button type="button" className={responseTab === "body" ? "active" : ""} onClick={() => setResponseTab("body")}>Body</button>
-                  <button type="button" className={responseTab === "headers" ? "active" : ""} onClick={() => setResponseTab("headers")}>Headers</button>
-                </div>
-                {responseTab === "body" && response?.response?.bodyText ? (
-                  <button type="button" className="postdog-copy-body-button" onClick={copyResponseBody}>复制 body</button>
-                ) : null}
-              </div>
-              <div className="postdog-response-content">
-                {!response?.response ? (
-                  <div className="postdog-empty-response">尚未发送请求</div>
-                ) : responseTab === "headers" ? (
-                  <HeaderTable headers={response.response.headers || {}} />
-                ) : response.response.bodyKind === "binary" ? (
-                  <div className="postdog-file-response">
-                    <div>{formatBinaryResponseMessage(response.response)}</div>
-                    {response.response.download?.dataBase64 && (
-                      <Button className="!min-h-7 !px-2 !text-xs" onPress={downloadResponseFile}>下载文件</Button>
-                    )}
-                  </div>
-                ) : responseBodyJson?.ok ? (
-                  <>
-                    {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
-                    <JsonViewer value={responseBodyJson.value} />
-                  </>
-                ) : response.response.bodyText ? (
-                  <>
-                    {response.response.bodyNote && <div className="postdog-body-note">{response.response.bodyNote}</div>}
-                    <pre>{response.response.bodyText}</pre>
-                  </>
-                ) : (
-                  <pre>{response.response.error || response.response.bodyNote || ""}</pre>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="postdog-sidepanel">
-            <div className="postdog-card">
-              <div className="postdog-card-title">环境变量</div>
-              <div className="postdog-row">
-                <select value={activeEnvironmentId} onChange={e => switchEnvironment(e.target.value)}>
-                  <option value="">无环境</option>
-                  {environments.map(env => <option key={env.id} value={env.id}>{env.name}</option>)}
-                </select>
-                <Button className="postdog-env-add-button !min-h-7 !px-2 !text-xs" onPress={createEnvironment}>新增</Button>
-                <Button className="postdog-env-toggle-button !min-h-7 !px-2 !text-xs" onPress={() => setEnvExpanded(expanded => !expanded)}>{envExpanded ? "收起" : "展开"}</Button>
-              </div>
-              {envDraft && envExpanded && (
-                <>
-                  <input value={envDraft.name} onChange={e => setEnvDraft({ ...envDraft, name: e.target.value })} />
-                  <KeyValueEditor rows={envDraft.variables} onChange={variables => setEnvDraft({ ...envDraft, variables })} secretToggle compact />
-                  <Button className="!min-h-7 !px-2 !text-xs" onPress={saveEnvironment}>保存环境</Button>
-                </>
+                <pre className="pd-pre error">{res.error || res.bodyNote || tr("（空 body）", "(empty body)")}</pre>
               )}
             </div>
-
-            <div className="postdog-card">
-              <div className="postdog-card-title">导入 / 导出</div>
-              <textarea value={importText} onChange={e => setImportText(e.target.value)} placeholder="粘贴 curl ..." />
-              <div className="postdog-row">
-                <Button className="!min-h-7 !px-2 !text-xs" onPress={importCurlText}>导入 curl</Button>
-                <Button className="!min-h-7 !px-2 !text-xs" onPress={exportCurrentCurl}>复制为 curl</Button>
-              </div>
-            </div>
-
-            <div className="postdog-card">
-              <div className="postdog-card-title">历史记录</div>
-              <HistoryList
-                runs={historyRuns}
-                loading={historyLoading}
-                selectedRunId={selectedHistoryRunId}
-                onSelect={openHistoryRun}
-              />
-            </div>
-
-          </div>
-        </section>
-
-        {draft.id && (
-          <div className="postdog-footer">
-            <Button className="!min-h-7 !px-2 !text-xs !bg-red-50 !text-red-700" onPress={deleteRequest}>删除当前请求</Button>
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
 
-function RequestButton({ request, selected, onPress, label }) {
-  const text = label || request?.name || "";
-  return (
-    <button type="button" className={`postdog-request-item${selected ? " postdog-selected" : ""}`} onClick={onPress} title={text}>
-      <span>{request?.method || ""}</span>
-      <strong>{text}</strong>
-    </button>
-  );
-}
+function EnvironmentModal({ environments, activeEnvironmentId, onSwitch, onCreate, onChange, onDelete, onClose }) {
+  const [selectedId, setSelectedId] = useState(activeEnvironmentId || environments[0]?.id || "");
+  const selected = environments.find(item => item.id === selectedId) || environments[0] || null;
 
-function FolderScriptEditor({ folder, onSave }) {
-  const [preScript, setPreScript] = useState(folder.preScript || "");
-  const [postScript, setPostScript] = useState(folder.postScript || "");
-
-  useEffect(() => {
-    setPreScript(folder.preScript || "");
-    setPostScript(folder.postScript || "");
-  }, [folder.id, folder.preScript, folder.postScript]);
-
-  return (
-    <details className="postdog-folder-script">
-      <summary>脚本</summary>
-      <label>Pre Script</label>
-      <textarea wrap="off" spellCheck={false} value={preScript} onChange={e => setPreScript(e.target.value)} placeholder='postdog.request.headers.set("X-Folder", "1")' />
-      <label>Post Script</label>
-      <textarea wrap="off" spellCheck={false} value={postScript} onChange={e => setPostScript(e.target.value)} placeholder='postdog.env.set("lastStatus", postdog.response.status)' />
-      <Button className="!min-h-6 !px-2 !py-0 !text-xs" onPress={() => onSave(folder, { preScript, postScript })}>保存脚本</Button>
-    </details>
-  );
-}
-
-function KeyValueEditor({ title, rows = [], onChange, secretToggle = false, compact = false }) {
-  function update(index, patch) {
-    onChange(rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+  async function create() {
+    const env = await onCreate();
+    if (env) setSelectedId(env.id);
   }
-  function remove(index) {
-    onChange(rows.filter((_, i) => i !== index));
-  }
+
   return (
-    <div className={compact ? "postdog-kv compact" : "postdog-kv"}>
-      {title && <label>{title}</label>}
-      {rows.map((row, index) => (
-        <div className="postdog-kv-row" key={index}>
-          <input title={row.key || ""} value={row.key || ""} onChange={e => update(index, { key: e.target.value })} placeholder="key" />
-          <input title={row.value || ""} value={row.value || ""} onChange={e => update(index, { value: e.target.value })} placeholder="value" />
-          <label className="postdog-checkbox"><input type="checkbox" checked={row.enabled !== false} onChange={e => update(index, { enabled: e.target.checked })} />启用</label>
-          {secretToggle && <label className="postdog-checkbox"><input type="checkbox" checked={row.secret === true} onChange={e => update(index, { secret: e.target.checked })} />密</label>}
-          <button type="button" onClick={() => remove(index)}>×</button>
+    <Modal title={tr("环境变量", "Environments")} onClose={onClose} width={980} className="pd-env-modal">
+      <div className="pd-env-layout">
+        <div className="pd-env-list">
+          {environments.map(env => (
+            <button key={env.id} type="button" className={`pd-env-item${selected?.id === env.id ? " selected" : ""}`} onClick={() => setSelectedId(env.id)}>
+              <span className="pd-env-name">{env.name}</span>
+              {env.id === activeEnvironmentId && <Badge variant="success">{tr("当前", "Active")}</Badge>}
+              <span className="pd-count">{env.variables.length}</span>
+            </button>
+          ))}
+          {environments.length === 0 && <div className="pd-tree-empty">{tr("还没有环境", "No environments yet")}</div>}
+          <UiButton variant="neutral" onClick={create}>+ {tr("新建环境", "New environment")}</UiButton>
         </div>
-      ))}
-      <button type="button" className="postdog-add-row" onClick={() => onChange([...(rows || []), { key: "", value: "", enabled: true }])}>+ 添加</button>
-    </div>
-  );
-}
-
-function HistoryList({ runs = [], loading = false, selectedRunId = "", onSelect }) {
-  if (loading) return <div className="postdog-empty-response">加载历史...</div>;
-  if (!runs.length) return <div className="postdog-empty-response">暂无历史记录</div>;
-  return (
-    <div className="postdog-history-list">
-      {runs.map(run => (
-        <button
-          key={run.runId}
-          type="button"
-          className={`postdog-history-item${selectedRunId === run.runId ? " active" : ""}`}
-          onClick={() => onSelect(run.runId)}
-        >
-          <div className="postdog-history-main">
-            <span className={`postdog-history-status ${getStatusClass(run.status)}`}>{run.status || 0}</span>
-            <strong>{run.durationMs}ms</strong>
-          </div>
-          <div className="postdog-history-time">{formatDateTime(run.createdAt)}</div>
-          <div className="postdog-history-url">{run.method} {run.url}</div>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function HeaderTable({ headers = {} }) {
-  const entries = Object.entries(headers || {});
-  if (entries.length === 0) return <div className="postdog-empty-response">无响应 Header</div>;
-  return (
-    <div className="postdog-header-table">
-      {entries.map(([key, value]) => (
-        <div className="postdog-header-row" key={key}>
-          <span>{key}</span>
-          <code>{String(value)}</code>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MultipartEditor({ rows = [], onChange }) {
-  function update(index, patch) {
-    onChange(rows.map((row, i) => i === index ? { ...row, ...patch } : row));
-  }
-  function remove(index) {
-    onChange(rows.filter((_, i) => i !== index));
-  }
-  async function selectFile(index, file) {
-    if (!file) return;
-    if (file.size > MAX_UPLOAD_FILE_BYTES) {
-      toast.error("单个上传文件不能超过 5 MB");
-      return;
-    }
-    try {
-      update(index, {
-        kind: "file",
-        fileName: file.name,
-        mimeType: file.type || "application/octet-stream",
-        dataBase64: await fileToBase64(file),
-        value: ""
-      });
-    } catch (error) {
-      toast.error(error?.message || "读取文件失败");
-    }
-  }
-  return (
-    <div className="postdog-kv postdog-multipart">
-      {rows.map((row, index) => (
-        <div className="postdog-kv-row" key={index}>
-          <input title={row.key || ""} value={row.key || ""} onChange={e => update(index, { key: e.target.value })} placeholder="key" />
-          <select value={row.kind === "file" ? "file" : "text"} onChange={e => update(index, { kind: e.target.value, value: "", fileName: "", mimeType: "", dataBase64: "" })}>
-            <option value="text">Text</option>
-            <option value="file">File</option>
-          </select>
-          {row.kind === "file" ? (
-            <label className="postdog-file-picker">
-              <span title={row.fileName || ""}>{row.fileName || "选择文件"}</span>
-              <input type="file" onChange={e => selectFile(index, e.target.files?.[0])} />
-            </label>
+        <div className="pd-env-detail">
+          {selected ? (
+            <>
+              <div className="pd-env-detail-head">
+                <UiInput className="pd-name-input" value={selected.name} onChange={name => onChange({ ...selected, name })} placeholder={tr("环境名称", "Environment name")} />
+                {selected.id === activeEnvironmentId ? (
+                  <Badge variant="success">{tr("当前环境", "Active environment")}</Badge>
+                ) : (
+                  <UiButton size="md" variant="primary" onClick={() => onSwitch(selected.id)}>{tr("设为当前", "Set active")}</UiButton>
+                )}
+                <UiButton size="md" variant="danger" onClick={() => onDelete(selected)}>{tr("删除", "Delete")}</UiButton>
+              </div>
+              <div className="pd-env-vars">
+                <KeyValueEditor
+                  key={selected.id}
+                  rows={selected.variables}
+                  onChange={variables => onChange({ ...selected, variables })}
+                  secretToggle
+                  maskSecrets
+                  keyPlaceholder={tr("变量名", "name")}
+                  valuePlaceholder={tr("值", "value")}
+                />
+              </div>
+              <p className="pd-help">
+                {tr("在 URL / Header / Params / Body 中用 ", "Use ")}<code>{"{{name}}"}</code>
+                {tr(" 引用；脚本里用 ", " in URL / headers / params / body; in scripts use ")}<code>$.env.get(&quot;name&quot;)</code> / <code>await $.env.set(&#123; name: v &#125;)</code>
+                {tr("。修改会自动保存。", ". Changes save automatically.")}
+              </p>
+            </>
           ) : (
-            <input title={row.value || ""} value={row.value || ""} onChange={e => update(index, { value: e.target.value })} placeholder="value" />
+            <div className="pd-empty">{tr("新建一个环境来管理变量", "Create an environment to manage variables")}</div>
           )}
-          <label className="postdog-checkbox"><input type="checkbox" checked={row.enabled !== false} onChange={e => update(index, { enabled: e.target.checked })} />启用</label>
-          <button type="button" onClick={() => remove(index)}>×</button>
         </div>
-      ))}
-      <button type="button" className="postdog-add-row" onClick={() => onChange([...rows, { key: "", value: "", kind: "text", enabled: true }])}>+ 添加</button>
-    </div>
+      </div>
+    </Modal>
   );
+}
+
+function FolderModal({ folder, requestCount, onChange, onDelete, onClose }) {
+  return (
+    <Modal
+      title={tr("文件夹设置", "Folder settings")}
+      onClose={onClose}
+      width={1080}
+      className="pd-folder-modal"
+      footer={(
+        <>
+          <UiButton variant="danger" onClick={onDelete}>{tr("删除文件夹", "Delete folder")}</UiButton>
+          <span className="pd-help inline">{tr("修改会自动保存", "Changes save automatically")}</span>
+          <UiButton variant="primary" onClick={onClose}>{tr("完成", "Done")}</UiButton>
+        </>
+      )}
+    >
+      <div className="pd-folder-form">
+        <label className="pd-field">
+          <span>{tr("名称", "Name")}</span>
+          <UiInput className="pd-name-input" ariaLabel={tr("文件夹名称", "Folder name")} value={folder.name} onChange={name => onChange({ ...folder, name })} autoFocus />
+        </label>
+        <span className="pd-help inline">{tr(`包含 ${requestCount} 个请求`, `${requestCount} request(s)`)}</span>
+      </div>
+      <p className="pd-help">{tr("文件夹脚本对其中所有请求生效。执行顺序：文件夹 Pre → 请求 Pre → 发送 → 请求 Post → 文件夹 Post。", "Folder scripts apply to every request inside. Order: folder pre → request pre → send → request post → folder post.")}</p>
+      <div className="pd-folder-scripts">
+        <div className="pd-folder-script">
+          <div className="pd-section-title">Pre Script</div>
+          <CodeEditor
+            docKey={`${folder.id}:pre`}
+            language="javascript"
+            value={folder.preScript || ""}
+            onChange={text => onChange({ ...folder, preScript: text })}
+            placeholder={'$.request.headers.set({ Authorization: "Bearer " + $.env.get("token") });'}
+          />
+        </div>
+        <div className="pd-folder-script">
+          <div className="pd-section-title">Post Script</div>
+          <CodeEditor
+            docKey={`${folder.id}:post`}
+            language="javascript"
+            value={folder.postScript || ""}
+            onChange={text => onChange({ ...folder, postScript: text })}
+            placeholder={'$.test("2xx", $.response.ok);\nawait $.env.set("lastStatus", $.response.status);'}
+          />
+        </div>
+      </div>
+      <ScriptCheatsheet />
+    </Modal>
+  );
+}
+
+function CurlImportModal({ folders, defaultFolderId, onImport, onClose }) {
+  const [text, setText] = useState("");
+  const [folderId, setFolderId] = useState(defaultFolderId || "");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setBusy(true);
+    try {
+      if (await onImport(text, folderId)) onClose();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={tr("导入 curl", "Import curl")}
+      onClose={onClose}
+      width={720}
+      footer={(
+        <>
+          <div className="pd-tabs-spacer" />
+          <UiButton variant="neutral" onClick={onClose}>{tr("取消", "Cancel")}</UiButton>
+          <UiButton variant="primary" onClick={submit} disabled={busy || !text.trim()}>{tr("导入", "Import")}</UiButton>
+        </>
+      )}
+    >
+      <div className="pd-field pd-curl-folder">
+        <span>{tr("放入", "Into")}</span>
+        <UiSelect
+          ariaLabel={tr("放入文件夹", "Target folder")}
+          value={folderId}
+          options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...folders.map(folder => ({ value: folder.id, label: folder.name }))]}
+          onChange={setFolderId}
+        />
+      </div>
+      <textarea
+        className="pd-curl-input"
+        value={text}
+        onChange={e => setText(e.target.value)}
+        placeholder={"curl -X POST 'https://api.example.com/items' \\\n  -H 'Content-Type: application/json' \\\n  --data-raw '{\"name\":\"a\"}'"}
+        spellCheck={false}
+        autoFocus
+      />
+    </Modal>
+  );
+}
+
+// ------------------------------------------------------------------ helpers
+
+function buildUrlPreview(url, query, vars) {
+  const text = String(url || "");
+  const enabledQuery = (query || []).filter(item => item.enabled !== false && item.key);
+  if (!text.includes("{{") && !enabledQuery.some(item => `${item.key}${item.value}`.includes("{{"))) return null;
+  const parts = [];
+  const pushResolved = value => {
+    const source = String(value ?? "");
+    let last = 0;
+    for (const match of source.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
+      if (match.index > last) parts.push({ kind: "text", text: source.slice(last, match.index) });
+      const name = match[1];
+      if (/^\$/.test(name)) parts.push({ kind: "var", text: `{{${name}}}` });
+      else if (Object.prototype.hasOwnProperty.call(vars, name)) parts.push({ kind: "var", text: String(vars[name]) });
+      else parts.push({ kind: "missing", text: `{{${name}}}`, name });
+      last = match.index + match[0].length;
+    }
+    if (last < source.length) parts.push({ kind: "text", text: source.slice(last) });
+  };
+  pushResolved(text);
+  enabledQuery.forEach((item, index) => {
+    parts.push({ kind: "text", text: index === 0 && !text.includes("?") ? "?" : "&" });
+    pushResolved(item.key);
+    parts.push({ kind: "text", text: "=" });
+    pushResolved(item.value);
+  });
+  return parts;
+}
+
+function countEnabled(rows) {
+  return (rows || []).filter(item => item.enabled !== false && String(item.key || "").trim()).length;
+}
+
+function shortMethod(method) {
+  const value = String(method || "GET").toUpperCase();
+  return { DELETE: "DEL", OPTIONS: "OPT", PATCH: "PATCH" }[value] || value;
 }
 
 function formatBinaryResponseMessage(response) {
   const contentType = response.headers?.["content-type"] || response.headers?.["Content-Type"] || "unknown";
-  const size = formatResponseBytes(response.bodySizeBytes);
-  return `${response.bodyNote || "二进制响应未展示。"} Content-Type: ${contentType}; Size: ${size}`;
+  return `${response.bodyNote || tr("二进制响应未展示。", "Binary response not shown.")} Content-Type: ${contentType}; Size: ${formatBytes(response.bodySizeBytes)}`;
 }
 
 function formatRequestBodyForDisplay(body) {
-  if (typeof body === "string") return body;
+  if (typeof body === "string") {
+    try {
+      return JSON.stringify(JSON.parse(body), null, 2);
+    } catch {
+      return body;
+    }
+  }
   if (body == null) return "";
   try {
     return JSON.stringify(body, null, 2);
@@ -872,78 +1407,40 @@ function formatRequestBodyForDisplay(body) {
   }
 }
 
-function formatResponseBytes(bytes) {
+function formatBytes(bytes) {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return "unknown";
   if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-  return `${Math.round(value / 1024 / 1024)} MB`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function JsonViewer({ value, rootLabel = "root" }) {
-  return (
-    <div className="postdog-json-tree">
-      <JsonNode name={rootLabel} value={value} root />
-    </div>
-  );
-}
-
-function JsonNode({ name, value, root = false }) {
-  if (Array.isArray(value)) {
-    return (
-      <details className="postdog-json-node" open={root || value.length <= 4}>
-        <summary>
-          {!root && <span className="postdog-json-key">{name}: </span>}
-          <span className="postdog-json-punc">[</span>
-          <span className="postdog-json-muted">{value.length} items</span>
-          <span className="postdog-json-punc">]</span>
-        </summary>
-        <div className="postdog-json-children">
-          {value.map((item, index) => <JsonNode key={index} name={String(index)} value={item} />)}
-        </div>
-      </details>
-    );
+function readLocal(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value == null ? fallback : value;
+  } catch {
+    return fallback;
   }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value);
-    return (
-      <details className="postdog-json-node" open={root || entries.length <= 6}>
-        <summary>
-          {!root && <span className="postdog-json-key">{name}: </span>}
-          <span className="postdog-json-punc">{"{"}</span>
-          <span className="postdog-json-muted">{entries.length} keys</span>
-          <span className="postdog-json-punc">{"}"}</span>
-        </summary>
-        <div className="postdog-json-children">
-          {entries.map(([key, item]) => <JsonNode key={key} name={key} value={item} />)}
-        </div>
-      </details>
-    );
+}
+
+function readJsonLocal(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "null");
+    return value ?? fallback;
+  } catch {
+    return fallback;
   }
-  return (
-    <div className="postdog-json-leaf">
-      <span className="postdog-json-key">{name}: </span>
-      <JsonPrimitive value={value} />
-    </div>
-  );
-}
-
-function JsonPrimitive({ value }) {
-  if (typeof value === "string") return <span className="postdog-json-string">{JSON.stringify(value)}</span>;
-  if (typeof value === "number") return <span className="postdog-json-number">{value}</span>;
-  if (typeof value === "boolean") return <span className="postdog-json-bool">{String(value)}</span>;
-  if (value == null) return <span className="postdog-json-null">null</span>;
-  return <span>{String(value)}</span>;
-}
-
-function readSavedSidebarWidth() {
-  const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-  if (!Number.isFinite(stored)) return DEFAULT_SIDEBAR_WIDTH;
-  return clamp(stored, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH);
 }
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Math.round(Number(value) || min)));
+}
+
+function clampRatio(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0.5;
+  return Math.min(0.8, Math.max(0.2, number));
 }
 
 function sendPostdog(action, payload = {}) {
@@ -956,22 +1453,6 @@ function sendPostdog(action, payload = {}) {
       resolve(response || { success: false, error: "empty response" });
     });
   });
-}
-
-function parseJsonForView(text) {
-  try {
-    return { ok: true, value: parseJsonWithComments(text) };
-  } catch (error) {
-    return { ok: false, error: error?.message || "JSON 解析失败" };
-  }
-}
-
-function getStatusClass(status) {
-  const code = Number(status) || 0;
-  if (code >= 200 && code < 300) return "ok";
-  if (code >= 300 && code < 400) return "redirect";
-  if (code >= 400) return "error";
-  return "unknown";
 }
 
 async function copyText(text) {
@@ -994,24 +1475,14 @@ function clone(value) {
 }
 
 function downloadText(fileName, text, mimeType) {
-  const blob = new Blob([text], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(fileName, new Blob([text], { type: mimeType }));
 }
 
 function downloadBase64(fileName, dataBase64, mimeType) {
   const binary = atob(dataBase64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
-  downloadBlob(fileName || "download", blob);
+  downloadBlob(fileName || "download", new Blob([bytes], { type: mimeType || "application/octet-stream" }));
 }
 
 function downloadBlob(fileName, blob) {
@@ -1026,22 +1497,7 @@ function downloadBlob(fileName, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
-    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
-    reader.readAsDataURL(file);
-  });
-}
-
 function formatDate(date) {
   const pad = n => String(n).padStart(2, "0");
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}`;
-}
-
-function formatDateTime(timestamp) {
-  const date = new Date(Number(timestamp) || Date.now());
-  const pad = n => String(n).padStart(2, "0");
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
