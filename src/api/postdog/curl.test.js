@@ -30,3 +30,27 @@ describe("postdog curl import/export", () => {
     })).toContain("--data-raw");
   });
 });
+
+describe("postdog curl export bodies", () => {
+  it("exports form and multipart fields", () => {
+    const form = exportCurl({
+      method: "POST",
+      url: "https://x.test",
+      headers: [],
+      body: { type: "form", fields: [{ key: "a", value: "1 2", enabled: true }, { key: "b", value: "x", enabled: false }] }
+    });
+    expect(form).toContain("--data-raw a=1+2");
+
+    const multipart = exportCurl({
+      method: "POST",
+      url: "https://x.test",
+      headers: [],
+      body: { type: "multipart", fields: [
+        { key: "name", value: "n", enabled: true, kind: "text" },
+        { key: "file", kind: "file", fileName: "a.png", mimeType: "image/png", enabled: true }
+      ] }
+    });
+    expect(multipart).toContain("-F name=n");
+    expect(multipart).toContain("-F 'file=@a.png;type=image/png'");
+  });
+});

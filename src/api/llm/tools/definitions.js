@@ -1113,7 +1113,7 @@ export const TOOLS = [
   },
   {
     name: "postdog_save_request",
-    description: "Create or update a Postdog API request. Scripts can read/write environment variables with postdog.env.get/set/unset; variables are referenced as {{name}} in URL, headers, query, and body. Built-in template functions include {{$guid()}}, {{$now()}}, and {{$timestamp()}}.",
+    description: "Create or update a Postdog API request. Scripts can use `postdog` (alias `$`): $.env.get/set/unset (set also accepts an object for batch updates), $.request.headers/query.set(k, v) or .set({ k: v }), $.request.body.set(obj), $.response.json(), $.test(name, passed); variables are referenced as {{name}} in URL, headers, query, and body. Built-in template functions include {{$guid()}}, {{$now()}}, and {{$timestamp()}}.",
     schema: {
       type: "object",
       properties: {

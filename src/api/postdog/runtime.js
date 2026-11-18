@@ -1,5 +1,7 @@
+/* global chrome */
 import Sval from "sval";
-import { normalizeJsonRequestBody } from "./json";
+import { exportCurl } from "./curl";
+import { normalizeJsonRequestBody, parseJsonWithComments } from "./json";
 import {
   appendPostdogHistory,
   getActivePostdogEnvironment,
@@ -31,33 +33,61 @@ export async function runPostdogRequest(input = {}) {
   const runId = newPostdogId("pdh");
   const createdAt = Date.now();
 
-  await runScript(folder?.preScript, {
+  // A failing pre script (folder or request) aborts the send: running a request whose
+  // setup failed (missing token, bad URL...) is usually worse than not running it.
+  let abortReason = "";
+  const folderPreOk = await runScript(folder?.preScript, {
     phase: "folder_pre",
     request: mutableRequest,
     env,
     envVars,
     scriptState
   });
+  if (!folderPreOk) abortReason = "Folder pre script failed";
+  if (!abortReason) {
+    const preOk = await runScript(mutableRequest.preScript, {
+      phase: "pre",
+      request: mutableRequest,
+      env,
+      envVars,
+      scriptState
+    });
+    if (!preOk) abortReason = "Pre script failed";
+  }
 
-  await runScript(mutableRequest.preScript, {
-    phase: "pre",
-    request: mutableRequest,
-    env,
-    envVars,
-    scriptState
-  });
-
-  const prepared = prepareRequest(mutableRequest, envVars);
+  let prepared = { method: String(mutableRequest.method || "GET").toUpperCase(), url: applyVariables(mutableRequest.url, envVars), headers: {}, body: undefined };
+  if (!abortReason) {
+    try {
+      prepared = prepareRequest(mutableRequest, envVars);
+    } catch (error) {
+      scriptState.logs.push({ level: "error", phase: "prepare", message: `Invalid request: ${error?.message || error}` });
+      abortReason = `Invalid request: ${error?.message || error}`;
+    }
+  }
   const startedAt = performance.now();
   let responsePayload;
-  try {
-    const fetchResponse = await fetch(prepared.url, {
+  if (abortReason) {
+    responsePayload = {
+      error: `${abortReason}. The request was not sent; see the Logs tab.`,
+      ok: false,
+      status: 0,
+      statusText: "NOT_SENT",
+      headers: {},
+      bodyKind: "text",
+      bodyText: "",
+      bodyJson: null,
+      bodySizeBytes: 0,
+      bodyTruncated: false,
+      bodyNote: ""
+    };
+  } else try {
+    const fetchResponse = await withUserAgentRule(prepared, () => fetch(prepared.url, {
       method: prepared.method,
       headers: prepared.headers,
       body: prepared.body,
       credentials: "include",
       redirect: "follow"
-    });
+    }));
     const body = await readPostdogResponseBody(fetchResponse);
     responsePayload = {
       status: fetchResponse.status,
@@ -90,23 +120,27 @@ export async function runPostdogRequest(input = {}) {
   }
   const durationMs = Math.round(performance.now() - startedAt);
 
-  await runScript(mutableRequest.postScript, {
-    phase: "post",
-    request: mutableRequest,
-    response: responsePayload,
-    env,
-    envVars,
-    scriptState
-  });
+  // Post scripts need a real response; they are skipped when the request was not sent.
+  // A failing post script is logged and does not stop the next one.
+  if (!abortReason) {
+    await runScript(mutableRequest.postScript, {
+      phase: "post",
+      request: mutableRequest,
+      response: responsePayload,
+      env,
+      envVars,
+      scriptState
+    });
 
-  await runScript(folder?.postScript, {
-    phase: "folder_post",
-    request: mutableRequest,
-    response: responsePayload,
-    env,
-    envVars,
-    scriptState
-  });
+    await runScript(folder?.postScript, {
+      phase: "folder_post",
+      request: mutableRequest,
+      response: responsePayload,
+      env,
+      envVars,
+      scriptState
+    });
+  }
 
   const result = {
     success: !responsePayload.error,
@@ -117,12 +151,18 @@ export async function runPostdogRequest(input = {}) {
       method: prepared.method,
       url: prepared.url,
       headers: prepared.headers,
-      body: formatRequestBodySnapshot(mutableRequest, prepared.body, envVars)
+      body: formatRequestBodySnapshot(mutableRequest, prepared.body, envVars),
+      bodyType: mutableRequest.body?.type || "none",
+      // what was stored before variables / scripts were applied
+      template: buildRequestTemplateSnapshot(request),
+      environment: env ? { id: env.id, name: env.name } : null,
+      sent: !abortReason
     }, secretValues),
     response: redactSecrets(responsePayload, secretValues),
     durationMs,
     tests: scriptState.tests,
-    logs: redactSecrets(scriptState.logs, secretValues)
+    logs: redactSecrets(scriptState.logs, secretValues),
+    scriptFailed: scriptState.logs.some(log => log.level === "error")
   };
 
   const historyResponse = { ...result.response };
@@ -144,6 +184,69 @@ export async function runPostdogRequest(input = {}) {
   });
 
   return { ...result, runId: historyRun.runId };
+}
+
+function buildRequestTemplateSnapshot(request) {
+  const fields = (request.body?.fields || []).map(item => ({
+    key: item.key,
+    value: item.kind === "file" ? "" : item.value,
+    kind: item.kind || "text",
+    fileName: item.fileName || "",
+    enabled: item.enabled !== false
+  }));
+  return {
+    method: request.method,
+    url: request.url,
+    headers: (request.headers || []).map(item => ({ key: item.key, value: item.value, enabled: item.enabled !== false })),
+    query: (request.query || []).map(item => ({ key: item.key, value: item.value, enabled: item.enabled !== false })),
+    body: { type: request.body?.type || "none", text: request.body?.text || "", fields }
+  };
+}
+
+const USER_AGENT_RULE_BASE = 1_000_000;
+let userAgentRuleSeq = 0;
+
+// Chrome ignores a User-Agent set through fetch(), so apply it at the network layer with a
+// short-lived session rule that only matches this exact URL coming from the extension itself.
+async function withUserAgentRule(prepared, send) {
+  const uaKey = Object.keys(prepared.headers || {}).find(key => key.toLowerCase() === "user-agent");
+  const dnr = typeof chrome !== "undefined" ? chrome?.declarativeNetRequest : null;
+  if (!uaKey || !dnr?.updateSessionRules) return send();
+  const ruleId = USER_AGENT_RULE_BASE + (userAgentRuleSeq = (userAgentRuleSeq + 1) % 100000);
+  let installed = false;
+  try {
+    const target = new URL(prepared.url);
+    target.hash = "";
+    const regexFilter = `^${target.href.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+    if (regexFilter.length <= 1500) {
+      await dnr.updateSessionRules({
+        removeRuleIds: [ruleId],
+        addRules: [{
+          id: ruleId,
+          priority: 2,
+          action: {
+            type: "modifyHeaders",
+            requestHeaders: [{ header: "User-Agent", operation: "set", value: String(prepared.headers[uaKey]) }]
+          },
+          condition: {
+            regexFilter,
+            initiatorDomains: [chrome.runtime.id],
+            resourceTypes: ["xmlhttprequest"]
+          }
+        }]
+      });
+      installed = true;
+    }
+  } catch {
+    // Fall back to a plain fetch if the rule cannot be installed.
+  }
+  try {
+    return await send();
+  } finally {
+    if (installed) {
+      try { await dnr.updateSessionRules({ removeRuleIds: [ruleId] }); } catch { /* ignore */ }
+    }
+  }
 }
 
 async function getRequestFolder(request) {
@@ -220,6 +323,8 @@ function prepareRequest(request, vars) {
     body = request.body?.type === "json" ? normalizeJsonRequestBody(rawBody) : rawBody;
     if (request.body?.type === "json" && !hasHeader(headers, "content-type")) {
       headers["Content-Type"] = "application/json";
+    } else if (request.body?.type === "text" && rawBody && !hasHeader(headers, "content-type")) {
+      headers["Content-Type"] = "text/plain;charset=UTF-8";
     }
   }
   return { method, url, headers, body };
@@ -247,12 +352,77 @@ function removeHeader(headers, name) {
   }
 }
 
-function applyVariables(value, vars) {
-  return String(value ?? "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, key) => {
+function applyVariables(value, vars, options = {}) {
+  return String(value ?? "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, key) => {
     const builtin = evaluateBuiltinTemplateFunction(key);
     if (builtin != null) return builtin;
-    return Object.prototype.hasOwnProperty.call(vars, key) ? String(vars[key]) : "";
+    if (Object.prototype.hasOwnProperty.call(vars, key)) return String(vars[key]);
+    return options.keepUnknown ? match : "";
   });
+}
+
+/**
+ * Resolve {{variables}} from the given map and built-in template functions,
+ * merge query params into the URL and strip JSON comments so the request can be
+ * exported as a ready-to-run curl command. Scripts are not executed.
+ * Unknown variables are kept as {{name}} so they are easy to spot.
+ */
+export function resolvePostdogRequestForExport(request, vars = {}) {
+  const apply = value => applyVariables(value, vars, { keepUnknown: true });
+  const method = String(request?.method || "GET").toUpperCase();
+  const headers = (request?.headers || [])
+    .filter(item => item.enabled !== false && item.key)
+    .map(item => ({ key: apply(item.key), value: apply(item.value), enabled: true }));
+  let url = apply(request?.url || "");
+  const query = (request?.query || [])
+    .filter(item => item.enabled !== false && item.key)
+    .map(item => [apply(item.key), apply(item.value)]);
+  if (query.length) {
+    try {
+      // Keep unresolved {{vars}} readable instead of percent-encoding them.
+      if (url.includes("{{")) throw new Error("unresolved");
+      const parsed = new URL(url);
+      for (const [key, value] of query) parsed.searchParams.set(key, value);
+      url = parsed.toString();
+    } catch {
+      const search = new URLSearchParams(query).toString();
+      url = `${url}${url.includes("?") ? "&" : "?"}${search}`;
+    }
+  }
+  const type = request?.body?.type || "none";
+  let body = { type: "none", text: "", fields: [] };
+  if (BODY_METHODS.has(method) && type !== "none") {
+    if (type === "form" || type === "multipart") {
+      body = {
+        type,
+        text: "",
+        fields: (request.body.fields || [])
+          .filter(item => item.enabled !== false && item.key)
+          .map(item => ({
+            ...item,
+            key: apply(item.key),
+            value: apply(item.value),
+            fileName: item.kind === "file" ? apply(item.fileName || "file") : ""
+          }))
+      };
+    } else {
+      let text = apply(request.body?.text || "");
+      if (type === "json") {
+        try {
+          text = normalizeJsonRequestBody(text);
+        } catch {
+          // keep the raw text when it is not valid JSON
+        }
+      }
+      body = { type, text, fields: [] };
+    }
+  }
+  return { ...request, method, url, headers, query: [], body };
+}
+
+export async function exportPostdogCurl(request) {
+  const env = await getActivePostdogEnvironment();
+  return exportCurl(resolvePostdogRequestForExport(request, buildVariableMap(env)));
 }
 
 function evaluateBuiltinTemplateFunction(key) {
@@ -507,7 +677,7 @@ function formatBytes(bytes) {
 
 async function runScript(script, context) {
   const source = String(script || "").trim();
-  if (!source) return;
+  if (!source) return true;
   const api = buildScriptApi(context);
   const consoleApi = buildScriptConsole(context);
   const runtime = new Sval({
@@ -517,6 +687,7 @@ async function runScript(script, context) {
   });
   runtime.import({
     postdog: api,
+    $: api,
     request: api.request,
     response: api.response,
     env: api.env,
@@ -531,13 +702,14 @@ async function runScript(script, context) {
   try {
     runtime.run(`${SCRIPT_GUARDS}\nexports.__postdogPromise = (async () => {\n${source}\n})();`);
     await runtime.exports.__postdogPromise;
+    return true;
   } catch (error) {
     context.scriptState.logs.push({
       level: "error",
       phase: context.phase,
-      message: error?.message || String(error)
+      message: `${error?.name && error.name !== "Error" ? `${error.name}: ` : ""}${error?.message || String(error)}`
     });
-    if (context.phase === "pre") throw error;
+    return false;
   }
 }
 
@@ -551,18 +723,34 @@ const SCRIPT_GUARDS = [
 
 function buildScriptApi(context) {
   const envId = context.env?.id;
+  const setOne = async (key, value, options = {}) => {
+    if (!envId) throw new Error("No active environment");
+    const name = String(key ?? "").trim();
+    if (!name) return;
+    context.envVars[name] = String(value ?? "");
+    await setPostdogEnvironmentVariable(envId, name, value, options);
+  };
+  const unsetOne = async (key) => {
+    if (!envId) throw new Error("No active environment");
+    const name = String(key ?? "").trim();
+    delete context.envVars[name];
+    await unsetPostdogEnvironmentVariable(envId, name);
+  };
   const envApi = {
     get: (key) => context.envVars[String(key)] ?? "",
+    // set("k", v, options) or set({ k1: v1, k2: v2 }, options)
     set: async (key, value, options = {}) => {
-      if (!envId) throw new Error("No active environment");
-      context.envVars[String(key)] = String(value ?? "");
-      await setPostdogEnvironmentVariable(envId, key, value, options);
+      if (isPlainObject(key)) {
+        for (const [name, item] of Object.entries(key)) await setOne(name, item, value || {});
+        return;
+      }
+      await setOne(key, value, options);
     },
-    unset: async (key) => {
-      if (!envId) throw new Error("No active environment");
-      delete context.envVars[String(key)];
-      await unsetPostdogEnvironmentVariable(envId, key);
+    // unset("k") or unset(["k1", "k2"]) or unset("k1", "k2")
+    unset: async (...keys) => {
+      for (const key of keys.flat()) await unsetOne(key);
     },
+    has: (key) => Object.prototype.hasOwnProperty.call(context.envVars, String(key)),
     all: () => ({ ...context.envVars }),
     toJSON: () => ({ ...context.envVars })
   };
@@ -570,6 +758,7 @@ function buildScriptApi(context) {
     get: envApi.get,
     set: envApi.set,
     unset: envApi.unset,
+    has: envApi.has,
     all: envApi.all,
     toJSON: envApi.toJSON
   };
@@ -578,18 +767,31 @@ function buildScriptApi(context) {
     set method(value) { context.request.method = String(value || "GET").toUpperCase(); },
     get url() { return context.request.url; },
     set url(value) { context.request.url = String(value || ""); },
-    headers: {
-      set: (key, value) => upsertKeyValue(context.request.headers, key, value),
-      get: (key) => getKeyValue(context.request.headers, key),
-      unset: (key) => removeKeyValue(context.request.headers, key)
-    },
+    headers: buildKeyValueApi(() => context.request.headers, list => { context.request.headers = list; }),
+    query: buildKeyValueApi(() => context.request.query, list => { context.request.query = list; }),
     body: {
-      set: (value, type = "text") => {
-        context.request.body = { type, text: String(value ?? "") };
+      // set("raw text") | set({ a: 1 }) -> json | set(text, "json")
+      set: (value, type) => {
+        const isObject = value != null && typeof value === "object";
+        const currentType = context.request.body?.type;
+        const nextType = type || (isObject ? "json" : currentType && currentType !== "none" ? currentType : "text");
+        context.request.body = {
+          ...(context.request.body || {}),
+          type: nextType,
+          text: isObject ? JSON.stringify(value, null, 2) : String(value ?? "")
+        };
       },
-      get: () => context.request.body?.text || ""
+      get: () => context.request.body?.text || "",
+      json: () => {
+        try {
+          return parseJsonWithComments(context.request.body?.text || "");
+        } catch {
+          return null;
+        }
+      }
     }
   };
+  requestApi.params = requestApi.query;
   const responseApi = context.response ? {
     status: context.response.status,
     ok: context.response.ok,
@@ -654,6 +856,41 @@ function formatScriptLogArg(value) {
   } catch {
     return "[Unserializable]";
   }
+}
+
+function isPlainObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+// headers / query helpers:
+//   set("k", v) | set({ k1: v1, k2: v2 }), get("k"), has("k"),
+//   unset("k") | unset("k1", "k2") | unset(["k1", "k2"]), all()
+function buildKeyValueApi(getList, setList) {
+  const list = () => {
+    let current = getList();
+    if (!Array.isArray(current)) {
+      current = [];
+      setList(current);
+    }
+    return current;
+  };
+  const snapshot = () => Object.fromEntries(list().filter(item => item.enabled !== false).map(item => [item.key, item.value]));
+  return {
+    set: (key, value) => {
+      if (isPlainObject(key)) {
+        for (const [name, item] of Object.entries(key)) upsertKeyValue(list(), name, item);
+        return;
+      }
+      upsertKeyValue(list(), key, value);
+    },
+    get: (key) => getKeyValue(list(), key),
+    has: (key) => list().some(item => item.key.toLowerCase() === String(key || "").trim().toLowerCase()),
+    unset: (...keys) => {
+      for (const key of keys.flat()) removeKeyValue(list(), key);
+    },
+    all: snapshot,
+    toJSON: snapshot
+  };
 }
 
 function upsertKeyValue(list, key, value) {

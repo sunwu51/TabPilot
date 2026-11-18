@@ -10,7 +10,7 @@ import {
   savePostdogRequest
 } from "./index";
 import { formatJsonWithComments, normalizeJsonRequestBody, stripJsonComments } from "./json";
-import { runPostdogRequest } from "./runtime";
+import { exportPostdogCurl, runPostdogRequest } from "./runtime";
 
 describe("postdog runtime", () => {
   afterEach(() => {
@@ -457,5 +457,76 @@ describe("postdog runtime", () => {
     expect(formatted).toContain("/* keep block */");
     expect(formatted).toContain('  "c": 2');
     expect(normalizeJsonRequestBody(formatted)).toBe('{"a":1,"b":{"c":2},"d":3}');
+  });
+  it("exposes $ as a shortcut with batch setters for env, headers, query and body", async () => {
+    await savePostdogEnvironment({ id: "env-1", name: "local", variables: [{ key: "old", value: "x", enabled: true }] });
+    await chrome.storage.local.set({ [POSTDOG_ACTIVE_ENVIRONMENT_KEY]: "env-1" });
+    const request = await savePostdogRequest({
+      id: "req-dollar",
+      name: "dollar",
+      method: "POST",
+      url: "https://api.example.com/items",
+      headers: [{ key: "X-Remove", value: "1", enabled: true }],
+      preScript: [
+        "$.request.headers.set({ 'X-A': 'a', 'X-B': 2 });",
+        "$.request.headers.unset('X-Remove');",
+        "$.request.query.set({ page: 1, size: 20 });",
+        "$.request.body.set({ name: 'n', n: 1 });"
+      ].join("\n"),
+      postScript: [
+        "await $.env.set({ token: $.response.json().token, status: $.response.status });",
+        "await $.env.unset('old');",
+        "$.test('has token', $.env.has('token') && !$.env.has('old'));"
+      ].join("\n")
+    });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ token: "t-1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })));
+
+    const result = await runPostdogRequest({ id: request.id });
+
+    const [url, init] = fetch.mock.calls[0];
+    expect(url).toBe("https://api.example.com/items?page=1&size=20");
+    expect(init.headers).toMatchObject({ "X-A": "a", "X-B": "2", "Content-Type": "application/json" });
+    expect(init.headers["X-Remove"]).toBeUndefined();
+    expect(JSON.parse(init.body)).toEqual({ name: "n", n: 1 });
+    expect(result.tests).toEqual({ "has token": true });
+    const variables = getChromeStorageSnapshot()[POSTDOG_ENVIRONMENTS_KEY][0].variables;
+    expect(variables).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "token", value: "t-1" }),
+      expect.objectContaining({ key: "status", value: "200" })
+    ]));
+    expect(variables.some(item => item.key === "old")).toBe(false);
+  });
+
+  it("exports curl with environment variables and query params resolved", async () => {
+    await savePostdogEnvironment({
+      id: "env-1",
+      name: "local",
+      variables: [
+        { key: "baseUrl", value: "https://api.example.com", enabled: true },
+        { key: "token", value: "secret-token", enabled: true, secret: true },
+        { key: "name", value: "alice", enabled: true }
+      ]
+    });
+    await chrome.storage.local.set({ [POSTDOG_ACTIVE_ENVIRONMENT_KEY]: "env-1" });
+
+    const text = await exportPostdogCurl({
+      method: "POST",
+      url: "{{baseUrl}}/users/{{missing}}",
+      headers: [
+        { key: "Authorization", value: "Bearer {{token}}", enabled: true },
+        { key: "X-Disabled", value: "1", enabled: false }
+      ],
+      query: [{ key: "q", value: "{{name}}", enabled: true }],
+      body: { type: "json", text: "{\n  // comment\n  \"name\": \"{{name}}\"\n}" }
+    });
+
+    expect(text).toContain("https://api.example.com/users/{{missing}}?q=alice");
+    expect(text).toContain("Authorization: Bearer secret-token");
+    expect(text).not.toContain("X-Disabled");
+    expect(text).toContain(`--data-raw '{"name":"alice"}'`);
   });
 });
