@@ -48,6 +48,23 @@ describe("built-in long-term memory", () => {
     expect(generic.signals.weakMatchPenalty).toBe(0.35);
   });
 
+  it("recalls a memory by words from its subject even when keywords use other wording", () => {
+    const pen = {
+      type: "workflow",
+      subject: "可复用讲解画笔脚本",
+      summary: "已将网页圈画工具永久保存于 /scripts/lecture-pen.js",
+      content: "脚本位于浏览器 VFS /scripts/lecture-pen.js，无需 args",
+      keywords: ["圈画", "lecture pen"],
+      entities: [],
+      scope: { kind: "global", value: "" },
+      importance: 0.7
+    };
+    expect(scoreMemory(pen, "讲解画笔 画笔 开启 标注 脚本").score).toBeGreaterThanOrEqual(MEMORY_SEARCH_MIN_SCORE);
+    expect(scoreMemory(pen, "开启讲解画笔").score).toBeGreaterThanOrEqual(MEMORY_SEARCH_MIN_SCORE);
+    expect(scoreMemory(pen, "讲解画笔").score).toBeGreaterThanOrEqual(MEMORY_SEARCH_MIN_SCORE);
+    expect(scoreMemory(pen, "今天天气怎么样").score).toBeLessThan(MEMORY_SEARCH_MIN_SCORE);
+  });
+
   it("creates and upserts by scope, type, and stable subject", async () => {
     vi.spyOn(Date, "now").mockReturnValueOnce(100).mockReturnValueOnce(100).mockReturnValueOnce(100);
     const created = await _execMemorySave(openCodeMemory);
