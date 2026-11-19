@@ -126,6 +126,16 @@ export function FileManager() {
     }
   }
 
+  async function remove(entry) {
+    if (!entry || !window.confirm(t("filesDeleteConfirm", { path: entry.path }))) return;
+    try {
+      await chromeStorageVfs.unlink(entry.path);
+      setRefresh(value => value + 1);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   return <main>
     <header><h1>{t("fileManager")}</h1><UiButton onClick={() => setRefresh(value => value + 1)}>{t("filesRefresh")}</UiButton></header>
     <nav aria-label={t("filesNavigation")}><UiButton onClick={() => setPath("/")}>{t("filesRoot")}</UiButton>{path.split("/").filter(Boolean).map((part, index, parts) => <UiButton key={index} onClick={() => setPath(`/${parts.slice(0, index + 1).join("/")}`)}>/ {part}</UiButton>)}</nav>
@@ -142,7 +152,7 @@ export function FileManager() {
         </div>)}
       </section>
       <section className="file-preview" aria-label={t("filesTextView")}>
-        {selected ? <><div className="preview-toolbar"><strong>{selected.path}</strong>{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(selected.kind) })}</a>}</div><p>{t("filesRevision", { revision: selected.revision })}</p>{isRunnableScript(selected) && <ScriptRunner path={selected.path} />}<pre>{content}</pre></> : <p>{t("filesHint")}</p>}
+        {selected ? <><div className="preview-toolbar"><strong>{selected.path}</strong>{selected.type === "file" && selected.kind === "text" && <UiButton variant="danger" onClick={() => void remove(selected)}>{t("filesDelete")}</UiButton>}{selected.url && <a href={selected.url} target="_blank" rel="noreferrer">{t("filesOpen", { kind: kindLabel(selected.kind) })}</a>}</div><p>{t("filesRevision", { revision: selected.revision })}</p>{isRunnableScript(selected) && <ScriptRunner path={selected.path} />}<pre>{content}</pre></> : <p>{t("filesHint")}</p>}
       </section>
     </div>
   </main>;

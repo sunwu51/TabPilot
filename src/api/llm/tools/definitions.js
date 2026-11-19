@@ -1082,7 +1082,7 @@ export const TOOLS = [
       properties: {
         id: { type: "string", description: "Optional existing folder id to update." },
         name: { type: "string", description: "Folder name." },
-        parentId: { type: "string", description: "Optional parent folder id. Current UI keeps folder management simple." },
+        parentId: { type: "string", description: "Optional parent folder id for nesting (folder scripts run outermost first)." },
         preScript: { type: "string", description: "Optional script run before requests in this folder." },
         postScript: { type: "string", description: "Optional script run after requests in this folder." }
       },

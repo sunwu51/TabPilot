@@ -126,8 +126,20 @@ export async function deletePostdogFolder(id) {
   const folderId = String(id || "").trim();
   const folders = await listPostdogFolders();
   const requests = await listPostdogRequests();
-  const nextFolders = folders.filter(item => item.id !== folderId);
-  const nextRequests = requests.filter(item => item.folderId !== folderId);
+  // Remove the folder together with all of its subfolders.
+  const doomed = new Set([folderId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const item of folders) {
+      if (item.parentId && doomed.has(item.parentId) && !doomed.has(item.id)) {
+        doomed.add(item.id);
+        grew = true;
+      }
+    }
+  }
+  const nextFolders = folders.filter(item => !doomed.has(item.id));
+  const nextRequests = requests.filter(item => !doomed.has(item.folderId));
   await chrome.storage.local.set({
     [POSTDOG_FOLDERS_KEY]: nextFolders,
     [POSTDOG_REQUESTS_KEY]: nextRequests
@@ -172,6 +184,68 @@ export async function deletePostdogRequest(id) {
   const next = requests.filter(item => item.id !== requestId);
   await chrome.storage.local.set({ [POSTDOG_REQUESTS_KEY]: next });
   return { id: requestId, removed: requests.length - next.length };
+}
+
+/**
+ * Persist a new sidebar order. `folderIds` is the desired folder order; `requests` is the desired
+ * request order as [{ id, folderId }] (folderId may be null). Unknown ids are ignored and entities
+ * missing from the payload keep their relative order at the end.
+ */
+export async function reorderPostdogTree({ folderIds, folders: folderOrder, requests: requestOrder } = {}) {
+  const [folders, requests] = await Promise.all([listPostdogFolders(), listPostdogRequests()]);
+  const folderById = new Map(folders.map(item => [item.id, item]));
+  const requestById = new Map(requests.map(item => [item.id, item]));
+  const now = Date.now();
+
+  // `folders` ([{ id, parentId }]) supersedes the legacy flat `folderIds` list.
+  const folderEntries = Array.isArray(folderOrder)
+    ? folderOrder
+    : (Array.isArray(folderIds) ? folderIds.map(id => ({ id })) : []);
+  const nextFolders = [];
+  for (const entry of folderEntries) {
+    const folder = folderById.get(String(entry?.id));
+    if (!folder || nextFolders.some(item => item.id === folder.id)) continue;
+    const wanted = entry.parentId === undefined ? folder.parentId : (String(entry.parentId || "").trim() || null);
+    const parentId = wanted && wanted !== folder.id && folderById.has(wanted) ? wanted : null;
+    nextFolders.push(parentId === folder.parentId ? folder : { ...folder, parentId, updatedAt: now });
+  }
+  for (const folder of folders) if (!nextFolders.some(item => item.id === folder.id)) nextFolders.push(folder);
+  // Break any cycle introduced by the new parents by lifting the offender to the root.
+  const parentOf = new Map(nextFolders.map(item => [item.id, item.parentId]));
+  for (const folder of nextFolders) {
+    const seen = new Set([folder.id]);
+    let cursor = parentOf.get(folder.id);
+    while (cursor) {
+      if (seen.has(cursor)) {
+        parentOf.set(folder.id, null);
+        folder.parentId = null;
+        break;
+      }
+      seen.add(cursor);
+      cursor = parentOf.get(cursor);
+    }
+  }
+
+  const nextRequests = [];
+  let moved = 0;
+  for (const entry of Array.isArray(requestOrder) ? requestOrder : []) {
+    const request = requestById.get(String(entry?.id));
+    if (!request || nextRequests.some(item => item.id === request.id)) continue;
+    const folderId = entry.folderId && folderById.has(String(entry.folderId)) ? String(entry.folderId) : null;
+    if (folderId !== request.folderId) {
+      nextRequests.push({ ...request, folderId, updatedAt: now });
+      moved += 1;
+    } else {
+      nextRequests.push(request);
+    }
+  }
+  for (const request of requests) if (!nextRequests.some(item => item.id === request.id)) nextRequests.push(request);
+
+  await chrome.storage.local.set({
+    [POSTDOG_FOLDERS_KEY]: nextFolders,
+    [POSTDOG_REQUESTS_KEY]: nextRequests
+  });
+  return { folders: nextFolders.length, requests: nextRequests.length, moved };
 }
 
 export async function listPostdogEnvironments() {

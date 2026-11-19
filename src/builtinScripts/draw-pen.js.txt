@@ -1,0 +1,330 @@
+// TabPilot built-in: 画笔 / Draw pen — scribble on top of the page for demos.
+// Drawings are anchored to the page and scroll with it.
+// Run it again from the right-click menu to close it.
+const HOST_ID = "__tabpilot_draw__";
+const existing = document.getElementById(HOST_ID);
+if (existing) {
+  if (existing.__cleanup) existing.__cleanup();
+  existing.remove();
+  return "closed";
+}
+
+const zh = /^zh/i.test(navigator.language || "");
+const L = (cn, en) => (zh ? cn : en);
+
+const COLORS = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#111827", "#ffffff"];
+const state = { tool: "pen", mode: "draw", color: COLORS[0], size: 4, strokes: [], current: null };
+
+const host = document.createElement("div");
+host.id = HOST_ID;
+host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;";
+const root = host.attachShadow({ mode: "open" });
+
+const css = `
+:host { all: initial; }
+* { box-sizing: border-box; }
+canvas { position: fixed; left: 0; top: 0; touch-action: none; }
+.bar {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  background: rgba(24, 24, 27, 0.92); color: #f4f4f5; border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.12);
+  font: 13px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; user-select: none;
+  backdrop-filter: blur(8px); max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center;
+}
+.grip { cursor: grab; padding: 4px 4px; opacity: .6; letter-spacing: -2px; }
+.grip:active { cursor: grabbing; }
+.sep { width: 1px; align-self: stretch; background: rgba(255,255,255,.15); margin: 2px 2px; }
+button {
+  all: unset; box-sizing: border-box; cursor: pointer; padding: 5px 9px; border-radius: 8px;
+  color: #f4f4f5; font: inherit; white-space: nowrap;
+}
+button:hover { background: rgba(255,255,255,.12); }
+button.on { background: #3b82f6; color: #fff; }
+button.danger:hover { background: #dc2626; }
+.sw { width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); }
+.sw.on { border-color: #fff; box-shadow: 0 0 0 2px #3b82f6; background-clip: padding-box; }
+input[type=color] { width: 26px; height: 26px; padding: 0; border: 0; background: none; cursor: pointer; }
+input[type=range] { width: 90px; accent-color: #3b82f6; cursor: pointer; }
+.size { display: flex; align-items: center; gap: 6px; }
+.dot { display: inline-block; border-radius: 50%; background: #fff; }
+.num { min-width: 22px; text-align: right; opacity: .8; }
+`;
+try {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(css);
+  root.adoptedStyleSheets = [sheet];
+} catch (e) {
+  const style = document.createElement("style");
+  style.textContent = css;
+  root.appendChild(style);
+}
+
+const canvas = document.createElement("canvas");
+root.appendChild(canvas);
+const ctx = canvas.getContext("2d");
+
+const bar = document.createElement("div");
+bar.className = "bar";
+root.appendChild(bar);
+
+function mkBtn(label, title, onClick, cls) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.title = title || "";
+  if (cls) b.className = cls;
+  b.addEventListener("click", onClick);
+  return b;
+}
+function mkSep() {
+  const s = document.createElement("span");
+  s.className = "sep";
+  return s;
+}
+
+const grip = document.createElement("span");
+grip.className = "grip";
+grip.textContent = "⋮⋮";
+grip.title = L("拖动工具栏", "Drag toolbar");
+bar.appendChild(grip);
+
+const penBtn = mkBtn("✏️ " + L("画笔", "Pen"), "", () => setTool("pen"));
+const eraserBtn = mkBtn("🧽 " + L("橡皮", "Eraser"), "", () => setTool("eraser"));
+const mouseBtn = mkBtn("🖱 " + L("鼠标", "Mouse"), L("切换为鼠标：可操作页面，笔迹保留", "Use the page normally; drawings stay"), () => setMode("mouse"));
+bar.append(penBtn, eraserBtn, mouseBtn, mkSep());
+
+const swatchBtns = [];
+COLORS.forEach((c) => {
+  const b = document.createElement("button");
+  b.className = "sw";
+  b.style.background = c;
+  b.title = c;
+  b.addEventListener("click", () => {
+    state.color = c;
+    if (state.tool === "eraser") state.tool = "pen";
+    setMode("draw");
+    sync();
+  });
+  swatchBtns.push([c, b]);
+  bar.appendChild(b);
+});
+const colorInput = document.createElement("input");
+colorInput.type = "color";
+colorInput.value = state.color;
+colorInput.title = L("自定义颜色", "Custom color");
+colorInput.addEventListener("input", () => {
+  state.color = colorInput.value;
+  if (state.tool === "eraser") state.tool = "pen";
+  setMode("draw");
+  sync();
+});
+bar.append(colorInput, mkSep());
+
+const sizeWrap = document.createElement("span");
+sizeWrap.className = "size";
+const sizeDot = document.createElement("span");
+sizeDot.className = "dot";
+const sizeInput = document.createElement("input");
+sizeInput.type = "range";
+sizeInput.min = "1";
+sizeInput.max = "40";
+sizeInput.value = String(state.size);
+sizeInput.title = L("粗细", "Thickness");
+const sizeNum = document.createElement("span");
+sizeNum.className = "num";
+sizeInput.addEventListener("input", () => {
+  state.size = Number(sizeInput.value) || 1;
+  sync();
+});
+sizeWrap.append(sizeDot, sizeInput, sizeNum);
+bar.append(sizeWrap, mkSep());
+
+bar.append(
+  mkBtn("↶ " + L("撤销", "Undo"), "Ctrl+Z", undo),
+  mkBtn("🗑 " + L("清除", "Clear"), "", clearAll, "danger"),
+  mkBtn("✕", L("关闭 (Esc)", "Close (Esc)"), closeAll, "danger")
+);
+
+function eraserSize() { return state.size * 3; }
+
+function sync() {
+  penBtn.classList.toggle("on", state.mode === "draw" && state.tool === "pen");
+  eraserBtn.classList.toggle("on", state.mode === "draw" && state.tool === "eraser");
+  mouseBtn.classList.toggle("on", state.mode === "mouse");
+  swatchBtns.forEach((pair) => pair[1].classList.toggle("on", pair[0] === state.color && state.tool === "pen"));
+  colorInput.value = /^#[0-9a-f]{6}$/i.test(state.color) ? state.color : "#ef4444";
+  sizeNum.textContent = String(state.size);
+  const d = Math.max(4, Math.min(24, state.size));
+  sizeDot.style.width = d + "px";
+  sizeDot.style.height = d + "px";
+  sizeDot.style.background = state.tool === "eraser" ? "#a1a1aa" : state.color;
+  canvas.style.pointerEvents = state.mode === "draw" ? "auto" : "none";
+  canvas.style.cursor = state.mode === "draw" ? (state.tool === "eraser" ? "cell" : "crosshair") : "default";
+}
+function setTool(tool) {
+  state.tool = tool;
+  state.mode = "draw";
+  sync();
+}
+function setMode(mode) {
+  state.mode = mode;
+  sync();
+}
+
+function resize() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const r = window.devicePixelRatio || 1;
+  canvas.width = Math.round(w * r);
+  canvas.height = Math.round(h * r);
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
+  redraw();
+}
+function applyStyle(s) {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = s.size;
+  ctx.globalCompositeOperation = s.erase ? "destination-out" : "source-over";
+  ctx.strokeStyle = s.color;
+  ctx.fillStyle = s.color;
+}
+// Strokes are stored in page coordinates, so they scroll together with the page.
+function applyView() {
+  const r = window.devicePixelRatio || 1;
+  ctx.setTransform(r, 0, 0, r, -window.scrollX * r, -window.scrollY * r);
+}
+function drawStroke(s) {
+  const p = s.points;
+  if (!p.length) return;
+  ctx.save();
+  applyView();
+  applyStyle(s);
+  if (p.length === 1) {
+    ctx.beginPath();
+    ctx.arc(p[0][0], p[0][1], s.size / 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length - 1; i++) {
+      const mx = (p[i][0] + p[i + 1][0]) / 2;
+      const my = (p[i][1] + p[i + 1][1]) / 2;
+      ctx.quadraticCurveTo(p[i][0], p[i][1], mx, my);
+    }
+    ctx.lineTo(p[p.length - 1][0], p[p.length - 1][1]);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function redraw() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  state.strokes.forEach(drawStroke);
+  if (state.current) drawStroke(state.current);
+}
+let scrollFrame = 0;
+function onScroll() {
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0;
+    redraw();
+  });
+}
+
+function pos(e) { return [e.clientX + window.scrollX, e.clientY + window.scrollY]; }
+canvas.addEventListener("pointerdown", (e) => {
+  if (state.mode !== "draw" || e.button !== 0) return;
+  e.preventDefault();
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  const erase = state.tool === "eraser";
+  state.current = { color: state.color, size: erase ? eraserSize() : state.size, erase: erase, points: [pos(e)] };
+  drawStroke(state.current);
+});
+canvas.addEventListener("pointermove", (e) => {
+  const s = state.current;
+  if (!s) return;
+  const prev = s.points[s.points.length - 1];
+  const next = pos(e);
+  if (Math.abs(next[0] - prev[0]) + Math.abs(next[1] - prev[1]) < 1) return;
+  s.points.push(next);
+  ctx.save();
+  applyView();
+  applyStyle(s);
+  ctx.beginPath();
+  ctx.moveTo(prev[0], prev[1]);
+  ctx.lineTo(next[0], next[1]);
+  ctx.stroke();
+  ctx.restore();
+});
+function endStroke() {
+  const s = state.current;
+  if (!s) return;
+  state.current = null;
+  state.strokes.push(s);
+  redraw(); // re-render the finished stroke smoothed
+}
+canvas.addEventListener("pointerup", endStroke);
+canvas.addEventListener("pointercancel", endStroke);
+
+function undo() {
+  state.strokes.pop();
+  redraw();
+}
+function clearAll() {
+  state.strokes = [];
+  state.current = null;
+  redraw();
+}
+
+function onKey(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeAll();
+  } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z" && state.mode === "draw") {
+    e.preventDefault();
+    undo();
+  }
+}
+
+// Drag the toolbar by its grip.
+grip.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const rect = bar.getBoundingClientRect();
+  const dx = e.clientX - rect.left;
+  const dy = e.clientY - rect.top;
+  bar.style.transform = "none";
+  bar.style.left = rect.left + "px";
+  bar.style.top = rect.top + "px";
+  const move = (ev) => {
+    const x = Math.min(Math.max(0, ev.clientX - dx), window.innerWidth - 60);
+    const y = Math.min(Math.max(0, ev.clientY - dy), window.innerHeight - 30);
+    bar.style.left = x + "px";
+    bar.style.top = y + "px";
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move, true);
+    window.removeEventListener("pointerup", up, true);
+  };
+  window.addEventListener("pointermove", move, true);
+  window.addEventListener("pointerup", up, true);
+});
+
+function closeAll() {
+  if (host.__cleanup) host.__cleanup();
+  host.remove();
+}
+host.__cleanup = () => {
+  window.removeEventListener("resize", resize);
+  window.removeEventListener("scroll", onScroll, true);
+  window.removeEventListener("keydown", onKey, true);
+  host.__cleanup = null;
+};
+
+window.addEventListener("resize", resize);
+window.addEventListener("scroll", onScroll, true);
+window.addEventListener("keydown", onKey, true);
+document.documentElement.appendChild(host);
+resize();
+sync();
+return "opened";

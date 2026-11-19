@@ -216,6 +216,44 @@
   background: var(--c-muted);
 }
 
+.pd-folder-row.dragging,
+.pd-request-item.dragging {
+  opacity: 0.4;
+}
+
+.pd-folder-row.drop-before::before,
+.pd-request-item.drop-before::before,
+.pd-folder-row.drop-after::after,
+.pd-request-item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--pd-accent);
+  pointer-events: none;
+}
+
+.pd-folder-row.drop-before::before,
+.pd-request-item.drop-before::before {
+  top: -1px;
+}
+
+.pd-folder-row.drop-after::after,
+.pd-request-item.drop-after::after {
+  bottom: -1px;
+}
+
+.pd-folder-row.drop-into {
+  background: var(--pd-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--pd-accent);
+}
+
+.pd-tree.drop-root {
+  box-shadow: inset 0 -2px 0 var(--pd-accent);
+}
+
 .pd-folder-toggle {
   display: flex;
   align-items: center;
