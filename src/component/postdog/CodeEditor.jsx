@@ -264,5 +264,5 @@ export default function CodeEditor({ value, onChange, language = "text", placeho
     view.dispatch({ changes: { from: 0, to: current.length, insert: next }, annotations: External.of(true) });
   }, [value]);
 
-  return <div className={`postdog-code-editor ${className}`} ref={hostRef} />;
+  return <div className={`pd-code-editor ${className}`} ref={hostRef} />;
 }
