@@ -8,6 +8,8 @@ const MESSAGES = {
   zh: {
     fileManager: "file manager",
     filesRefresh: "刷新",
+    filesDelete: "删除",
+    filesDeleteConfirm: "删除文件 {path}？",
     filesNavigation: "目录导航",
     filesRoot: "根目录",
     filesList: "文件列表",
@@ -200,6 +202,8 @@ const MESSAGES = {
   en: {
     fileManager: "file manager",
     filesRefresh: "Refresh",
+    filesDelete: "Delete",
+    filesDeleteConfirm: "Delete file {path}?",
     filesNavigation: "Directory navigation",
     filesRoot: "Root",
     filesList: "File list",

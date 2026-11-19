@@ -26,7 +26,7 @@ export async function runPostdogRequest(input = {}) {
 
   const env = await getActivePostdogEnvironment();
   const envVars = buildVariableMap(env);
-  const folder = await getRequestFolder(request);
+  const folderChain = await getRequestFolderChain(request); // outermost first
   const secretValues = buildSecretValues(env);
   const scriptState = { tests: {}, logs: [] };
   const mutableRequest = cloneRequest(request);
@@ -36,14 +36,19 @@ export async function runPostdogRequest(input = {}) {
   // A failing pre script (folder or request) aborts the send: running a request whose
   // setup failed (missing token, bad URL...) is usually worse than not running it.
   let abortReason = "";
-  const folderPreOk = await runScript(folder?.preScript, {
-    phase: "folder_pre",
-    request: mutableRequest,
-    env,
-    envVars,
-    scriptState
-  });
-  if (!folderPreOk) abortReason = "Folder pre script failed";
+  for (const folder of folderChain) {
+    const folderPreOk = await runScript(folder.preScript, {
+      phase: "folder_pre",
+      request: mutableRequest,
+      env,
+      envVars,
+      scriptState
+    });
+    if (!folderPreOk) {
+      abortReason = "Folder pre script failed";
+      break;
+    }
+  }
   if (!abortReason) {
     const preOk = await runScript(mutableRequest.preScript, {
       phase: "pre",
@@ -132,14 +137,16 @@ export async function runPostdogRequest(input = {}) {
       scriptState
     });
 
-    await runScript(folder?.postScript, {
-      phase: "folder_post",
-      request: mutableRequest,
-      response: responsePayload,
-      env,
-      envVars,
-      scriptState
-    });
+    for (const folder of [...folderChain].reverse()) {
+      await runScript(folder.postScript, {
+        phase: "folder_post",
+        request: mutableRequest,
+        response: responsePayload,
+        env,
+        envVars,
+        scriptState
+      });
+    }
   }
 
   const result = {
@@ -249,11 +256,20 @@ async function withUserAgentRule(prepared, send) {
   }
 }
 
-async function getRequestFolder(request) {
-  const folderId = String(request?.folderId || "").trim();
-  if (!folderId) return null;
-  const folders = await listPostdogFolders();
-  return folders.find(item => item.id === folderId) || null;
+/** Folders containing the request, outermost first (cycle-safe). */
+async function getRequestFolderChain(request) {
+  let folderId = String(request?.folderId || "").trim();
+  if (!folderId) return [];
+  const byId = new Map((await listPostdogFolders()).map(item => [item.id, item]));
+  const chain = [];
+  const seen = new Set();
+  while (folderId && byId.has(folderId) && !seen.has(folderId)) {
+    seen.add(folderId);
+    const folder = byId.get(folderId);
+    chain.unshift(folder);
+    folderId = folder.parentId || "";
+  }
+  return chain;
 }
 
 function buildVariableMap(env) {

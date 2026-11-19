@@ -78,6 +78,9 @@ export default function PostdogPanel() {
   const [folderModalId, setFolderModalId] = useState("");
   const [curlModalOpen, setCurlModalOpen] = useState(false);
 
+  const [dragging, setDragging] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+  const dragRef = useRef(null);
   const draftRef = useRef(null);
   const requestsRef = useRef([]);
   const knownRef = useRef(new Map()); // entity key -> updatedAt we already have locally
@@ -441,8 +444,12 @@ export default function PostdogPanel() {
 
   async function deleteFolder(folder) {
     if (!folder?.id) return;
-    const count = requestsRef.current.filter(item => item.folderId === folder.id).length;
-    const message = count
+    const doomed = descendantFolderIds(folders, folder.id);
+    doomed.add(folder.id);
+    const count = requestsRef.current.filter(item => doomed.has(item.folderId)).length;
+    const message = doomed.size > 1
+      ? tr(`删除文件夹「${folder.name}」及其 ${doomed.size - 1} 个子文件夹和 ${count} 个请求？`, `Delete folder "${folder.name}", its ${doomed.size - 1} subfolder(s) and ${count} request(s)?`)
+      : count
       ? tr(`删除文件夹「${folder.name}」以及里面的 ${count} 个请求？`, `Delete folder "${folder.name}" and its ${count} request(s)?`)
       : tr(`删除文件夹「${folder.name}」？`, `Delete folder "${folder.name}"?`);
     if (!window.confirm(message)) return;
@@ -453,13 +460,14 @@ export default function PostdogPanel() {
       return;
     }
     setFolderModalId("");
-    setFolders(list => list.filter(item => item.id !== folder.id));
-    const remaining = requestsRef.current.filter(item => item.folderId !== folder.id);
+    setFolders(list => list.filter(item => !doomed.has(item.id)));
+    const remaining = requestsRef.current.filter(item => !doomed.has(item.folderId));
     for (const item of requestsRef.current) {
-      if (item.folderId === folder.id) autosave.discard(requestKey(item.id));
+      if (doomed.has(item.folderId)) autosave.discard(requestKey(item.id));
     }
+    for (const id of doomed) autosave.discard(folderKey(id));
     setRequests(remaining);
-    if (draftRef.current?.folderId === folder.id) setDraft(remaining[0] ? clone(remaining[0]) : null);
+    if (doomed.has(draftRef.current?.folderId)) setDraft(remaining[0] ? clone(remaining[0]) : null);
     toast.success(tr("文件夹已删除", "Folder deleted"));
   }
 
@@ -471,6 +479,126 @@ export default function PostdogPanel() {
       try { localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...next])); } catch { /* ignore */ }
       return next;
     });
+  }
+
+  // ---------------------------------------------------------------- drag & drop (sidebar tree)
+
+  function startDrag(event, type, id) {
+    dragRef.current = { type, id };
+    event.dataTransfer.effectAllowed = "move";
+    try { event.dataTransfer.setData("text/plain", `${type}:${id}`); } catch { /* ignore */ }
+    setDragging({ type, id });
+  }
+
+  function endDrag() {
+    dragRef.current = null;
+    setDragging(null);
+    setDropTarget(null);
+  }
+
+  function hoverDrop(event, kind, id) {
+    const drag = dragRef.current;
+    if (!drag || searchText) return;
+    let pos = null;
+    if (kind === "request") {
+      if (drag.type !== "request" || drag.id === id) return;
+      pos = isUpperHalf(event) ? "before" : "after";
+    } else if (kind === "folder") {
+      if (drag.type === "folder") {
+        if (drag.id === id || descendantFolderIds(folders, drag.id).has(id)) return;
+        pos = dropZone(event);
+      } else {
+        pos = "into";
+      }
+    } else if (kind === "root") {
+      pos = "end";
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDropTarget(prev => (prev && prev.kind === kind && prev.id === id && prev.pos === pos ? prev : { kind, id, pos }));
+  }
+
+  function dropOn(event, kind, id) {
+    const drag = dragRef.current;
+    const target = dropTarget;
+    event.preventDefault();
+    event.stopPropagation();
+    endDrag();
+    if (!drag || !target || target.kind !== kind || target.id !== id) return;
+    void applyDrop(drag, target);
+  }
+
+  async function applyDrop(drag, target) {
+    let nextFolders = folders;
+    let nextRequests = requests;
+    if (drag.type === "folder") {
+      const dragged = folders.find(item => item.id === drag.id);
+      if (!dragged) return;
+      const rest = folders.filter(item => item.id !== drag.id);
+      if (target.kind === "folder") {
+        const at = rest.findIndex(item => item.id === target.id);
+        if (at < 0) return;
+        if (target.pos === "into") {
+          rest.push({ ...dragged, parentId: target.id });
+          setCollapsedFolders(prev => {
+            if (!prev.has(target.id)) return prev;
+            const copy = new Set(prev);
+            copy.delete(target.id);
+            try { localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...copy])); } catch { /* ignore */ }
+            return copy;
+          });
+        } else {
+          rest.splice(target.pos === "before" ? at : at + 1, 0, { ...dragged, parentId: rest[at].parentId || null });
+        }
+      } else {
+        rest.push({ ...dragged, parentId: null });
+      }
+      nextFolders = rest;
+    } else {
+      const dragged = requests.find(item => item.id === drag.id);
+      if (!dragged) return;
+      const rest = requests.filter(item => item.id !== drag.id);
+      let moved = dragged;
+      if (target.kind === "request") {
+        const at = rest.findIndex(item => item.id === target.id);
+        if (at < 0) return;
+        moved = { ...dragged, folderId: rest[at].folderId || null };
+        rest.splice(target.pos === "before" ? at : at + 1, 0, moved);
+      } else if (target.kind === "folder") {
+        moved = { ...dragged, folderId: target.id };
+        let last = -1;
+        rest.forEach((item, index) => { if (item.folderId === target.id) last = index; });
+        rest.splice(last < 0 ? rest.length : last + 1, 0, moved);
+        setCollapsedFolders(prev => {
+          if (!prev.has(target.id)) return prev;
+          const copy = new Set(prev);
+          copy.delete(target.id);
+          try { localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...copy])); } catch { /* ignore */ }
+          return copy;
+        });
+      } else {
+        moved = { ...dragged, folderId: null };
+        rest.push(moved);
+      }
+      nextRequests = rest;
+      if (draftRef.current?.id === moved.id && draftRef.current.folderId !== moved.folderId) {
+        draftRef.current = { ...draftRef.current, folderId: moved.folderId };
+        setDraftState(draftRef.current);
+      }
+    }
+    // Commit pending edits first so the reorder never races an autosave on the same arrays.
+    await autosave.flushAll();
+    setFolders(nextFolders);
+    setRequests(nextRequests);
+    const res = await sendPostdog("reorder_tree", {
+      folders: nextFolders.map(item => ({ id: item.id, parentId: item.parentId || null })),
+      requests: nextRequests.map(item => ({ id: item.id, folderId: item.folderId || null }))
+    });
+    if (!res?.success) {
+      toast.error(res?.error || tr("排序保存失败", "Failed to save order"));
+      await loadAll();
+    }
   }
 
   // ---------------------------------------------------------------- environments
@@ -617,9 +745,34 @@ export default function PostdogPanel() {
       if (request.folderId && folderIds.has(request.folderId)) byFolder.get(request.folderId).push(request);
       else loose.push(request);
     }
-    const visibleFolders = folders.filter(folder => !searchText || byFolder.get(folder.id).length > 0 || folder.name.toLowerCase().includes(searchText));
-    return { byFolder, loose, visibleFolders };
+    const childFolders = new Map();
+    const roots = [];
+    for (const folder of folders) {
+      if (folder.parentId && folderIds.has(folder.parentId)) {
+        if (!childFolders.has(folder.parentId)) childFolders.set(folder.parentId, []);
+        childFolders.get(folder.parentId).push(folder);
+      } else {
+        roots.push(folder);
+      }
+    }
+    // With a search active, keep only folders that match or contain a match.
+    const visible = new Map();
+    const isVisible = (folder, trail = new Set()) => {
+      if (visible.has(folder.id)) return visible.get(folder.id);
+      if (trail.has(folder.id)) return false;
+      trail.add(folder.id);
+      let result = !searchText || byFolder.get(folder.id).length > 0 || folder.name.toLowerCase().includes(searchText);
+      for (const child of childFolders.get(folder.id) || []) if (isVisible(child, trail)) result = true;
+      visible.set(folder.id, result);
+      return result;
+    };
+    const visibleFolders = roots.filter(folder => isVisible(folder));
+    return { byFolder, loose, visibleFolders, childFolders, isVisible };
   }, [folders, requests, searchText]);
+  const folderOptions = useMemo(() => flattenFolders(folders).map(({ folder, depth }) => ({
+    value: folder.id,
+    label: `${"  ".repeat(depth)}📁 ${folder.name}`
+  })), [folders]);
 
   const currentFolder = draft?.folderId ? folders.find(item => item.id === draft.folderId) : null;
   const currentResponse = draft?.id ? responses[draft.id] : null;
@@ -647,6 +800,70 @@ export default function PostdogPanel() {
 
   // ---------------------------------------------------------------- render
 
+  function renderFolder(folder, trail = new Set()) {
+    if (trail.has(folder.id)) return null;
+    const nextTrail = new Set(trail).add(folder.id);
+    const children = tree.byFolder.get(folder.id) || [];
+    const subfolders = (tree.childFolders.get(folder.id) || []).filter(child => tree.isVisible(child));
+    const collapsed = !searchText && collapsedFolders.has(folder.id);
+    const hasScripts = !!(folder.preScript?.trim() || folder.postScript?.trim());
+    const dropPos = dropTarget?.kind === "folder" && dropTarget.id === folder.id ? dropTarget.pos : "";
+    return (
+      <div key={folder.id} className="pd-folder">
+        <div
+          className={`pd-folder-row${dragging?.id === folder.id ? " dragging" : ""}${dropPos ? ` drop-${dropPos}` : ""}`}
+          draggable={!searchText}
+          onDragStart={e => { e.stopPropagation(); startDrag(e, "folder", folder.id); }}
+          onDragEnd={endDrag}
+          onDragOver={e => hoverDrop(e, "folder", folder.id)}
+          onDrop={e => dropOn(e, "folder", folder.id)}
+          onDoubleClick={() => setFolderModalId(folder.id)}
+        >
+          <button type="button" className="pd-folder-toggle" onClick={() => toggleFolder(folder.id)} title={folder.name}>
+            <span className={`pd-chevron${collapsed ? "" : " open"}`}>▸</span>
+            <span className="pd-folder-icon">{collapsed ? "📁" : "📂"}</span>
+            <strong>{folder.name}</strong>
+            <span className="pd-count">{children.length + subfolders.length}</span>
+          </button>
+          <div className="pd-row-actions">
+            <button type="button" className="pd-icon-button" onClick={() => createRequest(folder.id)} title={tr("在此文件夹新建请求", "New request in folder")}>+</button>
+            <button type="button" className={`pd-icon-button${hasScripts ? " has-dot" : ""}`} onClick={() => setFolderModalId(folder.id)} title={tr("文件夹设置与脚本", "Folder settings & scripts")}>⚙</button>
+            <button type="button" className="pd-icon-button danger" onClick={() => deleteFolder(folder)} title={tr("删除文件夹", "Delete folder")}>×</button>
+          </div>
+        </div>
+        {!collapsed && (
+          <div className="pd-folder-children">
+            {children.length === 0 && subfolders.length === 0 && <div className="pd-tree-empty">{tr("空文件夹", "Empty folder")}</div>}
+            {subfolders.map(child => renderFolder(child, nextTrail))}
+            {children.map(request => renderRequest(request))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderRequest(request) {
+    const dropPos = dropTarget?.kind === "request" && dropTarget.id === request.id ? dropTarget.pos : "";
+    return (
+      <RequestItem
+        key={request.id}
+        request={request}
+        selected={draft?.id === request.id}
+        running={runningIds.has(request.id)}
+        dragging={dragging?.id === request.id}
+        dropPos={dropPos}
+        draggable={!searchText}
+        onSelect={selectRequest}
+        onDuplicate={req => createRequest(req.folderId, req)}
+        onDelete={deleteRequest}
+        onDragStart={e => startDrag(e, "request", request.id)}
+        onDragEnd={endDrag}
+        onDragOver={e => hoverDrop(e, "request", request.id)}
+        onDrop={e => dropOn(e, "request", request.id)}
+      />
+    );
+  }
+
   return (
     <div className="pd-page" style={{ "--pd-sidebar-width": `${sidebarWidth}px` }}>
       <aside className="pd-sidebar">
@@ -664,40 +881,13 @@ export default function PostdogPanel() {
           <UiInput value={search} onChange={setSearch} placeholder={tr("搜索名称 / URL", "Search name / URL")} />
           {search && <button type="button" className="pd-icon-button" onClick={() => setSearch("")}>×</button>}
         </div>
-        <div className="pd-tree">
-          {tree.visibleFolders.map(folder => {
-            const children = tree.byFolder.get(folder.id) || [];
-            const collapsed = !searchText && collapsedFolders.has(folder.id);
-            const hasScripts = !!(folder.preScript?.trim() || folder.postScript?.trim());
-            return (
-              <div key={folder.id} className="pd-folder">
-                <div className="pd-folder-row" onDoubleClick={() => setFolderModalId(folder.id)}>
-                  <button type="button" className="pd-folder-toggle" onClick={() => toggleFolder(folder.id)} title={folder.name}>
-                    <span className={`pd-chevron${collapsed ? "" : " open"}`}>▸</span>
-                    <span className="pd-folder-icon">{collapsed ? "📁" : "📂"}</span>
-                    <strong>{folder.name}</strong>
-                    <span className="pd-count">{children.length}</span>
-                  </button>
-                  <div className="pd-row-actions">
-                    <button type="button" className="pd-icon-button" onClick={() => createRequest(folder.id)} title={tr("在此文件夹新建请求", "New request in folder")}>+</button>
-                    <button type="button" className={`pd-icon-button${hasScripts ? " has-dot" : ""}`} onClick={() => setFolderModalId(folder.id)} title={tr("文件夹设置与脚本", "Folder settings & scripts")}>⚙</button>
-                    <button type="button" className="pd-icon-button danger" onClick={() => deleteFolder(folder)} title={tr("删除文件夹", "Delete folder")}>×</button>
-                  </div>
-                </div>
-                {!collapsed && (
-                  <div className="pd-folder-children">
-                    {children.length === 0 && <div className="pd-tree-empty">{tr("空文件夹", "Empty folder")}</div>}
-                    {children.map(request => (
-                      <RequestItem key={request.id} request={request} selected={draft?.id === request.id} running={runningIds.has(request.id)} onSelect={selectRequest} onDuplicate={req => createRequest(req.folderId, req)} onDelete={deleteRequest} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {tree.loose.map(request => (
-            <RequestItem key={request.id} request={request} selected={draft?.id === request.id} running={runningIds.has(request.id)} onSelect={selectRequest} onDuplicate={req => createRequest(req.folderId, req)} onDelete={deleteRequest} />
-          ))}
+        <div
+          className={`pd-tree${dropTarget?.kind === "root" ? " drop-root" : ""}`}
+          onDragOver={e => { if (e.target === e.currentTarget) hoverDrop(e, "root", "root"); }}
+          onDrop={e => { if (e.target === e.currentTarget) dropOn(e, "root", "root"); }}
+        >
+          {tree.visibleFolders.map(folder => renderFolder(folder))}
+          {tree.loose.map(request => renderRequest(request))}
           {loaded && requests.length === 0 && folders.length === 0 && (
             <div className="pd-tree-empty">{tr("还没有请求，点击上方「+ 请求」开始", "No requests yet. Click \"+ Request\" to start.")}</div>
           )}
@@ -727,7 +917,7 @@ export default function PostdogPanel() {
                 className="pd-folder-select"
                 ariaLabel={tr("所属文件夹", "Folder")}
                 value={draft.folderId || ""}
-                options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...folders.map(folder => ({ value: folder.id, label: `📁 ${folder.name}` }))]}
+                options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...folderOptions]}
                 onChange={value => updateDraft({ folderId: value || null })}
               />
             </div>
@@ -974,9 +1164,69 @@ function TabButton({ active, onClick, label, count = 0, dot = false, badge = "" 
   );
 }
 
-function RequestItem({ request, selected, running, onSelect, onDuplicate, onDelete }) {
+/** Folders in tree order with their depth (cycle-safe). */
+function flattenFolders(folders) {
+  const ids = new Set(folders.map(item => item.id));
+  const children = new Map();
+  const roots = [];
+  for (const folder of folders) {
+    if (folder.parentId && ids.has(folder.parentId)) {
+      if (!children.has(folder.parentId)) children.set(folder.parentId, []);
+      children.get(folder.parentId).push(folder);
+    } else {
+      roots.push(folder);
+    }
+  }
+  const out = [];
+  const seen = new Set();
+  const walk = (folder, depth) => {
+    if (seen.has(folder.id)) return;
+    seen.add(folder.id);
+    out.push({ folder, depth });
+    for (const child of children.get(folder.id) || []) walk(child, depth + 1);
+  };
+  roots.forEach(folder => walk(folder, 0));
+  return out;
+}
+
+function descendantFolderIds(folders, id) {
+  const out = new Set();
+  const queue = [id];
+  while (queue.length) {
+    const current = queue.pop();
+    for (const folder of folders) {
+      if (folder.parentId === current && !out.has(folder.id)) {
+        out.add(folder.id);
+        queue.push(folder.id);
+      }
+    }
+  }
+  return out;
+}
+
+function dropZone(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const ratio = (event.clientY - rect.top) / rect.height;
+  return ratio < 0.25 ? "before" : ratio > 0.75 ? "after" : "into";
+}
+
+function isUpperHalf(event) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return event.clientY - rect.top < rect.height / 2;
+}
+
+function RequestItem({ request, selected, running, dragging, dropPos, draggable, onSelect, onDuplicate, onDelete, onDragStart, onDragEnd, onDragOver, onDrop }) {
   return (
-    <div className={`pd-request-item${selected ? " selected" : ""}`} onClick={() => onSelect(request.id)} title={`${request.method} ${request.url || ""}`}>
+    <div
+      className={`pd-request-item${selected ? " selected" : ""}${dragging ? " dragging" : ""}${dropPos ? ` drop-${dropPos}` : ""}`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onClick={() => onSelect(request.id)}
+      title={`${request.method} ${request.url || ""}`}
+    >
       <span className={`pd-method method-${request.method}`}>{shortMethod(request.method)}</span>
       <span className="pd-request-name">{request.name || "Untitled"}</span>
       {running && <span className="pd-running-dot" />}
@@ -1331,7 +1581,7 @@ function CurlImportModal({ folders, defaultFolderId, onImport, onClose }) {
         <UiSelect
           ariaLabel={tr("放入文件夹", "Target folder")}
           value={folderId}
-          options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...folders.map(folder => ({ value: folder.id, label: folder.name }))]}
+          options={[{ value: "", label: tr("（无文件夹）", "(no folder)") }, ...flattenFolders(folders).map(({ folder, depth }) => ({ value: folder.id, label: `${"  ".repeat(depth)}${folder.name}` }))]}
           onChange={setFolderId}
         />
       </div>

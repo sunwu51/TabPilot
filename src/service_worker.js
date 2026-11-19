@@ -29,10 +29,12 @@ import {
     releaseSessionLocksForWindow
 } from "./api/agent/sessions";
 import { ensureSettingsMigrated } from "./api/settings/migrations";
+import { ensureBuiltinScripts } from "./api/sticky/builtinScripts";
 import {
     deletePostdogEnvironment,
     deletePostdogFolder,
     deletePostdogRequest,
+    reorderPostdogTree,
     listPostdogEnvironments,
     listPostdogFolders,
     listPostdogHistory,
@@ -770,6 +772,8 @@ async function handlePostdogManagerMessage(action, payload = {}) {
             return { success: true, data: await savePostdogFolder(payload.folder || payload) };
         case "delete_folder":
             return { success: true, data: await deletePostdogFolder(payload.id) };
+        case "reorder_tree":
+            return { success: true, data: await reorderPostdogTree(payload) };
         case "list_requests":
             return { success: true, data: await listPostdogRequests() };
         case "list_requests_for_ai": {
@@ -1393,6 +1397,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 registerStickyBackground();
 
 chrome.runtime.onInstalled.addListener(() => {
+    void ensureBuiltinScripts();
     chrome.alarms?.create("ws-bridge-health", { periodInMinutes: 1 });
     ensureVfsCleanupAlarm();
     void ensureSettingsMigrated();

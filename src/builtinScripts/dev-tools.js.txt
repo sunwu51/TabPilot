@@ -1,0 +1,376 @@
+// TabPilot built-in: 通用工具 / Dev tools — timestamp converter, Base64 encode/decode, UUID v4.
+// Run it again from the right-click menu to close it.
+const HOST_ID = "__tabpilot_tools__";
+const existing = document.getElementById(HOST_ID);
+if (existing) {
+  if (existing.__cleanup) existing.__cleanup();
+  existing.remove();
+  return "closed";
+}
+
+const zh = /^zh/i.test(navigator.language || "");
+const L = (cn, en) => (zh ? cn : en);
+
+const host = document.createElement("div");
+host.id = HOST_ID;
+host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;";
+const root = host.attachShadow({ mode: "open" });
+
+const css = `
+:host { all: initial; }
+* { box-sizing: border-box; }
+.panel {
+  position: fixed; top: 70px; right: 24px; width: 400px; max-width: calc(100vw - 16px);
+  background: #18181b; color: #f4f4f5; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.12);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.head { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: #27272a; cursor: grab; user-select: none; }
+.head:active { cursor: grabbing; }
+.title { font-weight: 600; margin-right: auto; padding-left: 4px; }
+.tab, .x, .btn {
+  all: unset; box-sizing: border-box; cursor: pointer; padding: 4px 10px; border-radius: 7px; color: #d4d4d8; white-space: nowrap;
+}
+.tab:hover, .x:hover, .btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+.tab.on { background: #3b82f6; color: #fff; }
+.x:hover { background: #dc2626; }
+.body { padding: 12px; max-height: min(520px, calc(100vh - 140px)); overflow: auto; }
+.sec { display: none; }
+.sec.on { display: block; }
+.row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.lbl { color: #a1a1aa; font-size: 12px; min-width: 64px; }
+.val { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+h4 { margin: 14px 0 4px; font-size: 12px; color: #a1a1aa; font-weight: 600; letter-spacing: .03em; }
+h4:first-child { margin-top: 0; }
+input[type=text], input[type=number], textarea, select {
+  width: 100%; background: #09090b; color: #f4f4f5; border: 1px solid #3f3f46; border-radius: 7px;
+  padding: 6px 8px; font: 12.5px ui-monospace, Consolas, monospace; outline: none;
+}
+input:focus, textarea:focus, select:focus { border-color: #3b82f6; }
+textarea { min-height: 78px; resize: vertical; }
+select { width: auto; }
+.btn { background: #3f3f46; color: #fff; }
+.btn.primary { background: #3b82f6; }
+.btn.primary:hover { background: #2563eb; }
+.copy { padding: 2px 8px; font-size: 12px; background: #3f3f46; color: #fff; }
+.copy.done { background: #16a34a; }
+.err { color: #f87171; font-size: 12px; min-height: 16px; }
+label.chk { display: inline-flex; align-items: center; gap: 4px; color: #d4d4d8; cursor: pointer; }
+.uuids { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+.uuids .row { margin: 3px 0; }
+`;
+try {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(css);
+  root.adoptedStyleSheets = [sheet];
+} catch (e) {
+  const style = document.createElement("style");
+  style.textContent = css;
+  root.appendChild(style);
+}
+
+// ---------------------------------------------------------------- helpers
+function el(tag, props, children) {
+  const node = document.createElement(tag);
+  if (props) Object.keys(props).forEach((k) => {
+    if (k === "text") node.textContent = props[k];
+    else if (k === "class") node.className = props[k];
+    else if (k.slice(0, 2) === "on") node.addEventListener(k.slice(2), props[k]);
+    else node[k] = props[k];
+  });
+  (children || []).forEach((c) => node.appendChild(c));
+  return node;
+}
+const pad = (n, w) => String(n).padStart(w || 2, "0");
+function fmtLocal(d) {
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+}
+function fmtLocalMs(d) { return fmtLocal(d) + "." + pad(d.getMilliseconds(), 3); }
+function copyText(text, btn) {
+  const done = () => {
+    if (!btn) return;
+    const old = btn.textContent;
+    btn.textContent = "✓";
+    btn.classList.add("done");
+    setTimeout(() => { btn.textContent = old; btn.classList.remove("done"); }, 900);
+  };
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;left:-9999px;top:0;";
+    root.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+    ta.remove();
+    done();
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else {
+    fallback();
+  }
+}
+const copyLabel = L("复制", "Copy");
+function copyBtn(getText) {
+  const b = el("button", { class: "btn copy", text: copyLabel });
+  b.addEventListener("click", () => copyText(String(getText()), b));
+  return b;
+}
+/** A "label  value  [copy]" line whose value can be updated. */
+function valueRow(label) {
+  const val = el("span", { class: "val", text: "-" });
+  const row = el("div", { class: "row" }, [el("span", { class: "lbl", text: label }), val, copyBtn(() => val.textContent)]);
+  return { row: row, set: (t) => { val.textContent = t; } };
+}
+
+// ---------------------------------------------------------------- timestamp tab
+const tsSec = el("div", { class: "sec" });
+const nowLocal = valueRow(L("当前时间", "Now"));
+const nowSec = valueRow(L("时间戳(秒)", "Unix (s)"));
+const nowMs = valueRow(L("时间戳(毫秒)", "Unix (ms)"));
+tsSec.append(el("h4", { text: L("当前", "CURRENT") }), nowLocal.row, nowSec.row, nowMs.row);
+function tickNow() {
+  const now = new Date();
+  nowLocal.set(fmtLocal(now));
+  nowSec.set(String(Math.floor(now.getTime() / 1000)));
+  nowMs.set(String(now.getTime()));
+}
+
+// timestamp -> date
+const tsInput = el("input", { type: "text", spellcheck: false, placeholder: "1700000000" });
+const tsUnit = el("select", {}, [
+  el("option", { value: "auto", text: L("自动", "Auto") }),
+  el("option", { value: "s", text: L("秒", "s") }),
+  el("option", { value: "ms", text: L("毫秒", "ms") })
+]);
+const tsLocal = valueRow(L("本地时间", "Local"));
+const tsUtc = valueRow("UTC");
+const tsIso = valueRow("ISO");
+function convertTs() {
+  const raw = tsInput.value.trim();
+  if (!raw || !/^-?\d+(\.\d+)?$/.test(raw)) {
+    const none = raw ? L("无效的时间戳", "Invalid timestamp") : "-";
+    tsLocal.set(none); tsUtc.set("-"); tsIso.set("-");
+    return;
+  }
+  let n = Number(raw);
+  let unit = tsUnit.value;
+  if (unit === "auto") unit = Math.abs(n) < 1e11 ? "s" : "ms";
+  const d = new Date(unit === "s" ? n * 1000 : n);
+  if (isNaN(d.getTime())) {
+    tsLocal.set(L("无效的时间戳", "Invalid timestamp")); tsUtc.set("-"); tsIso.set("-");
+    return;
+  }
+  tsLocal.set(fmtLocalMs(d));
+  tsUtc.set(d.toUTCString());
+  tsIso.set(d.toISOString());
+}
+tsInput.addEventListener("input", convertTs);
+tsUnit.addEventListener("change", convertTs);
+tsSec.append(
+  el("h4", { text: L("时间戳 → 时间", "TIMESTAMP → DATE") }),
+  el("div", { class: "row" }, [tsInput, tsUnit, el("button", { class: "btn", text: L("现在", "Now"), onclick: () => { tsInput.value = String(Math.floor(Date.now() / 1000)); tsUnit.value = "s"; convertTs(); } })]),
+  tsLocal.row, tsUtc.row, tsIso.row
+);
+
+// date -> timestamp
+const dtInput = el("input", { type: "text", spellcheck: false, placeholder: "2024-01-31 12:30:00" });
+const dtSec = valueRow(L("秒", "Seconds"));
+const dtMs = valueRow(L("毫秒", "Millis"));
+const dtErr = el("div", { class: "err" });
+function convertDt() {
+  const raw = dtInput.value.trim();
+  dtErr.textContent = "";
+  if (!raw) { dtSec.set("-"); dtMs.set("-"); return; }
+  // "YYYY-MM-DD HH:mm:ss" is parsed as local time; ISO strings with a zone are honoured.
+  const d = new Date(/^\d{4}-\d{2}-\d{2} \d/.test(raw) ? raw.replace(" ", "T") : raw);
+  if (isNaN(d.getTime())) {
+    dtErr.textContent = L("无法识别的日期格式", "Unrecognized date format");
+    dtSec.set("-"); dtMs.set("-");
+    return;
+  }
+  dtSec.set(String(Math.floor(d.getTime() / 1000)));
+  dtMs.set(String(d.getTime()));
+}
+dtInput.addEventListener("input", convertDt);
+tsSec.append(
+  el("h4", { text: L("时间 → 时间戳（本地时区）", "DATE → TIMESTAMP (LOCAL TIME)") }),
+  el("div", { class: "row" }, [dtInput, el("button", { class: "btn", text: L("现在", "Now"), onclick: () => { dtInput.value = fmtLocal(new Date()); convertDt(); } })]),
+  dtErr, dtSec.row, dtMs.row
+);
+
+// ---------------------------------------------------------------- base64 tab
+const b64Sec = el("div", { class: "sec" });
+const b64In = el("textarea", { spellcheck: false, placeholder: L("输入文本或 Base64…", "Text or Base64…") });
+const b64Out = el("textarea", { spellcheck: false, readOnly: true, placeholder: L("结果", "Result") });
+const b64Err = el("div", { class: "err" });
+const urlSafe = el("input", { type: "checkbox" });
+function b64Encode() {
+  b64Err.textContent = "";
+  try {
+    const bytes = new TextEncoder().encode(b64In.value);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    let out = btoa(bin);
+    if (urlSafe.checked) out = out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    b64Out.value = out;
+  } catch (e) {
+    b64Out.value = "";
+    b64Err.textContent = String(e && e.message ? e.message : e);
+  }
+}
+function b64Decode() {
+  b64Err.textContent = "";
+  try {
+    let s = b64In.value.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    const bin = atob(s);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    b64Out.value = new TextDecoder("utf-8").decode(bytes);
+  } catch (e) {
+    b64Out.value = "";
+    b64Err.textContent = L("不是有效的 Base64", "Not valid Base64");
+  }
+}
+b64Sec.append(
+  b64In,
+  el("div", { class: "row" }, [
+    el("button", { class: "btn primary", text: L("编码 ↓", "Encode ↓"), onclick: b64Encode }),
+    el("button", { class: "btn primary", text: L("解码 ↓", "Decode ↓"), onclick: b64Decode }),
+    el("label", { class: "chk" }, [urlSafe, el("span", { text: "URL-safe" })]),
+    el("button", { class: "btn", text: L("互换", "Swap"), onclick: () => { b64In.value = b64Out.value; b64Out.value = ""; } })
+  ]),
+  b64Err,
+  b64Out,
+  el("div", { class: "row" }, [copyBtn(() => b64Out.value)])
+);
+
+// ---------------------------------------------------------------- uuid tab
+const uuidSec = el("div", { class: "sec" });
+const uuidList = el("div", { class: "uuids" });
+const uuidCount = el("select", {}, [1, 5, 10, 20].map((n) => el("option", { value: String(n), text: String(n) })));
+const upper = el("input", { type: "checkbox" });
+const noDash = el("input", { type: "checkbox" });
+let uuids = [];
+function uuidv4() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => pad(x.toString(16))).join("");
+  return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20);
+}
+function fmtUuid(u) {
+  let s = noDash.checked ? u.replace(/-/g, "") : u;
+  return upper.checked ? s.toUpperCase() : s;
+}
+function renderUuids() {
+  uuidList.textContent = "";
+  uuids.forEach((u) => {
+    const t = fmtUuid(u);
+    uuidList.appendChild(el("div", { class: "row" }, [el("span", { class: "val", text: t }), copyBtn(() => t)]));
+  });
+}
+function genUuids() {
+  const n = Number(uuidCount.value) || 1;
+  uuids = [];
+  for (let i = 0; i < n; i++) uuids.push(uuidv4());
+  renderUuids();
+}
+upper.addEventListener("change", renderUuids);
+noDash.addEventListener("change", renderUuids);
+uuidSec.append(
+  el("div", { class: "row" }, [
+    el("button", { class: "btn primary", text: L("生成 UUID v4", "Generate UUID v4"), onclick: genUuids }),
+    el("span", { class: "lbl", text: L("数量", "Count") }),
+    uuidCount
+  ]),
+  el("div", { class: "row" }, [
+    el("label", { class: "chk" }, [upper, el("span", { text: L("大写", "Uppercase") })]),
+    el("label", { class: "chk" }, [noDash, el("span", { text: L("去掉 -", "No hyphens") })]),
+    el("button", { class: "btn", text: L("复制全部", "Copy all"), onclick: (e) => copyText(uuids.map(fmtUuid).join("\n"), e.currentTarget) })
+  ]),
+  uuidList
+);
+
+// ---------------------------------------------------------------- shell
+const panel = el("div", { class: "panel" });
+const head = el("div", { class: "head" });
+const tabs = [
+  { id: "ts", label: L("时间戳", "Timestamp"), sec: tsSec },
+  { id: "b64", label: "Base64", sec: b64Sec },
+  { id: "uuid", label: "UUID", sec: uuidSec }
+];
+const tabBtns = tabs.map((t) => {
+  const b = el("button", { class: "tab", text: t.label });
+  b.addEventListener("click", () => select(t.id));
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  return b;
+});
+const closeBtn = el("button", { class: "x", text: "✕", title: L("关闭 (Esc)", "Close (Esc)") });
+closeBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+closeBtn.addEventListener("click", closeAll);
+head.append(el("span", { class: "title", text: "🧰 " + L("工具", "Tools") }), ...tabBtns, closeBtn);
+const body = el("div", { class: "body" });
+tabs.forEach((t) => body.appendChild(t.sec));
+panel.append(head, body);
+root.appendChild(panel);
+
+function select(id) {
+  tabs.forEach((t, i) => {
+    t.sec.classList.toggle("on", t.id === id);
+    tabBtns[i].classList.toggle("on", t.id === id);
+  });
+}
+
+// Keep page hotkeys from firing while typing in the panel.
+["keydown", "keyup", "keypress"].forEach((type) => {
+  panel.addEventListener(type, (e) => { if (e.key !== "Escape") e.stopPropagation(); });
+});
+
+head.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const rect = panel.getBoundingClientRect();
+  const dx = e.clientX - rect.left;
+  const dy = e.clientY - rect.top;
+  panel.style.right = "auto";
+  panel.style.left = rect.left + "px";
+  panel.style.top = rect.top + "px";
+  const move = (ev) => {
+    panel.style.left = Math.min(Math.max(0, ev.clientX - dx), window.innerWidth - 80) + "px";
+    panel.style.top = Math.min(Math.max(0, ev.clientY - dy), window.innerHeight - 40) + "px";
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move, true);
+    window.removeEventListener("pointerup", up, true);
+  };
+  window.addEventListener("pointermove", move, true);
+  window.addEventListener("pointerup", up, true);
+});
+
+function onKey(e) {
+  if (e.key === "Escape") closeAll();
+}
+const timer = setInterval(tickNow, 1000);
+function closeAll() {
+  if (host.__cleanup) host.__cleanup();
+  host.remove();
+}
+host.__cleanup = () => {
+  clearInterval(timer);
+  window.removeEventListener("keydown", onKey, true);
+  host.__cleanup = null;
+};
+window.addEventListener("keydown", onKey, true);
+
+// Defaults: current time + timestamp everywhere, one fresh UUID.
+tickNow();
+tsInput.value = String(Math.floor(Date.now() / 1000));
+convertTs();
+dtInput.value = fmtLocal(new Date());
+convertDt();
+genUuids();
+select("ts");
+document.documentElement.appendChild(host);
+return "opened";
