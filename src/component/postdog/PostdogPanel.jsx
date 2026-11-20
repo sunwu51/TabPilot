@@ -734,6 +734,15 @@ export default function PostdogPanel() {
     return out;
   }, [activeEnvironment]);
 
+  // Same set as envVars, plus the secret flag so the editor can mask values on hover.
+  const templateVars = useMemo(() => {
+    const out = {};
+    for (const item of activeEnvironment?.variables || []) {
+      if (item.enabled !== false && item.key) out[item.key] = { value: item.value, secret: item.secret === true };
+    }
+    return out;
+  }, [activeEnvironment]);
+
   const searchText = search.trim().toLowerCase();
   const tree = useMemo(() => {
     const matches = request => !searchText || `${request.name} ${request.method} ${request.url}`.toLowerCase().includes(searchText);
@@ -1046,6 +1055,7 @@ export default function PostdogPanel() {
                         <CodeEditor
                           docKey={`${draft.id}:body`}
                           language={bodyType === "json" ? "json" : "text"}
+                          variables={templateVars}
                           value={bodyText}
                           onChange={text => updateBody({ text })}
                           placeholder={bodyType === "json"

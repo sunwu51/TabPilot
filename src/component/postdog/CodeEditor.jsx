@@ -17,6 +17,7 @@ import {
   placeholder as editorPlaceholder
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
+import { setTemplateVars, templateVarsExtension } from "./templateVars";
 
 const External = Annotation.define();
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -58,6 +59,32 @@ const postdogEditorTheme = EditorView.theme({
   ".cm-tooltip-autocomplete ul li": { fontFamily: MONO, fontSize: "12px", padding: "2px 8px" },
   ".cm-tooltip-autocomplete ul li[aria-selected]": { backgroundColor: "var(--c-primary)", color: "var(--c-on-soft)" },
   ".cm-completionDetail": { color: "var(--c-fg-muted)", fontStyle: "normal", marginLeft: "8px" },
+  ".cm-tpl": { textDecorationThickness: "1.5px", textUnderlineOffset: "3px" },
+  ".cm-tpl-var, .cm-tpl-builtin": {
+    textDecoration: "underline",
+    textDecorationColor: "var(--c-focus)",
+    backgroundColor: "color-mix(in srgb, var(--c-focus) 12%, transparent)",
+    borderRadius: "3px"
+  },
+  ".cm-tpl-missing": {
+    textDecoration: "underline wavy",
+    textDecorationColor: "var(--c-danger-text)",
+    backgroundColor: "color-mix(in srgb, var(--c-danger-text) 10%, transparent)",
+    borderRadius: "3px"
+  },
+  ".cm-tooltip.cm-tooltip-hover": {
+    border: "2px solid var(--c-line)",
+    borderRadius: "8px",
+    backgroundColor: "var(--c-surface)",
+    color: "var(--c-fg)",
+    boxShadow: "3px 3px 0 0 var(--c-shadow)",
+    overflow: "hidden"
+  },
+  ".cm-tpl-tip": { padding: "6px 10px", maxWidth: "420px", fontFamily: MONO, fontSize: "12px" },
+  ".cm-tpl-tip-name": { fontWeight: "700", marginBottom: "2px" },
+  ".cm-tpl-tip-value": { whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: "160px", overflow: "auto" },
+  ".cm-tpl-tip.missing .cm-tpl-tip-value": { color: "var(--c-danger-text)" },
+  ".cm-tpl-tip-note": { marginTop: "4px", color: "var(--c-fg-muted)", fontSize: "11px" },
   ".cm-completionInfo": {
     border: "2px solid var(--c-line)",
     borderRadius: "8px",
@@ -185,7 +212,7 @@ function postdogCompletions(context) {
 
 // ----------------------------------------------------------------------------------
 
-function buildExtensions({ language, placeholder, onChangeRef, readOnly }) {
+function buildExtensions({ language, placeholder, onChangeRef, readOnly, variables }) {
   const languageExtensions = language === "json"
     ? [json()]
     : language === "javascript"
@@ -203,6 +230,7 @@ function buildExtensions({ language, placeholder, onChangeRef, readOnly }) {
     closeBrackets(),
     autocompletion({ activateOnTyping: true }),
     ...languageExtensions,
+    variables ? templateVarsExtension(variables) : [],
     keymap.of([...closeBracketsKeymap, ...completionKeymap, indentWithTab, ...defaultKeymap, ...historyKeymap]),
     ...themeExtensions(),
     EditorView.lineWrapping,
@@ -222,12 +250,12 @@ function buildExtensions({ language, placeholder, onChangeRef, readOnly }) {
  * `docKey` identifies the document: when it changes the editor state (incl. undo
  * history) is rebuilt so undo never jumps across different requests.
  */
-export default function CodeEditor({ value, onChange, language = "text", placeholder = "", docKey = "", readOnly = false, className = "" }) {
+export default function CodeEditor({ value, onChange, language = "text", placeholder = "", docKey = "", readOnly = false, className = "", variables }) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const onChangeRef = useRef(onChange);
-  const configRef = useRef({ language, placeholder, readOnly });
-  configRef.current = { language, placeholder, readOnly };
+  const configRef = useRef({ language, placeholder, readOnly, variables });
+  configRef.current = { language, placeholder, readOnly, variables };
   onChangeRef.current = onChange;
 
   function createState(doc) {
@@ -253,6 +281,13 @@ export default function CodeEditor({ value, onChange, language = "text", placeho
     if (!view) return;
     view.setState(createState(value || ""));
   }, [docKey, language]);
+
+  // The active environment changed: refresh completions, underlines and hover values.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !variables) return;
+    view.dispatch({ effects: setTemplateVars.of(variables) });
+  }, [variables]);
 
   // Same document changed from outside (format JSON, external update).
   useEffect(() => {
