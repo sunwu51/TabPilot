@@ -5,10 +5,10 @@ import { SCHEDULE_STORAGE_KEY } from "../../core/constants";
 
 describe("scheduled assistant tools", () => {
   it("delegates creation to the background scheduler", async () => {
-    chrome.runtime.sendMessage.mockResolvedValue({ success: true, scheduleId: "job1" });
+    chrome.runtime.sendMessage.mockImplementation((message, callback) => callback({ success: true, scheduleId: "job1" }));
     const args = { prompt: "Check open pages", delaySeconds: 60, repeatSeconds: 3600, allowDangerousTools: false };
     expect(await _execScheduleAgent(args)).toEqual({ success: true, scheduleId: "job1" });
-    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: "schedule_manager", action: "schedule_agent", payload: args });
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ type: "schedule_manager", action: "schedule_agent", payload: args }, expect.any(Function));
   });
 
   it("lists the agent policy and session as assistant tasks", async () => {

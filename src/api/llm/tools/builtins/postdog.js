@@ -1,19 +1,12 @@
-/* global chrome */
+import { requestBackground } from "../../../background/requests";
 
-function sendPostdog(action, payload = {}) {
-  return new Promise(resolve => {
-    try {
-      chrome.runtime.sendMessage({ type: "postdog_manager", action, payload }, response => {
-        if (chrome.runtime.lastError) {
-          resolve({ success: false, error: chrome.runtime.lastError.message });
-          return;
-        }
-        resolve(response || { success: false, error: "Empty Postdog response" });
-      });
-    } catch (error) {
-      resolve({ success: false, error: error?.message || String(error) });
-    }
-  });
+async function sendPostdog(action, payload = {}) {
+  try {
+    return await requestBackground({ type: "postdog_manager", action, payload })
+      || { success: false, error: "Empty Postdog response" };
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) };
+  }
 }
 
 function unwrap(res, key = "data", fallback = "Postdog operation failed") {
@@ -81,4 +74,40 @@ export async function _execPostdogSaveEnvironment(args = {}) {
 export async function _execPostdogSetActiveEnvironment(args = {}) {
   if (!args.id) return { error: "id is required" };
   return unwrap(await sendPostdog("set_active_environment", { id: args.id }), "activeEnvironment");
+}
+
+export async function _execPostdogDeleteFolder(args = {}) {
+  const id = String(args.id || "").trim();
+  if (!id) return { error: "id is required" };
+  return unwrap(await sendPostdog("delete_folder", { id }), "folder");
+}
+
+export async function _execPostdogDeleteRequest(args = {}) {
+  const id = String(args.id || "").trim();
+  if (!id) return { error: "id is required" };
+  return unwrap(await sendPostdog("delete_request", { id }), "request");
+}
+
+export async function _execPostdogDeleteEnvironment(args = {}) {
+  const id = String(args.id || "").trim();
+  if (!id) return { error: "id is required" };
+  return unwrap(await sendPostdog("delete_environment", { id }), "environment");
+}
+
+export async function _execPostdogSetEnvironmentVariable(args = {}) {
+  const environmentId = String(args.environmentId || "").trim();
+  const key = String(args.key || "").trim();
+  if (!environmentId || !key) return { error: "environmentId and key are required" };
+  if (typeof args.value !== "string") return { error: "value must be a string" };
+  return unwrap(await sendPostdog("set_environment_variable", {
+    environmentId, key, value: args.value,
+    options: { enabled: args.enabled, secret: args.secret }
+  }), "environment");
+}
+
+export async function _execPostdogDeleteEnvironmentVariable(args = {}) {
+  const environmentId = String(args.environmentId || "").trim();
+  const key = String(args.key || "").trim();
+  if (!environmentId || !key) return { error: "environmentId and key are required" };
+  return unwrap(await sendPostdog("delete_environment_variable", { environmentId, key }), "environment");
 }

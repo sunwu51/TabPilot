@@ -1,3 +1,4 @@
+import { registerBackgroundRequestHandler } from "./api/background/requests";
 import { createAgentJob, serializeAgentJob, finishAgentJob } from "./api/agent/scheduleJobs";
 /* global chrome */
 import { readSubscriptionUsage } from "./api/llm/providers/openai-subscription-usage";
@@ -48,7 +49,9 @@ import {
     savePostdogRequest,
     serializePostdogEnvironmentForAi,
     serializePostdogRequestForAi,
-    setActivePostdogEnvironment
+    setActivePostdogEnvironment,
+    setPostdogEnvironmentVariable,
+    unsetPostdogEnvironmentVariable
 } from "./api/postdog";
 import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
 import { exportPostdogCurl, runPostdogRequest } from "./api/postdog/runtime";
@@ -811,6 +814,15 @@ async function handlePostdogManagerMessage(action, payload = {}) {
         }
         case "save_environment":
             return { success: true, data: await savePostdogEnvironment(payload.environment || payload) };
+        case "set_environment_variable":
+            return { success: true, data: serializePostdogEnvironmentForAi(await setPostdogEnvironmentVariable(
+                payload.environmentId, payload.key, payload.value, payload.options || {})) };
+        case "delete_environment_variable":
+            if (!String(payload.environmentId || "").trim() || !String(payload.key || "").trim()) {
+                throw new Error("environmentId and key are required");
+            }
+            return { success: true, data: serializePostdogEnvironmentForAi(await unsetPostdogEnvironmentVariable(
+                payload.environmentId, payload.key)) };
         case "delete_environment":
             return { success: true, data: await deletePostdogEnvironment(payload.id) };
         case "set_active_environment":
@@ -843,6 +855,67 @@ async function handlePostdogManagerMessage(action, payload = {}) {
         }
         default:
             return { success: false, error: `Unknown postdog action: ${action}` };
+    }
+}
+
+// Register before starting the bridge so worker-hosted tools never message themselves.
+registerBackgroundRequestHandler("postdog_manager", msg =>
+    handlePostdogManagerMessage(msg.action, msg.payload || {}));
+registerBackgroundRequestHandler("schedule_manager", msg => {
+    if (msg.action === "schedule_agent") return scheduleAgentJob(msg.payload || {});
+    throw new Error(`Unsupported local schedule action: ${msg.action}`);
+});
+registerBackgroundRequestHandler("openai_subscription_oauth", async msg => {
+    if (msg.action !== "access") throw new Error(`Unsupported local OAuth action: ${msg.action}`);
+    return { success: true, result: await ensureOpenAiSubscriptionAccess(msg.profileId, { force: msg.force === true }) };
+});
+registerBackgroundRequestHandler("macro_manager", msg => handleMacroManagerMessage(msg));
+
+async function handleMacroManagerMessage(msg) {
+    switch (msg.action) {
+        case "list":
+            return ({ success: true, data: await listMacros() });
+        case "list_for_ai": {
+            const macros = await listMacros();
+            const query = String(msg.payload?.query || "").trim().toLowerCase();
+            const filtered = query
+                ? macros.filter(m => m.name.toLowerCase().includes(query))
+                : macros;
+            return ({
+                success: true,
+                data: filtered.map(m => describeMacroForTool(m, { includeSteps: false }))
+            });
+        }
+        case "get":
+            return ({ success: true, data: await getMacro(msg.payload?.id) });
+        case "describe_for_ai":
+            return ({ success: true, data: describeMacroForTool(await getMacro(msg.payload?.id), { includeSteps: true }) });
+        case "save":
+            return ({ success: true, data: await saveMacro(msg.payload) });
+        case "delete":
+            return ({ success: true, data: await deleteMacro(msg.payload?.id) });
+        case "start":
+            return (await startMacroRecording(msg.payload || {}));
+        case "stop":
+            return (await stopMacroRecording({
+                commit: msg.payload?.commit !== false,
+                replacePasswords: msg.payload?.replacePasswords === true
+            }));
+        case "replay":
+            return (await replayMacro(msg.payload?.id, {
+                ...(msg.payload?.options || {}),
+                tabId: Number.isInteger(Number(msg.payload?.tabId)) ? Number(msg.payload.tabId) : undefined,
+                inputValues: msg.payload?.inputValues || msg.payload?.options?.inputValues || {}
+            }));
+        case "replay_steps":
+            return (await replayMacroSteps(msg.payload?.macro, {
+                ...(msg.payload?.options || {}),
+                inputValues: msg.payload?.inputValues || msg.payload?.options?.inputValues || {}
+            }));
+        case "recording_status":
+            return ({ success: true, data: await getRecording() });
+        default:
+            return ({ error: `Unknown macro action: ${msg.action}` });
     }
 }
 
@@ -1011,62 +1084,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "macro_manager") {
         (async () => {
             try {
-                switch (msg.action) {
-                    case "list":
-                        sendResponse({ success: true, data: await listMacros() });
-                        break;
-                    case "list_for_ai": {
-                        const macros = await listMacros();
-                        const query = String(msg.payload?.query || "").trim().toLowerCase();
-                        const filtered = query
-                            ? macros.filter(m => m.name.toLowerCase().includes(query))
-                            : macros;
-                        sendResponse({
-                            success: true,
-                            data: filtered.map(m => describeMacroForTool(m, { includeSteps: false }))
-                        });
-                        break;
-                    }
-                    case "get":
-                        sendResponse({ success: true, data: await getMacro(msg.payload?.id) });
-                        break;
-                    case "describe_for_ai":
-                        sendResponse({ success: true, data: describeMacroForTool(await getMacro(msg.payload?.id), { includeSteps: true }) });
-                        break;
-                    case "save":
-                        sendResponse({ success: true, data: await saveMacro(msg.payload) });
-                        break;
-                    case "delete":
-                        sendResponse({ success: true, data: await deleteMacro(msg.payload?.id) });
-                        break;
-                    case "start":
-                        sendResponse(await startMacroRecording(msg.payload || {}));
-                        break;
-                    case "stop":
-                        sendResponse(await stopMacroRecording({
-                            commit: msg.payload?.commit !== false,
-                            replacePasswords: msg.payload?.replacePasswords === true
-                        }));
-                        break;
-                    case "replay":
-                        sendResponse(await replayMacro(msg.payload?.id, {
-                            ...(msg.payload?.options || {}),
-                            tabId: Number.isInteger(Number(msg.payload?.tabId)) ? Number(msg.payload.tabId) : undefined,
-                            inputValues: msg.payload?.inputValues || msg.payload?.options?.inputValues || {}
-                        }));
-                        break;
-                    case "replay_steps":
-                        sendResponse(await replayMacroSteps(msg.payload?.macro, {
-                            ...(msg.payload?.options || {}),
-                            inputValues: msg.payload?.inputValues || msg.payload?.options?.inputValues || {}
-                        }));
-                        break;
-                    case "recording_status":
-                        sendResponse({ success: true, data: await getRecording() });
-                        break;
-                    default:
-                        sendResponse({ error: `Unknown macro action: ${msg.action}` });
-                }
+                sendResponse(await handleMacroManagerMessage(msg));
             } catch (error) {
                 sendResponse({ error: error?.message || String(error) });
             }

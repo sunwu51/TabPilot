@@ -1,19 +1,12 @@
-/* global chrome */
+import { requestBackground } from "../../../background/requests";
 
-function _sendMacroManagerMessage(action, payload = {}) {
-  return new Promise(resolve => {
-    try {
-      chrome.runtime.sendMessage({ type: "macro_manager", action, payload }, response => {
-        if (chrome.runtime.lastError) {
-          resolve({ success: false, error: chrome.runtime.lastError.message });
-          return;
-        }
-        resolve(response || { success: false, error: "Empty macro manager response" });
-      });
-    } catch (error) {
-      resolve({ success: false, error: error?.message || String(error) });
-    }
-  });
+async function _sendMacroManagerMessage(action, payload = {}) {
+  try {
+    return await requestBackground({ type: "macro_manager", action, payload })
+      || { success: false, error: "Empty macro manager response" };
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) };
+  }
 }
 
 export async function _execListMacros({ query } = {}) {
