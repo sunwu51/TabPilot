@@ -11,6 +11,8 @@ vi.mock("@sunwu51/camel-ui", () => ({
     <label><input type="checkbox" checked={!!isSelected} onChange={(event) => onChange?.(event.target.checked)} />{children}</label>
   ),
   Dialog: ({ children }) => <div>{children}</div>,
+  Card: ({ children, collapsible, className }) => <div className={className}>{children}{collapsible}</div>,
+  Details: ({ children, title }) => <div><div>{title}</div>{children}</div>,
   Input: ({ label, defaultValue, onChange }) => (
     <label>{label}<input defaultValue={defaultValue} onChange={(event) => onChange?.(event.target.value)} /></label>
   ),

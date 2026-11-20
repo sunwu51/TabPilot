@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Button } from "@sunwu51/camel-ui";
+import { Button, Input } from "@sunwu51/camel-ui";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { loadSessionImageStore } from "../../../../api/agent/sessions";
@@ -80,7 +80,7 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
       </div>
       <div className="session-export-dialog-row">
         <Button
-          className="!min-h-9 !w-full !justify-center !text-sm"
+          className="!w-full"
           onPress={handleExport}
           isDisabled={!hasContent || exporting || sharing}
         >
@@ -88,16 +88,20 @@ export function SessionExportDialogBody({ sessionId = "", title = "", messages =
         </Button>
       </div>
       <div className="session-export-dialog-row session-export-dialog-share-row">
-        <input
+        <Input
           type="password"
           className="session-export-dialog-input"
+          aria-label={tr("分享密码", "Share password")}
           value={password}
-          onChange={(event) => setPassword(event.target.value)}
+          onChange={setPassword}
           placeholder="设置密码，留空为无密码"
-          disabled={!hasContent || exporting || sharing}
+          isDisabled={!hasContent || exporting || sharing}
+          autoComplete="new-password"
+          showPasswordLabel={tr("显示密码", "Show password")}
+          hidePasswordLabel={tr("隐藏密码", "Hide password")}
         />
         <Button
-          className="!min-h-9 !px-4 !text-sm !whitespace-nowrap"
+          className="!whitespace-nowrap"
           onPress={handleShare}
           isDisabled={!hasContent || exporting || sharing}
         >

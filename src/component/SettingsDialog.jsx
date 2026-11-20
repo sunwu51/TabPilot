@@ -1,5 +1,5 @@
 /* global chrome */
-import { Button, Checkbox, Dialog, Input, Select } from "@sunwu51/camel-ui";
+import { Button, Card, Checkbox, Details, Dialog, Input, Select } from "@sunwu51/camel-ui";
 import { useEffect, useRef, useState } from "react";
 import SubscriptionUsage from "./SubscriptionUsage";
 import MemoryManager from "./MemoryManager";
@@ -987,7 +987,258 @@ function SettingsDialogBody() {
       localizedRootRef(node);
     }} key={formKey} className="settings-dialog-body">
       <div className="settings-dialog-scroll">
-        <div className="settings-card">
+        <Card
+          className="settings-card" stack
+          expandLabel={tr("更多设置", "More settings")}
+          collapseLabel={tr("收起", "Collapse")}
+          collapsible={(
+            <>
+              <div className="mt-3">
+                <Checkbox isSelected={keywordSummaryUseCustomModel} onChange={setKeywordSummaryUseCustomModel}>
+                  <span className="text-sm">使用自定义关键词总结模型</span>
+                </Checkbox>
+              </div>
+              {keywordSummaryUseCustomModel && (
+                <Select
+                  size="sm"
+                  label="关键词总结模型"
+                  items={llmModels.map(item => `${item.name} (${item.model})`)}
+                  defaultIndex={Math.max(0, llmModels.findIndex(item => item.id === keywordSummaryModelId))}
+                  onSelectedItemChange={(changes) => {
+                    const selected = llmModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
+                    if (selected) setKeywordSummaryModelId(selected.id);
+                  }}
+                />
+              )}
+              {!keywordSummaryUseCustomModel && (
+                <div className="settings-api-url-hint">关键词总结默认使用当前聊天模型</div>
+              )}
+              <Input
+                label="LLM 首包超时（秒）"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                size="sm"
+                defaultValue={String(firstPacketTimeoutSeconds)}
+                onChange={(value) => {
+                  setFirstPacketTimeoutSeconds(Math.max(1, parseInt(value || String(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds), 10) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
+                }}
+                placeholder="20"
+              />
+              <div className="mt-2">
+                <Checkbox isSelected={omitThinkingFromRequests} onChange={setOmitThinkingFromRequests}>
+                  <span className="text-sm">思考内容不回传（需供应商支持）</span>
+                </Checkbox>
+              </div>
+              <Input
+                label="MCP 工具超时（秒）"
+                labelClassName="!text-sm !font-medium !text-gray-500"
+                size="sm"
+                defaultValue={String(mcpToolTimeoutSeconds)}
+                onChange={(value) => {
+                  setMcpToolTimeoutSeconds(Math.max(1, parseInt(value || String(DEFAULT_SETTINGS.mcpToolTimeoutSeconds), 10) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
+                }}
+                placeholder="60"
+              />
+              <Select
+                size="sm"
+                label="页面内容读取的最大长度"
+                items={extractTextLimitOptions.map((item) => item.label)}
+                defaultIndex={Math.max(0, extractTextLimitOptions.findIndex((item) => item.value === extractTextLimit))}
+                onSelectedItemChange={(changes) => {
+                  const selected = extractTextLimitOptions.find((item) => item.label === changes.selectedItem);
+                  setExtractTextLimit(selected ? selected.value : DEFAULT_SETTINGS.extractTextLimit);
+                }}
+              />
+              <div className="mt-2">
+                <Checkbox isSelected={supportsImageInput} onChange={handleSupportsImageInputChange}>
+                  <span className="text-sm">模型支持用户图片输入</span>
+                </Checkbox>
+              </div>
+              <div className="mt-2">
+                <Checkbox
+                  isSelected={supportsImageInput && supportsToolImageInput}
+                  onChange={(checked) => setSupportsToolImageInput(checked && supportsImageInput)}
+                >
+                  <span className="text-sm">模型支持工具图片输入</span>
+                </Checkbox>
+                {!supportsImageInput && (
+                  <div className="text-xs text-gray-500 mt-1">需要先开启用户图片输入。</div>
+                )}
+              </div>
+              <div className="settings-inline-section-title">Image API 配置</div>
+              <div className="settings-model-badges" aria-label="已保存图片模型">
+                {imageModels.length === 0 ? (
+                  <span className="settings-model-empty">暂无图片模型</span>
+                ) : imageModels.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`settings-model-badge settings-image-model-badge${item.id === activeImageModelId ? " settings-model-badge-active" : ""}${item.id === editingImageModelId ? " settings-model-badge-editing" : ""}`}
+                    onClick={() => setActiveImageModelId(item.id)}
+                    title={`${item.name}\n${item.imageApiProtocol}\n${item.imageBaseUrl}`}
+                  >
+                    <span className="settings-model-badge-name">{item.name}</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="settings-model-badge-remove"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleRemoveImageModel(item.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleRemoveImageModel(item.id);
+                      }}
+                      aria-label={tr(`删除 ${item.name}`, `Delete ${item.name}`)}
+                      title="删除"
+                    >
+                      ×
+                    </span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      className="settings-model-badge-edit"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleEditImageModel(item);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleEditImageModel(item);
+                      }}
+                      aria-label={tr(`编辑 ${item.name}`, `Edit ${item.name}`)}
+                      title="编辑"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                      </svg>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <Button
+                className="settings-model-add-toggle bg-[var(--w-green)]"
+                onPress={handleToggleImageModelForm}
+              >
+                {imageModelFormOpen ? (editingImageModelId ? "取消编辑" : "收起添加图片模型") : "添加图片模型"}
+              </Button>
+              {imageModelFormOpen && (
+                <div key={`image-form-${imageFormKey}`} className="settings-model-form">
+                  <Select
+                    size="sm"
+                    label="Image API 规范"
+                    items={imageProtocolOptions.map((item) => item.label)}
+                    defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
+                    onSelectedItemChange={(changes) => {
+                      const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
+                      const nextProtocol = selected ? selected.value : DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol;
+                      setImageApiProtocol(nextProtocol);
+                      if (nextProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN && !imageSourceLlmModelId) {
+                        setImageSourceLlmModelId(builtinImageHostModels[0]?.id || "");
+                      }
+                    }}
+                  />
+                  {imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN ? (
+                    <>
+                      <Select
+                        size="sm"
+                        label="OpenAI 宿主模型"
+                        items={builtinImageHostModels.map(item => `${item.name} (${item.model})`)}
+                        defaultIndex={Math.max(0, builtinImageHostModels.findIndex(item => item.id === imageSourceLlmModelId))}
+                        onSelectedItemChange={(changes) => {
+                          const selected = builtinImageHostModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
+                          setImageSourceLlmModelId(selected?.id || "");
+                        }}
+                      />
+                      <Select
+                        size="sm"
+                        label="图片生成模型"
+                        items={OPENAI_IMAGE_GENERATION_MODELS.map(item => item.label)}
+                        defaultIndex={Math.max(0, OPENAI_IMAGE_GENERATION_MODELS.findIndex(item => item.value === imageGenerationModel))}
+                        onSelectedItemChange={(changes) => {
+                          const selected = OPENAI_IMAGE_GENERATION_MODELS.find(item => item.label === changes.selectedItem);
+                          setImageGenerationModel(selected?.value || "");
+                        }}
+                      />
+                      <div className="settings-api-url-hint">{t("imageGenerationModelAccountHint")}</div>
+                      {builtinImageHostModels.length === 0 && (
+                        <div className="settings-api-url-hint">请先添加 OpenAI Responses 或 OpenAI Subscription 模型。</div>
+                      )}
+                      <div className="settings-api-url-hint">
+                        {t("openAiBuiltinImageGenHint")}
+                      </div>
+                    </>
+                  ) : (<>
+                  <Input
+                    label="Image API 地址"
+                    labelClassName="!text-sm !font-medium !text-gray-500"
+                    size="sm"
+                    defaultValue={imageBaseUrl}
+                    onChange={setImageBaseUrl}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                  <div className="settings-api-url-hint">
+                    {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
+                      ? `Chat Completions ${resolvedImageChatUrl || "—"}`
+                      : `gen: ${resolvedImageGenUrl || "—"}; edit: ${resolvedImageEditUrl || "—"}`}
+                  </div>
+                  <Input
+                    label="Image API Token"
+                    labelClassName="!text-sm !font-medium !text-gray-500"
+                    size="sm"
+                    type="password"
+                    value={imageApiKey}
+                    onChange={setImageApiKey}
+                    placeholder="sk-..."
+                    autoComplete="off"
+                    spellCheck={false}
+                    showPasswordLabel="显示 Image API Token"
+                    hidePasswordLabel="隐藏 Image API Token"
+                  />
+                  <Input
+                    label="Image 模型"
+                    labelClassName="!text-sm !font-medium !text-gray-500"
+                    size="sm"
+                    defaultValue={imageModel}
+                    onChange={setImageModel}
+                    placeholder={DEFAULT_IMAGE_MODEL}
+                  />
+                  </>)}
+                  <Button className="settings-model-add-button bg-[var(--w-green)]" onPress={handleAddImageModel}>
+                    {editingImageModelId ? "保存修改" : "添加"}
+                  </Button>
+                </div>
+              )}
+              <div className="mt-2">
+                <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
+                  <span className="text-sm">隐藏助手消息的操作按钮（复制 / 播报）</span>
+                </Checkbox>
+              </div>
+              <Select
+                size="sm"
+                label="助手消息播报音色"
+                items={ttsVoiceOptions.map((item) => item.label)}
+                defaultIndex={Math.max(0, ttsVoiceOptions.findIndex((item) => item.value === ttsVoiceName))}
+                onSelectedItemChange={(changes) => {
+                  const selected = ttsVoiceOptions.find((item) => item.label === changes.selectedItem);
+                  setTtsVoiceName(selected ? selected.value : DEFAULT_SETTINGS.ttsVoiceName);
+                }}
+              />
+              <div className="settings-api-url-hint">
+                使用浏览器内置语音合成；不同系统和浏览器可用音色不同。
+              </div>
+              <div className="mt-2">
+                <Checkbox isSelected={postdogToolsEnabled} onChange={setPostdogToolsEnabled}>
+                  <span className="text-sm">开启 Postdog 工具</span>
+                </Checkbox>
+              </div>
+            </>
+          )}
+        >
           <div className="settings-card-title">LLM 配置</div>
           <div className="settings-model-badges" aria-label="已保存 LLM 模型">
             {llmModels.length === 0 ? (
@@ -1050,28 +1301,10 @@ function SettingsDialogBody() {
           >
             {llmModelFormOpen ? (editingLlmModelId ? "取消编辑" : "收起添加模型") : "添加模型"}
           </Button>
-          <div className="mt-3">
-            <Checkbox isSelected={keywordSummaryUseCustomModel} onChange={setKeywordSummaryUseCustomModel}>
-              <span className="text-sm">使用自定义关键词总结模型</span>
-            </Checkbox>
-          </div>
-          {keywordSummaryUseCustomModel && (
-            <Select
-              label="关键词总结模型"
-              items={llmModels.map(item => `${item.name} (${item.model})`)}
-              defaultIndex={Math.max(0, llmModels.findIndex(item => item.id === keywordSummaryModelId))}
-              onSelectedItemChange={(changes) => {
-                const selected = llmModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
-                if (selected) setKeywordSummaryModelId(selected.id);
-              }}
-            />
-          )}
-          {!keywordSummaryUseCustomModel && (
-            <div className="settings-api-url-hint">关键词总结默认使用当前聊天模型</div>
-          )}
           {llmModelFormOpen && (
             <div key={`llm-form-${llmFormKey}`} className="settings-model-form">
               <Select
+                size="sm"
                 label="API 类型"
                 items={["OpenAI Chat Completions", "OpenAI Responses", "OpenAI Subscription", "Anthropic"]}
                 defaultIndex={apiType === API_TYPES.OPENAI_RESPONSES ? 1 : (apiType === API_TYPES.OPENAI_SUBSCRIPTION ? 2 : (apiType === API_TYPES.ANTHROPIC ? 3 : 0))}
@@ -1100,7 +1333,7 @@ function SettingsDialogBody() {
                 <Input
                   label="API 地址"
                   labelClassName="!text-sm !font-medium !text-gray-500"
-                  inputClassName="!min-h-8"
+                  size="sm"
                   defaultValue={baseUrl}
                   onChange={setBaseUrl}
                   placeholder={apiType === API_TYPES.ANTHROPIC ? "https://api.deepseek.com/anthropic/messages" : (apiType === API_TYPES.OPENAI_RESPONSES ? "https://api.openai.com/v1/responses" : "https://api.deepseek.com/chat/completions")}
@@ -1111,7 +1344,7 @@ function SettingsDialogBody() {
                 <Input
                   label="API Key"
                   labelClassName="!text-sm !font-medium !text-gray-500"
-                  inputClassName="!min-h-8"
+                  size="sm"
                   type="password"
                   value={apiKey}
                   onChange={setApiKey}
@@ -1126,7 +1359,7 @@ function SettingsDialogBody() {
                 <Input
                   label="模型"
                   labelClassName="!text-sm !font-medium !text-gray-500"
-                  inputClassName="!min-h-8"
+                  size="sm"
                   defaultValue={model}
                   onChange={setModel}
                   placeholder={apiType === API_TYPES.ANTHROPIC
@@ -1219,501 +1452,293 @@ function SettingsDialogBody() {
               )}
             </div>
           )}
-          <Input
-            label="LLM 首包超时（秒）"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={String(firstPacketTimeoutSeconds)}
-            onChange={(value) => {
-              setFirstPacketTimeoutSeconds(Math.max(1, parseInt(value || String(DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds), 10) || DEFAULT_SETTINGS.llmConfig.firstPacketTimeoutSeconds));
-            }}
-            placeholder="20"
-          />
-          <div className="mt-2">
-            <Checkbox isSelected={omitThinkingFromRequests} onChange={setOmitThinkingFromRequests}>
-              <span className="text-sm">思考内容不回传（需供应商支持）</span>
-            </Checkbox>
-          </div>
-          <Input
-            label="MCP 工具超时（秒）"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={String(mcpToolTimeoutSeconds)}
-            onChange={(value) => {
-              setMcpToolTimeoutSeconds(Math.max(1, parseInt(value || String(DEFAULT_SETTINGS.mcpToolTimeoutSeconds), 10) || DEFAULT_SETTINGS.mcpToolTimeoutSeconds));
-            }}
-            placeholder="60"
-          />
-          <Select
-            label="页面内容读取的最大长度"
-            items={extractTextLimitOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, extractTextLimitOptions.findIndex((item) => item.value === extractTextLimit))}
-            onSelectedItemChange={(changes) => {
-              const selected = extractTextLimitOptions.find((item) => item.label === changes.selectedItem);
-              setExtractTextLimit(selected ? selected.value : DEFAULT_SETTINGS.extractTextLimit);
-            }}
-          />
-          <div className="mt-2">
-            <Checkbox isSelected={supportsImageInput} onChange={handleSupportsImageInputChange}>
-              <span className="text-sm">模型支持用户图片输入</span>
-            </Checkbox>
-          </div>
-          <div className="mt-2">
-            <Checkbox
-              isSelected={supportsImageInput && supportsToolImageInput}
-              onChange={(checked) => setSupportsToolImageInput(checked && supportsImageInput)}
-            >
-              <span className="text-sm">模型支持工具图片输入</span>
-            </Checkbox>
-            {!supportsImageInput && (
-              <div className="text-xs text-gray-500 mt-1">需要先开启用户图片输入。</div>
-            )}
-          </div>
-          <div className="settings-inline-section-title">Image API 配置</div>
-          <div className="settings-model-badges" aria-label="已保存图片模型">
-            {imageModels.length === 0 ? (
-              <span className="settings-model-empty">暂无图片模型</span>
-            ) : imageModels.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                className={`settings-model-badge settings-image-model-badge${item.id === activeImageModelId ? " settings-model-badge-active" : ""}${item.id === editingImageModelId ? " settings-model-badge-editing" : ""}`}
-                onClick={() => setActiveImageModelId(item.id)}
-                title={`${item.name}\n${item.imageApiProtocol}\n${item.imageBaseUrl}`}
-              >
-                <span className="settings-model-badge-name">{item.name}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="settings-model-badge-remove"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleRemoveImageModel(item.id);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleRemoveImageModel(item.id);
-                  }}
-                  aria-label={tr(`删除 ${item.name}`, `Delete ${item.name}`)}
-                  title="删除"
-                >
-                  ×
-                </span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="settings-model-badge-edit"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    handleEditImageModel(item);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" && event.key !== " ") return;
-                    event.preventDefault();
-                    event.stopPropagation();
-                    handleEditImageModel(item);
-                  }}
-                  aria-label={tr(`编辑 ${item.name}`, `Edit ${item.name}`)}
-                  title="编辑"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
-                  </svg>
-                </span>
-              </button>
-            ))}
-          </div>
-          <Button
-            className="settings-model-add-toggle bg-[var(--w-green)]"
-            onPress={handleToggleImageModelForm}
-          >
-            {imageModelFormOpen ? (editingImageModelId ? "取消编辑" : "收起添加图片模型") : "添加图片模型"}
-          </Button>
-          {imageModelFormOpen && (
-            <div key={`image-form-${imageFormKey}`} className="settings-model-form">
-              <Select
-                label="Image API 规范"
-                items={imageProtocolOptions.map((item) => item.label)}
-                defaultIndex={Math.max(0, imageProtocolOptions.findIndex((item) => item.value === imageApiProtocol))}
-                onSelectedItemChange={(changes) => {
-                  const selected = imageProtocolOptions.find((item) => item.label === changes.selectedItem);
-                  const nextProtocol = selected ? selected.value : DEFAULT_IMAGE_MODEL_DRAFT.imageApiProtocol;
-                  setImageApiProtocol(nextProtocol);
-                  if (nextProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN && !imageSourceLlmModelId) {
-                    setImageSourceLlmModelId(builtinImageHostModels[0]?.id || "");
-                  }
-                }}
-              />
-              {imageApiProtocol === IMAGE_API_PROTOCOLS.OPENAI_BUILTIN ? (
-                <>
-                  <Select
-                    label="OpenAI 宿主模型"
-                    items={builtinImageHostModels.map(item => `${item.name} (${item.model})`)}
-                    defaultIndex={Math.max(0, builtinImageHostModels.findIndex(item => item.id === imageSourceLlmModelId))}
-                    onSelectedItemChange={(changes) => {
-                      const selected = builtinImageHostModels.find(item => `${item.name} (${item.model})` === changes.selectedItem);
-                      setImageSourceLlmModelId(selected?.id || "");
-                    }}
-                  />
-                  <Select
-                    label="图片生成模型"
-                    items={OPENAI_IMAGE_GENERATION_MODELS.map(item => item.label)}
-                    defaultIndex={Math.max(0, OPENAI_IMAGE_GENERATION_MODELS.findIndex(item => item.value === imageGenerationModel))}
-                    onSelectedItemChange={(changes) => {
-                      const selected = OPENAI_IMAGE_GENERATION_MODELS.find(item => item.label === changes.selectedItem);
-                      setImageGenerationModel(selected?.value || "");
-                    }}
-                  />
-                  <div className="settings-api-url-hint">{t("imageGenerationModelAccountHint")}</div>
-                  {builtinImageHostModels.length === 0 && (
-                    <div className="settings-api-url-hint">请先添加 OpenAI Responses 或 OpenAI Subscription 模型。</div>
-                  )}
-                  <div className="settings-api-url-hint">
-                    {t("openAiBuiltinImageGenHint")}
-                  </div>
-                </>
-              ) : (<>
-              <Input
-                label="Image API 地址"
-                labelClassName="!text-sm !font-medium !text-gray-500"
-                inputClassName="!min-h-8"
-                defaultValue={imageBaseUrl}
-                onChange={setImageBaseUrl}
-                placeholder="https://api.openai.com/v1"
-              />
-              <div className="settings-api-url-hint">
-                {imageApiProtocol === IMAGE_API_PROTOCOLS.CHAT_COMPLETIONS
-                  ? `Chat Completions ${resolvedImageChatUrl || "—"}`
-                  : `gen: ${resolvedImageGenUrl || "—"}; edit: ${resolvedImageEditUrl || "—"}`}
-              </div>
-              <Input
-                label="Image API Token"
-                labelClassName="!text-sm !font-medium !text-gray-500"
-                inputClassName="!min-h-8"
-                type="password"
-                value={imageApiKey}
-                onChange={setImageApiKey}
-                placeholder="sk-..."
-                autoComplete="off"
-                spellCheck={false}
-                showPasswordLabel="显示 Image API Token"
-                hidePasswordLabel="隐藏 Image API Token"
-              />
-              <Input
-                label="Image 模型"
-                labelClassName="!text-sm !font-medium !text-gray-500"
-                inputClassName="!min-h-8"
-                defaultValue={imageModel}
-                onChange={setImageModel}
-                placeholder={DEFAULT_IMAGE_MODEL}
-              />
-              </>)}
-              <Button className="settings-model-add-button bg-[var(--w-green)]" onPress={handleAddImageModel}>
-                {editingImageModelId ? "保存修改" : "添加"}
-              </Button>
-            </div>
-          )}
-          <div className="mt-2">
-            <Checkbox isSelected={hideCopyButton} onChange={setHideCopyButton}>
-              <span className="text-sm">隐藏助手消息的操作按钮（复制 / 播报）</span>
-            </Checkbox>
-          </div>
-          <Select
-            label="助手消息播报音色"
-            items={ttsVoiceOptions.map((item) => item.label)}
-            defaultIndex={Math.max(0, ttsVoiceOptions.findIndex((item) => item.value === ttsVoiceName))}
-            onSelectedItemChange={(changes) => {
-              const selected = ttsVoiceOptions.find((item) => item.label === changes.selectedItem);
-              setTtsVoiceName(selected ? selected.value : DEFAULT_SETTINGS.ttsVoiceName);
-            }}
-          />
-          <div className="settings-api-url-hint">
-            使用浏览器内置语音合成；不同系统和浏览器可用音色不同。
-          </div>
           <div className="mt-2">
             <Checkbox isSelected={dangerousToolSkipApproval} onChange={setDangerousToolSkipApproval}>
               <span className="text-sm text-red-600">危险工具无需审批（危险）</span>
             </Checkbox>
           </div>
-          <div className="mt-2">
-            <Checkbox isSelected={postdogToolsEnabled} onChange={setPostdogToolsEnabled}>
-              <span className="text-sm">开启 Postdog 工具</span>
-            </Checkbox>
-          </div>
-        </div>
+        </Card>
 
-        <div className="settings-card">
-          <div className="settings-card-title">标签管理</div>
-          <div className="mt-2">
-            <Checkbox isSelected={reuse} onChange={setReuse}>
-              <span className="text-sm">复用 Tab</span>
-            </Checkbox>
-          </div>
-          <div className="settings-reuse-memory-row">
-            <span className="text-xs text-gray-500">
-              {locale === "en"
-                ? `Remembered reuse choices for ${reusePolicyCount} domains`
-                : `已记住 ${reusePolicyCount} 个域名的复用决策`}
-            </span>
-            <Button
-              size="sm"
-              isDisabled={reusePolicyCount === 0}
-              onPress={handleClearReusePolicies}
-              title={locale === "en" ? "Clear remembered domain reuse choices" : "清空域名复用记忆"}
-            >
-              {t("clear")}
-            </Button>
-          </div>
-          <div className="mt-2">
-            <Checkbox isSelected={betaFeaturesEnabled} onChange={setBetaFeaturesEnabled}>
-              <span className="text-sm">开启 Beta 功能</span>
-            </Checkbox>
-          </div>
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-title">{t("memoryTitle")}</div>
-          <div className="settings-reuse-memory-row">
-            <span className="text-xs text-gray-500">{t("memorySettingsHint")}</span>
-            <MemoryManager />
-          </div>
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-title">工具透出</div>
-          <div className="mt-2">
-            <Checkbox isSelected={bridgeEnabled} onChange={setBridgeEnabled}>
-              <span className="text-sm">开启工具透出</span>
-            </Checkbox>
-          </div>
-          <Input
-            aria-label="WS Server URL"
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={wsServerUrl}
-            onChange={setWsServerUrl}
-            placeholder="ws://localhost:3000/ws/tabmanager"
-          />
-          <div className="settings-api-url-hint">
-            {tr("Bridge 状态", "Bridge status")}
-            {" "}
-            <span style={{ color: wsBridgeStateMeta.color }}>{wsBridgeStateMeta.label}</span>
-            {wsBridgeStatus.tools > 0 ? tr(` · ${wsBridgeStatus.tools} 个工具`, ` · ${wsBridgeStatus.tools} tools`) : ""}
-            {wsBridgeStatus.error ? ` · ${wsBridgeStatus.error}` : ""}
-            {wsBridgeLastHeartbeat ? tr(` · 最近心跳 ${wsBridgeLastHeartbeat}`, ` · Last heartbeat ${wsBridgeLastHeartbeat}`) : ""}
-          </div>
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-title">{t("subagentTemplates")}</div>
-          <div className="settings-subagent-template-list">
-            {subagentTemplates.length === 0 ? <span className="settings-model-empty">{t("subagentNoTemplates")}</span> : subagentTemplates.map(template => (
-              <div key={template.id} className="settings-subagent-template-row">
-                <div>
-                  <strong>{template.templateName}</strong>
-                  <div className="settings-api-url-hint">{template.description}</div>
-                </div>
-                <div className="settings-subagent-template-actions">
-                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => openEditSubagentTemplateForm(template)}>{t("subagentEditTemplate")}</Button>
-                  <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => removeSubagentTemplate(template.id)}>{t("subagentDeleteTemplate")}</Button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <Button className="settings-model-add-toggle bg-[var(--w-indigo)]" onPress={subagentTemplateFormOpen ? () => setSubagentTemplateFormOpen(false) : openNewSubagentTemplateForm}>
-            {subagentTemplateFormOpen ? t("subagentHideTemplateForm") : t("subagentAddTemplate")}
-          </Button>
-          {subagentTemplateFormOpen && (
-            <div className="settings-model-form">
-              <Input label={t("subagentTemplateName")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.templateName} onChange={value => setSubagentTemplateDraft(current => ({ ...current, templateName: value }))} placeholder={t("subagentTemplateNamePlaceholder")} />
-              <Input label={t("subagentTemplateDescription")} labelClassName="!text-sm !font-medium !text-gray-500" inputClassName="!min-h-8" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder={t("subagentTemplateDescriptionPlaceholder")} />
-              <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
-              <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
-              <label className="settings-form-label" htmlFor="subagent-template-model">模型（留空使用当前模型）</label>
-              <Select
-                items={["使用当前上下文模型", ...llmModels.map(profile => `${profile.name} (${profile.model})`)]}
-                defaultIndex={Math.max(0, subagentTemplateDraft.modelProfileId
-                  ? llmModels.findIndex(profile => profile.id === subagentTemplateDraft.modelProfileId) + 1
-                  : 0)}
-                onSelectedItemChange={changes => {
-                  const selected = llmModels.find(profile => `${profile.name} (${profile.model})` === changes.selectedItem);
-                  setSubagentTemplateDraft(current => ({ ...current, modelProfileId: selected?.id || "" }));
-                }}
-              />
-              <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
-              <div className="settings-checkbox-grid">
-                {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
-              </div>
-              <div className="settings-form-label">{t("subagentAllowedMcpServers")}</div>
-              <div className="settings-checkbox-grid">
-                {mcpServerOptions.length === 0 ? <span className="settings-api-url-hint">{t("subagentNoConnectedMcpServers")}</span> : mcpServerOptions.map(server => <Checkbox key={server} isSelected={subagentTemplateDraft.allowedMcpServers.includes(server)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedMcpServers: selected ? [...current.allowedMcpServers, server] : current.allowedMcpServers.filter(item => item !== server) }))}><span className="text-sm">{server}</span></Checkbox>)}
-              </div>
-              <Checkbox isSelected={subagentTemplateDraft.enabled} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, enabled: selected }))}><span className="text-sm">{t("subagentEnableTemplate")}</span></Checkbox>
-              <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={saveSubagentTemplateDraft}>{editingSubagentTemplateId ? t("subagentSaveTemplate") : t("subagentSubmitTemplate")}</Button>
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title="快捷入口" stack>
+            <div className="settings-tab-action-row">
+              <Button className="!min-h-7 !px-3 !py-0 !text-xs" onPress={() => chrome.tabs.create({ url: chrome.runtime.getURL("files.html") })}>
+                {t("fileManager")}
+              </Button>
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleScreenshotCurrentPage}
+              >
+                screenshot
+              </Button>
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleOpenPlayground}
+              >
+                playground
+              </Button>
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleOpenStash}
+              >
+                stash
+              </Button>
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleOpenPostdog}
+              >
+                postdog
+              </Button>
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleOpenHooks}
+              >
+                hooks
+              </Button>
             </div>
-          )}
-        </div>
+            <hr className="settings-quick-entry-divider" />
+            <div className="settings-card-title settings-card-title-inline">高级功能</div>
+            <div className="settings-tab-action-row settings-tab-action-row-secondary">
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleOpenAdvancedUsage}
+              >
+                高级用法
+              </Button>
+            </div>
+          </Details>
+        </Card>
 
-        <div className="settings-card">
-          <div className="settings-card-title">快捷入口</div>
-          <div className="settings-tab-action-row">
-            <Button className="!min-h-7 !px-3 !py-0 !text-xs" onPress={() => chrome.tabs.create({ url: chrome.runtime.getURL("files.html") })}>
-              {t("fileManager")}
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleScreenshotCurrentPage}
-            >
-              screenshot
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleOpenPlayground}
-            >
-              playground
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleOpenStash}
-            >
-              stash
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleOpenPostdog}
-            >
-              postdog
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleOpenHooks}
-            >
-              hooks
-            </Button>
-          </div>
-          <hr className="settings-quick-entry-divider" />
-          <div className="settings-card-title settings-card-title-inline">高级功能</div>
-          <div className="settings-tab-action-row settings-tab-action-row-secondary">
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleOpenAdvancedUsage}
-            >
-              高级用法
-            </Button>
-          </div>
-        </div>
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title="标签管理" stack>
+            <div className="mt-2">
+              <Checkbox isSelected={reuse} onChange={setReuse}>
+                <span className="text-sm">复用 Tab</span>
+              </Checkbox>
+            </div>
+            <div className="settings-reuse-memory-row">
+              <span className="text-xs text-gray-500">
+                {locale === "en"
+                  ? `Remembered reuse choices for ${reusePolicyCount} domains`
+                  : `已记住 ${reusePolicyCount} 个域名的复用决策`}
+              </span>
+              <Button
+                size="sm"
+                isDisabled={reusePolicyCount === 0}
+                onPress={handleClearReusePolicies}
+                title={locale === "en" ? "Clear remembered domain reuse choices" : "清空域名复用记忆"}
+              >
+                {t("clear")}
+              </Button>
+            </div>
+            <div className="mt-2">
+              <Checkbox isSelected={betaFeaturesEnabled} onChange={setBetaFeaturesEnabled}>
+                <span className="text-sm">开启 Beta 功能</span>
+              </Checkbox>
+            </div>
+          </Details>
+        </Card>
 
-        <div className="settings-card">
-          <div className="settings-card-title">配置备份</div>
-          <div className="settings-tab-action-row">
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleExportSettings}
-              isDisabled={loading || saving}
-            >
-              导出配置
-            </Button>
-            <Button
-              className="!min-h-7 !px-3 !py-0 !text-xs"
-              onPress={handleImportSettingsClick}
-              isDisabled={loading || saving}
-            >
-              导入配置
-            </Button>
-            <input
-              ref={settingsImportInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="settings-hidden-file-input"
-              onChange={handleImportSettingsFile}
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title={t("memoryTitle")} stack>
+            <div className="settings-reuse-memory-row">
+              <span className="text-xs text-gray-500">{t("memorySettingsHint")}</span>
+              <MemoryManager />
+            </div>
+          </Details>
+        </Card>
+
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title="工具透出" stack>
+            <div className="mt-2">
+              <Checkbox isSelected={bridgeEnabled} onChange={setBridgeEnabled}>
+                <span className="text-sm">开启工具透出</span>
+              </Checkbox>
+            </div>
+            <Input
+              aria-label="WS Server URL"
+              labelClassName="!text-sm !font-medium !text-gray-500"
+              size="sm"
+              defaultValue={wsServerUrl}
+              onChange={setWsServerUrl}
+              placeholder="ws://localhost:3000/ws/tabmanager"
             />
-          </div>
-          <div className="settings-api-url-hint !text-red-600">
-            只有保存后才能导出；导出包含 API Key，且不会导出 WS Bridge 相关配置；导入只更新文件中存在的配置项。
-          </div>
-        </div>
+            <div className="settings-api-url-hint">
+              {tr("Bridge 状态", "Bridge status")}
+              {" "}
+              <span style={{ color: wsBridgeStateMeta.color }}>{wsBridgeStateMeta.label}</span>
+              {wsBridgeStatus.tools > 0 ? tr(` · ${wsBridgeStatus.tools} 个工具`, ` · ${wsBridgeStatus.tools} tools`) : ""}
+              {wsBridgeStatus.error ? ` · ${wsBridgeStatus.error}` : ""}
+              {wsBridgeLastHeartbeat ? tr(` · 最近心跳 ${wsBridgeLastHeartbeat}`, ` · Last heartbeat ${wsBridgeLastHeartbeat}`) : ""}
+            </div>
+          </Details>
+        </Card>
 
-        <div className="settings-card">
-          <div className="settings-card-title">{t("supabaseStorageSync")}</div>
-          <Input
-            label={t("supabaseProjectUrl")}
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={supabaseUrl}
-            onChange={setSupabaseUrl}
-            placeholder="https://your-project.supabase.co"
-          />
-          <Input
-            label={t("supabaseBucket")}
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={supabaseBucket}
-            onChange={setSupabaseBucket}
-            placeholder="TABPILOT"
-          />
-          <Input
-            label={t("supabaseRootDirectory")}
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            defaultValue={supabaseBasePath}
-            onChange={setSupabaseBasePath}
-            placeholder="tabmanager"
-          />
-          <Input
-            label={t("supabaseKey")}
-            labelClassName="!text-sm !font-medium !text-gray-500"
-            inputClassName="!min-h-8"
-            type="password"
-            value={supabaseKey}
-            onChange={setSupabaseKey}
-            placeholder="Supabase anon key"
-            autoComplete="off"
-            spellCheck={false}
-            showPasswordLabel={t("showSupabaseKey")}
-            hidePasswordLabel={t("hideSupabaseKey")}
-          />
-          <div className="settings-api-url-hint">
-            {t("supabaseHint")}
-          </div>
-          <div className="settings-tab-action-row">
-            <Button className="!min-h-7 !px-3 !py-0 !text-xs" onPress={handleSyncSessionsWithSupabase} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
-              {supabaseRunning ? t("supabaseWorking") : t("syncSessions")}
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title={t("subagentTemplates")} stack>
+            <div className="settings-subagent-template-list">
+              {subagentTemplates.length === 0 ? <span className="settings-model-empty">{t("subagentNoTemplates")}</span> : subagentTemplates.map(template => (
+                <div key={template.id} className="settings-subagent-template-row">
+                  <div>
+                    <strong>{template.templateName}</strong>
+                    <div className="settings-api-url-hint">{template.description}</div>
+                  </div>
+                  <div className="settings-subagent-template-actions">
+                    <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => openEditSubagentTemplateForm(template)}>{t("subagentEditTemplate")}</Button>
+                    <Button className="!min-h-7 !px-2 !py-0 !text-xs" onPress={() => removeSubagentTemplate(template.id)}>{t("subagentDeleteTemplate")}</Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Button className="settings-model-add-toggle bg-[var(--w-indigo)]" onPress={subagentTemplateFormOpen ? () => setSubagentTemplateFormOpen(false) : openNewSubagentTemplateForm}>
+              {subagentTemplateFormOpen ? t("subagentHideTemplateForm") : t("subagentAddTemplate")}
             </Button>
-            <Button className="!min-h-7 !px-3 !py-0 !text-xs !bg-yellow-100 !text-yellow-800 !border !border-yellow-300 hover:!bg-yellow-200" onPress={handleRestoreSettingsFromSupabase} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
-              {t("restoreSettingsFromSupabase")}
-            </Button>
-            <Button className="!min-h-7 !px-3 !py-0 !text-xs !bg-yellow-100 !text-yellow-800 !border !border-yellow-300 hover:!bg-yellow-200" onPress={handleOverwriteSupabaseSettings} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
-              {t("overwriteSupabaseSettings")}
-            </Button>
-          </div>
-        </div>
+            {subagentTemplateFormOpen && (
+              <div className="settings-model-form">
+                <Input label={t("subagentTemplateName")} labelClassName="!text-sm !font-medium !text-gray-500" size="sm" value={subagentTemplateDraft.templateName} onChange={value => setSubagentTemplateDraft(current => ({ ...current, templateName: value }))} placeholder={t("subagentTemplateNamePlaceholder")} />
+                <Input label={t("subagentTemplateDescription")} labelClassName="!text-sm !font-medium !text-gray-500" size="sm" value={subagentTemplateDraft.description} onChange={value => setSubagentTemplateDraft(current => ({ ...current, description: value }))} placeholder={t("subagentTemplateDescriptionPlaceholder")} />
+                <label className="settings-form-label" htmlFor="subagent-template-prompt">{t("subagentTemplateInstructions")}</label>
+                <textarea id="subagent-template-prompt" className="settings-textarea" rows={5} value={subagentTemplateDraft.systemPrompt} onChange={event => setSubagentTemplateDraft(current => ({ ...current, systemPrompt: event.target.value }))} placeholder={t("subagentTemplateInstructionsPlaceholder")} />
+                <label className="settings-form-label" htmlFor="subagent-template-model">模型（留空使用当前模型）</label>
+                <Select
+                  size="sm"
+                  items={["使用当前上下文模型", ...llmModels.map(profile => `${profile.name} (${profile.model})`)]}
+                  defaultIndex={Math.max(0, subagentTemplateDraft.modelProfileId
+                    ? llmModels.findIndex(profile => profile.id === subagentTemplateDraft.modelProfileId) + 1
+                    : 0)}
+                  onSelectedItemChange={changes => {
+                    const selected = llmModels.find(profile => `${profile.name} (${profile.model})` === changes.selectedItem);
+                    setSubagentTemplateDraft(current => ({ ...current, modelProfileId: selected?.id || "" }));
+                  }}
+                />
+                <div className="settings-form-label">{t("subagentAllowedBuiltinDomains")}</div>
+                <div className="settings-checkbox-grid">
+                  {Object.keys(BUILTIN_TOOL_GROUPS).map(domain => <Checkbox key={domain} isSelected={subagentTemplateDraft.allowedBuiltinDomains.includes(domain)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedBuiltinDomains: selected ? [...current.allowedBuiltinDomains, domain] : current.allowedBuiltinDomains.filter(item => item !== domain) }))}><span className="text-sm">{domain}</span></Checkbox>)}
+                </div>
+                <div className="settings-form-label">{t("subagentAllowedMcpServers")}</div>
+                <div className="settings-checkbox-grid">
+                  {mcpServerOptions.length === 0 ? <span className="settings-api-url-hint">{t("subagentNoConnectedMcpServers")}</span> : mcpServerOptions.map(server => <Checkbox key={server} isSelected={subagentTemplateDraft.allowedMcpServers.includes(server)} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, allowedMcpServers: selected ? [...current.allowedMcpServers, server] : current.allowedMcpServers.filter(item => item !== server) }))}><span className="text-sm">{server}</span></Checkbox>)}
+                </div>
+                <Checkbox isSelected={subagentTemplateDraft.enabled} onChange={selected => setSubagentTemplateDraft(current => ({ ...current, enabled: selected }))}><span className="text-sm">{t("subagentEnableTemplate")}</span></Checkbox>
+                <Button className="settings-model-add-button bg-[var(--w-indigo)]" onPress={saveSubagentTemplateDraft}>{editingSubagentTemplateId ? t("subagentSaveTemplate") : t("subagentSubmitTemplate")}</Button>
+              </div>
+            )}
+          </Details>
+        </Card>
 
-        <div className="settings-card">
-          <div className="settings-card-title">{t("feedback")}</div>
-          <div className="settings-api-url-hint">{t("feedbackHint")}</div>
-          <div className="settings-tab-action-row">
-            <a
-              href="https://github.com/sunwu51/TabPilot/issues"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Button className="!min-h-7 !px-3 !py-0 !text-xs">{t("feedback")}</Button>
-            </a>
-          </div>
-        </div>
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title="配置备份" stack>
+            <div className="settings-tab-action-row">
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleExportSettings}
+                isDisabled={loading || saving}
+              >
+                导出配置
+              </Button>
+              <Button
+                className="!min-h-7 !px-3 !py-0 !text-xs"
+                onPress={handleImportSettingsClick}
+                isDisabled={loading || saving}
+              >
+                导入配置
+              </Button>
+              <input
+                ref={settingsImportInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="settings-hidden-file-input"
+                onChange={handleImportSettingsFile}
+              />
+            </div>
+            <div className="settings-api-url-hint !text-red-600">
+              只有保存后才能导出；导出包含 API Key，且不会导出 WS Bridge 相关配置；导入只更新文件中存在的配置项。
+            </div>
+          </Details>
+        </Card>
 
-        <div className="settings-card">
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title={t("supabaseStorageSync")} stack>
+            <Input
+              label={t("supabaseProjectUrl")}
+              labelClassName="!text-sm !font-medium !text-gray-500"
+              size="sm"
+              defaultValue={supabaseUrl}
+              onChange={setSupabaseUrl}
+              placeholder="https://your-project.supabase.co"
+            />
+            <Input
+              label={t("supabaseBucket")}
+              labelClassName="!text-sm !font-medium !text-gray-500"
+              size="sm"
+              defaultValue={supabaseBucket}
+              onChange={setSupabaseBucket}
+              placeholder="TABPILOT"
+            />
+            <Input
+              label={t("supabaseRootDirectory")}
+              labelClassName="!text-sm !font-medium !text-gray-500"
+              size="sm"
+              defaultValue={supabaseBasePath}
+              onChange={setSupabaseBasePath}
+              placeholder="tabmanager"
+            />
+            <Input
+              label={t("supabaseKey")}
+              labelClassName="!text-sm !font-medium !text-gray-500"
+              size="sm"
+              type="password"
+              value={supabaseKey}
+              onChange={setSupabaseKey}
+              placeholder="Supabase anon key"
+              autoComplete="off"
+              spellCheck={false}
+              showPasswordLabel={t("showSupabaseKey")}
+              hidePasswordLabel={t("hideSupabaseKey")}
+            />
+            <div className="settings-api-url-hint">
+              {t("supabaseHint")}
+            </div>
+            <div className="settings-tab-action-row">
+              <Button className="!min-h-7 !px-3 !py-0 !text-xs" onPress={handleSyncSessionsWithSupabase} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
+                {supabaseRunning ? t("supabaseWorking") : t("syncSessions")}
+              </Button>
+              <Button className="!min-h-7 !px-3 !py-0 !text-xs !bg-yellow-100 !text-yellow-800 !border !border-yellow-300 hover:!bg-yellow-200" onPress={handleRestoreSettingsFromSupabase} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
+                {t("restoreSettingsFromSupabase")}
+              </Button>
+              <Button className="!min-h-7 !px-3 !py-0 !text-xs !bg-yellow-100 !text-yellow-800 !border !border-yellow-300 hover:!bg-yellow-200" onPress={handleOverwriteSupabaseSettings} isDisabled={supabaseRunning || !hasUsableSupabaseConfig(currentSupabaseConfig())}>
+                {t("overwriteSupabaseSettings")}
+              </Button>
+            </div>
+          </Details>
+        </Card>
+
+        <Card className="settings-card">
+          <Details className="settings-details" titleClassName="settings-details-title" title={t("feedback")} stack>
+            <div className="settings-api-url-hint">{t("feedbackHint")}</div>
+            <div className="settings-tab-action-row">
+              <a
+                href="https://github.com/sunwu51/TabPilot/issues"
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Button className="!min-h-7 !px-3 !py-0 !text-xs">{t("feedback")}</Button>
+              </a>
+            </div>
+          </Details>
+        </Card>
+
+        <Card className="settings-card" stack>
           <div className="settings-card-title">{t("language")}</div>
           <Select
+            size="sm"
             label={t("language")}
             items={[t("chinese"), t("english")]}
             defaultIndex={locale === "zh" ? 0 : 1}
             onSelectedItemChange={(changes) => setLocale(changes.selectedItem === t("chinese") ? "zh" : "en")}
           />
           <div className="settings-api-url-hint">{t("languageHint")}</div>
-        </div>
+        </Card>
 
       </div>
 
