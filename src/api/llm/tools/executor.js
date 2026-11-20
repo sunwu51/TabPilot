@@ -88,6 +88,11 @@ import {
 import { _execDownload, _execDownloadList, _execDownloadSearch } from "./builtins/downloads";
 import { _execGetCurrentTime, _execSleep } from "./builtins/misc";
 import {
+  _execPostdogDeleteFolder,
+  _execPostdogDeleteRequest,
+  _execPostdogDeleteEnvironment,
+  _execPostdogSetEnvironmentVariable,
+  _execPostdogDeleteEnvironmentVariable,
   _execPostdogGetHistoryRun,
   _execPostdogGetRequest,
   _execPostdogListEnvironments,
@@ -240,6 +245,11 @@ const BUILTIN_TOOL_HANDLERS = {
   download_list: (args) => _execDownloadList(args),
   download_search: (args) => _execDownloadSearch(args),
 
+  postdog_delete_folder: (args) => _execPostdogDeleteFolder(args),
+  postdog_delete_request: (args) => _execPostdogDeleteRequest(args),
+  postdog_delete_environment: (args) => _execPostdogDeleteEnvironment(args),
+  postdog_set_environment_variable: (args) => _execPostdogSetEnvironmentVariable(args),
+  postdog_delete_environment_variable: (args) => _execPostdogDeleteEnvironmentVariable(args),
   postdog_list_folders: () => _execPostdogListFolders(),
   postdog_save_folder: (args) => _execPostdogSaveFolder(args),
   postdog_list_requests: (args) => _execPostdogListRequests(args),

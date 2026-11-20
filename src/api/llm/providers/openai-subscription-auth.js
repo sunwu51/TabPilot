@@ -1,3 +1,4 @@
+import { requestBackground } from "../../background/requests";
 /* global chrome */
 import { CODEX_SUBSCRIPTION_ORIGINATOR, CODEX_SUBSCRIPTION_USER_AGENT, CODEX_SUBSCRIPTION_VERSION, ensureCodexSubscriptionUserAgent } from "./openai-subscription-headers";
 export const OPENAI_SUBSCRIPTION_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -130,7 +131,7 @@ export async function ensureOpenAiSubscriptionAccess(profileId, options = {}) {
 }
 
 export async function requestOpenAiSubscriptionAccess(profileId, options = {}) {
-  const response = await chrome.runtime.sendMessage({
+  const response = await requestBackground({
     type: "openai_subscription_oauth",
     action: "access",
     profileId,

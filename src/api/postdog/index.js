@@ -310,7 +310,7 @@ export async function setPostdogEnvironmentVariable(envId, key, value, options =
   const nextVar = {
     key: name,
     value: String(value ?? ""),
-    enabled: options.enabled !== false,
+    enabled: options.enabled === undefined ? variables[varIndex]?.enabled !== false : options.enabled !== false,
     secret: options.secret === true || variables[varIndex]?.secret === true
   };
   if (varIndex >= 0) variables[varIndex] = nextVar;

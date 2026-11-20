@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getChromeStorageSnapshot } from "../../../test/setup";
 import {
   POSTDOG_REQUESTS_KEY,
+  savePostdogEnvironment,
+  setPostdogEnvironmentVariable,
+  unsetPostdogEnvironmentVariable,
+  serializePostdogEnvironmentForAi,
   deletePostdogFolder,
   normalizeRequest,
   savePostdogFolder,
@@ -25,6 +29,20 @@ describe("postdog storage", () => {
     expect(snapshot[POSTDOG_REQUESTS_KEY]).toEqual([
       expect.objectContaining({ id: "req-loose", folderId: null })
     ]);
+  });
+
+  it("updates and deletes individual variables without losing other values or flags", async () => {
+    await savePostdogEnvironment({ id: "env", name: "Test", variables: [
+      { key: "token", value: "old", enabled: false, secret: true },
+      { key: "other", value: "keep" }
+    ] });
+    const updated = await setPostdogEnvironmentVariable("env", "token", "new");
+    expect(updated.variables[0]).toMatchObject({ value: "new", enabled: false, secret: true });
+    expect(serializePostdogEnvironmentForAi(updated).variables[0].value).toBe("***");
+    const removed = await unsetPostdogEnvironmentVariable("env", "token");
+    expect(removed.variables).toEqual([expect.objectContaining({ key: "other", value: "keep" })]);
+    const added = await setPostdogEnvironmentVariable("env", "empty", "");
+    expect(added.variables[1]).toMatchObject({ key: "empty", value: "", enabled: true, secret: false });
   });
 
   it("normalizes form and multipart fields", () => {

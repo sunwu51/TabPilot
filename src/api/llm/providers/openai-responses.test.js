@@ -62,7 +62,7 @@ describe("OpenAI responses reasoning helpers", () => {
         expiresAt: Date.now() + 60 * 60 * 1000
       }
     });
-    chrome.runtime.sendMessage.mockResolvedValue({
+    chrome.runtime.sendMessage.mockImplementation((message, callback) => callback({
       success: true,
       result: {
         accessToken: "oauth-access-token",
@@ -70,7 +70,8 @@ describe("OpenAI responses reasoning helpers", () => {
         accountId: "account-123",
         expiresAt: Date.now() + 60 * 60 * 1000
       }
-    });
+    }));
+
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       'data: {"type":"response.completed","response":{"id":"resp_1","output":[]}}\n\n',
       { status: 200, headers: { "Content-Type": "text/event-stream" } }

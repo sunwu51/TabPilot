@@ -1070,6 +1070,107 @@ export const TOOLS = [
     }
   },
   {
+    "name": "postdog_delete_folder",
+    "description": "Delete a Postdog folder recursively, including all subfolders and their saved requests.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Folder id to delete."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "postdog_delete_request",
+    "description": "Delete one saved Postdog API request.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Request id to delete."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "postdog_delete_environment",
+    "description": "Delete a Postdog environment and all its variables. If active, another environment becomes active when available.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Environment id to delete."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "postdog_set_environment_variable",
+    "description": "Create or update one environment variable without replacing other variables. Omitted enabled preserves its current state (new variables default to enabled). Secret remains secret once set; secret values are redacted from results.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "environmentId": {
+          "type": "string",
+          "description": "Environment id; use postdog_list_environments to find it."
+        },
+        "key": {
+          "type": "string",
+          "description": "Variable name."
+        },
+        "value": {
+          "type": "string",
+          "description": "Variable value; empty string is allowed."
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "secret": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "environmentId",
+        "key",
+        "value"
+      ]
+    }
+  },
+  {
+    "name": "postdog_delete_environment_variable",
+    "description": "Delete one variable from a Postdog environment without modifying other variables. Secret values are redacted from results.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "environmentId": {
+          "type": "string",
+          "description": "Environment id; use postdog_list_environments to find it."
+        },
+        "key": {
+          "type": "string",
+          "description": "Variable name."
+        }
+      },
+      "required": [
+        "environmentId",
+        "key"
+      ]
+    }
+  },
+  {
     name: "postdog_list_folders",
     description: "List Postdog folders used to organize saved API requests.",
     schema: { type: "object", properties: {}, required: [] }

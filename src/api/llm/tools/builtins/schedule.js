@@ -1,3 +1,4 @@
+import { requestBackground } from "../../../background/requests";
 /* global chrome */
 import { serializeAgentJob } from "../../../agent/scheduleJobs";
 import { SCHEDULE_CLEANUP_ALARM_PREFIX, SCHEDULE_FIRE_ALARM_PREFIX, SCHEDULE_RETENTION_MS, SCHEDULE_STORAGE_KEY, TERMINAL_SCHEDULE_STATUSES } from "../../core/constants";
@@ -53,7 +54,7 @@ async function _pruneExpiredScheduledJobsInStorage() {
 
 async function _sendScheduleMessage(action, payload = {}) {
   try {
-    const response = await chrome.runtime.sendMessage({
+    const response = await requestBackground({
       type: "schedule_manager",
       action,
       payload
