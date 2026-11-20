@@ -18,6 +18,8 @@
 
   display: grid;
   grid-template-columns: var(--pd-sidebar-width, 250px) 5px minmax(0, 1fr);
+  /* An implicit `auto` row grows with its content and pushes the panes past the viewport. */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   min-height: 0;
   overflow: hidden;
@@ -890,10 +892,10 @@
   cursor: help;
 }
 
-.pd-body-toolbar .pd-json-status + .pd-button,
-.pd-body-toolbar .pd-segmented + .pd-body-toolbar .pd-code-editor {
+.pd-code-editor {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
