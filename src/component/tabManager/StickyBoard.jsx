@@ -1,6 +1,6 @@
 /* global chrome */
 /* eslint-disable react/prop-types */
-import { Button, Card } from "@sunwu51/camel-ui";
+import { Button, Card, Radio, RadioGroup } from "@sunwu51/camel-ui";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useI18n } from "../../i18n";
@@ -573,20 +573,19 @@ export default function StickyBoard() {
         <div className="stk-head">
           <span className="stk-heading">{L("便利贴", "Stickies")}</span>
           <div className="stk-head-actions">
-            <div className="stk-seg" role="group" aria-label={L("缩略图大小", "Thumbnail size")} style={{ "--i": sizeIndex }}>
-              <span className="stk-seg-thumb" aria-hidden="true" />
+            <RadioGroup
+              aria-label={L("缩略图大小", "Thumbnail size")}
+              variant="segmented"
+              size="sm"
+              value={SIZES[sizeIndex]}
+              onChange={size => updatePrefs({ size })}
+            >
               {SIZES.map(size => (
-                <button
-                  key={size}
-                  type="button"
-                  aria-pressed={prefs.size === size}
-                  title={{ s: L("小", "Small"), m: L("中", "Medium"), l: L("大", "Large") }[size]}
-                  onClick={() => updatePrefs({ size })}
-                >
-                  {size.toUpperCase()}
-                </button>
+                <Radio key={size} value={size}>
+                  <span title={{ s: L("小", "Small"), m: L("中", "Medium"), l: L("大", "Large") }[size]}>{size.toUpperCase()}</span>
+                </Radio>
               ))}
-            </div>
+            </RadioGroup>
             <Button size="sm" className="stk-pin-btn" onPress={handlePin} isDisabled={pinning} title={pinTitle}>
               <span className="stk-pin-icon">{Icon.pin}</span>
               {L("贴住当前页", "Stick this tab")}

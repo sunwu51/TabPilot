@@ -8,6 +8,9 @@ vi.mock("@sunwu51/camel-ui", () => ({
     <button type="button" onClick={onPress} disabled={isDisabled} {...props}>{children}</button>
   ),
   Card: ({ children }) => <div>{children}</div>,
+  Input: ({ value, onChange, placeholder }) => (
+    <input value={value} placeholder={placeholder} onChange={event => onChange?.(event.target.value)} />
+  ),
   Dialog: ({ children, trigger }) => (
     <div>
       {trigger || null}

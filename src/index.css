@@ -85,7 +85,6 @@ html, body, #root {
 }
 
 .dialog-dialog .settings-api-url-hint {
-  margin-top: -0.05rem;
   font-size: 0.75rem;
   line-height: 1.35;
   color: #6b7280;
@@ -498,10 +497,8 @@ html, body, #root {
   margin-bottom: 12px;
 }
 
-.settings-card {
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+/* 设置页每组用 camel-ui Card, 这里只把内边距调得紧凑一些 */
+.card-container.settings-card {
   padding: 12px;
   margin-bottom: 12px;
 }
@@ -513,6 +510,24 @@ html, body, #root {
   margin-bottom: 10px;
   padding-bottom: 6px;
   border-bottom: 1px solid #e5e7eb;
+}
+
+/* 可折叠的设置卡片(camel-ui Details): 标题与其他卡片标题一致, 展开后加分隔线 */
+.settings-details {
+  gap: 10px;
+}
+
+.settings-details > .details-title {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.settings-details > .details-title[aria-expanded="true"] {
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
+  border-radius: 0;
 }
 
 .settings-card-title-inline {

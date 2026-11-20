@@ -8,6 +8,8 @@ vi.mock("@sunwu51/camel-ui", () => ({
   Button: ({ children, onPress, isDisabled, title, className }) => (
     <button type="button" className={className} title={title} disabled={isDisabled} onClick={onPress}>{children}</button>
   ),
+  RadioGroup: ({ children, "aria-label": ariaLabel }) => <div role="radiogroup" aria-label={ariaLabel}>{children}</div>,
+  Radio: ({ children }) => <label>{children}</label>,
 }));
 
 import StickyBoard from "./StickyBoard";

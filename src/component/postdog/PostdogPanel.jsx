@@ -1,7 +1,7 @@
 /* global chrome */
 /* eslint-disable react/prop-types, react-hooks/exhaustive-deps */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "@sunwu51/camel-ui";
+import { Badge, Radio, RadioGroup, TabBar } from "@sunwu51/camel-ui";
 import toast from "react-hot-toast";
 import {
   POSTDOG_ACTIVE_ENVIRONMENT_KEY,
@@ -1008,13 +1008,20 @@ export default function PostdogPanel() {
 
             <div className="pd-split" ref={splitRef} style={{ "--pd-split": `${(splitRatio * 100).toFixed(2)}%` }}>
               <section className="pd-pane pd-request-pane">
-                <div className="pd-tabs">
-                  <TabButton active={requestTab === "params"} onClick={() => changeRequestTab("params")} label="Params" count={countEnabled(draft.query)} />
-                  <TabButton active={requestTab === "headers"} onClick={() => changeRequestTab("headers")} label="Headers" count={countEnabled(draft.headers)} />
-                  <TabButton active={requestTab === "body"} onClick={() => changeRequestTab("body")} label="Body" badge={bodyType !== "none" ? bodyType : ""} />
-                  <TabButton active={requestTab === "pre"} onClick={() => changeRequestTab("pre")} label="Pre Script" dot={!!draft.preScript?.trim()} />
-                  <TabButton active={requestTab === "post"} onClick={() => changeRequestTab("post")} label="Post Script" dot={!!draft.postScript?.trim()} />
-                </div>
+                <TabBar
+                  className="pd-tabs"
+                  variant="line"
+                  aria-label={tr("请求", "Request")}
+                  selectedKey={requestTab}
+                  onChange={changeRequestTab}
+                  items={[
+                    { key: "params", title: "Params", count: countEnabled(draft.query) },
+                    { key: "headers", title: "Headers", count: countEnabled(draft.headers) },
+                    { key: "body", title: "Body", badge: bodyType !== "none" ? bodyType : undefined },
+                    { key: "pre", title: "Pre Script", dot: !!draft.preScript?.trim() },
+                    { key: "post", title: "Post Script", dot: !!draft.postScript?.trim() }
+                  ]}
+                />
                 <div className="pd-pane-body">
                   {requestTab === "params" && (
                     <div className="pd-scroll">
@@ -1031,11 +1038,15 @@ export default function PostdogPanel() {
                   {requestTab === "body" && (
                     <div className="pd-body-editor">
                       <div className="pd-body-toolbar">
-                        <div className="pd-segmented">
-                          {BODY_TYPES.map(type => (
-                            <button key={type} type="button" className={bodyType === type ? "active" : ""} onClick={() => updateBody({ type })}>{type}</button>
-                          ))}
-                        </div>
+                        <RadioGroup
+                          aria-label={tr("Body 类型", "Body type")}
+                          variant="segmented"
+                          size="sm"
+                          value={bodyType}
+                          onChange={type => updateBody({ type })}
+                        >
+                          {BODY_TYPES.map(type => <Radio key={type} value={type}>{type}</Radio>)}
+                        </RadioGroup>
                         {bodyType === "json" && (
                           <>
                             {jsonBodyError
@@ -1161,17 +1172,6 @@ function SaveStatus({ status }) {
     error: tr("保存失败", "Save failed")
   }[status] || "";
   return <span className={`pd-save-status ${status}`} title={tr("所有修改都会自动保存（Ctrl/⌘+S 立即保存）", "Changes save automatically (Ctrl/⌘+S to save now)")}>{label}</span>;
-}
-
-function TabButton({ active, onClick, label, count = 0, dot = false, badge = "" }) {
-  return (
-    <button type="button" className={`pd-tab${active ? " active" : ""}`} onClick={onClick}>
-      {label}
-      {count > 0 && <span className="pd-tab-count">{count}</span>}
-      {badge && <span className="pd-tab-badge">{badge}</span>}
-      {dot && <span className="pd-tab-dot" />}
-    </button>
-  );
 }
 
 /** Folders in tree order with their depth (cycle-safe). */
@@ -1336,21 +1336,27 @@ function ResponsePane({ response, running, tab, onTab, bodyView, onBodyView, his
 
   return (
     <>
-      <div className="pd-tabs">
-        <TabButton active={tab === "body"} onClick={() => onTab("body")} label="Body" />
-        <TabButton active={tab === "headers"} onClick={() => onTab("headers")} label="Headers" count={headerCount} />
-        <TabButton active={tab === "request"} onClick={() => onTab("request")} label="Request" />
-        <TabButton active={tab === "logs"} onClick={() => onTab("logs")} label="Logs" count={logs.length} dot={logs.some(log => log.level === "error")} />
-        <TabButton active={tab === "history"} onClick={() => onTab("history")} label={tr("历史", "History")} count={historyRuns.length} />
-        <div className="pd-tabs-spacer" />
-        {res && (
+      <TabBar
+        className="pd-tabs"
+        variant="line"
+        aria-label={tr("响应", "Response")}
+        selectedKey={tab}
+        onChange={onTab}
+        items={[
+          { key: "body", title: "Body" },
+          { key: "headers", title: "Headers", count: headerCount },
+          { key: "request", title: "Request" },
+          { key: "logs", title: "Logs", count: logs.length, dot: logs.some(log => log.level === "error") },
+          { key: "history", title: tr("历史", "History"), count: historyRuns.length }
+        ]}
+        extra={res ? (
           <div className="pd-response-meta">
             <StatusBadge status={res.status}>{res.status || "ERR"} {res.statusText || ""}</StatusBadge>
             <span>{response.durationMs} ms</span>
             {Number.isFinite(Number(res.bodySizeBytes)) && <span>{formatBytes(res.bodySizeBytes)}</span>}
           </div>
-        )}
-      </div>
+        ) : undefined}
+      />
       {(response?.historyCreatedAt || testEntries.length > 0) && (
         <div className="pd-response-sub">
           {response?.historyCreatedAt && <Badge variant="warning">{tr("历史记录", "From history")} · {formatDateTime(response.historyCreatedAt)}</Badge>}
@@ -1421,10 +1427,16 @@ function ResponsePane({ response, running, tab, onTab, bodyView, onBodyView, his
           <div className="pd-response-body">
             <div className="pd-body-toolbar">
               {bodyJson?.ok && (
-                <div className="pd-segmented">
-                  <button type="button" className={bodyView === "tree" ? "active" : ""} onClick={() => onBodyView("tree")}>{tr("树形", "Tree")}</button>
-                  <button type="button" className={bodyView === "raw" ? "active" : ""} onClick={() => onBodyView("raw")}>{tr("文本", "Raw")}</button>
-                </div>
+                <RadioGroup
+                  aria-label={tr("响应视图", "Response view")}
+                  variant="segmented"
+                  size="sm"
+                  value={bodyView}
+                  onChange={onBodyView}
+                >
+                  <Radio value="tree">{tr("树形", "Tree")}</Radio>
+                  <Radio value="raw">{tr("文本", "Raw")}</Radio>
+                </RadioGroup>
               )}
               {res.bodyNote && <span className="pd-body-note">{res.bodyNote}</span>}
               <div className="pd-tabs-spacer" />

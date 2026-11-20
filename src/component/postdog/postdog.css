@@ -597,74 +597,19 @@
 
 /* tabs */
 
-.pd-tabs {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
+/* 标签栏本身用 camel-ui 的 TabBar(variant="line"), 这里只调整 Postdog 里的尺寸和底色 */
+.pd-tabs.tabs-list-line {
   min-height: 38px;
   padding: 0 8px;
-  border-bottom: 1px solid var(--pd-border);
   background: var(--pd-subtle);
-  overflow-x: auto;
-  overflow-y: hidden;
+  box-shadow: inset 0 -1px 0 0 var(--pd-border);
+  font-size: 12px;
   flex: 0 0 auto;
 }
 
-.pd-tab {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.pd-tabs .tabs-line-tab {
+  min-height: 38px;
   padding: 0 10px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--pd-muted);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.pd-tab:hover {
-  color: var(--pd-text);
-}
-
-.pd-tab.active {
-  color: var(--pd-accent);
-  border-bottom-color: var(--pd-accent);
-}
-
-.pd-tab-count {
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--c-muted);
-  color: var(--pd-muted);
-  font-size: 10px;
-  line-height: 15px;
-  text-align: center;
-}
-
-.pd-tab.active .pd-tab-count {
-  background: var(--c-primary-tint);
-  color: var(--pd-accent);
-}
-
-.pd-tab-badge {
-  padding: 0 5px;
-  border-radius: 4px;
-  background: var(--c-primary-tint);
-  color: var(--pd-ok);
-  font-size: 10px;
-  line-height: 15px;
-}
-
-.pd-tab-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--pd-ok);
 }
 
 .pd-tabs-spacer {
@@ -851,31 +796,6 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--pd-border);
   flex: 0 0 auto;
-}
-
-.pd-segmented {
-  display: inline-flex;
-  padding: 2px;
-  border-radius: 7px;
-  background: var(--c-muted);
-}
-
-.pd-segmented button {
-  height: 24px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--pd-muted);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.pd-segmented button.active {
-  background: var(--c-surface);
-  color: var(--pd-text);
-  box-shadow: 0 1px 2px transparent;
 }
 
 .pd-json-status {
@@ -1501,36 +1421,15 @@
   padding-bottom: 14px;
 }
 
-.pd-tab.active {
-  color: var(--c-fg);
-  border-bottom-color: var(--c-primary-strong);
-  font-weight: 800;
-}
-
-:root[data-theme="dark"] .pd-tab.active,
-:root:not([data-theme="light"]) .pd-tab.active {
-  border-bottom-color: var(--c-focus);
-}
-
 .pd-request-item.selected,
 .pd-env-item.selected {
   background: var(--c-primary-tint);
   box-shadow: inset 3px 0 0 var(--c-line);
 }
 
-.pd-tab-count,
 .pd-count {
   background: var(--c-muted);
   color: var(--c-fg);
-}
-
-.pd-tab-badge {
-  background: var(--c-success);
-  color: var(--c-on-soft);
-}
-
-.pd-tab-dot {
-  background: var(--c-success-strong);
 }
 
 .pd-json-status.ok,
@@ -1685,31 +1584,6 @@
   background: var(--c-primary-tint);
   border-color: var(--c-line);
   color: var(--c-fg);
-}
-
-.pd-segmented {
-  border: 2px solid var(--c-line);
-  background: var(--c-surface);
-  border-radius: var(--r-sm);
-  padding: 0;
-  overflow: hidden;
-}
-
-.pd-segmented button {
-  border-radius: 0;
-  height: 26px;
-  color: var(--c-fg);
-}
-
-.pd-segmented button + button {
-  border-left: 2px solid var(--c-line);
-}
-
-.pd-segmented button.active {
-  background: var(--c-primary);
-  color: var(--c-on-soft);
-  box-shadow: none;
-  font-weight: 800;
 }
 
 .pd-script-hint code,
