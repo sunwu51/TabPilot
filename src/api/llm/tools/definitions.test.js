@@ -264,7 +264,9 @@ describe("llm tool definitions", () => {
     expect(names).toContain("postdog_list_history");
     expect(names).toContain("postdog_get_history_run");
     for (const name of ["postdog_delete_folder", "postdog_delete_request", "postdog_delete_environment",
-      "postdog_set_environment_variable", "postdog_delete_environment_variable"]) {
+      "postdog_set_environment_variable", "postdog_delete_environment_variable",
+      "postdog_list_flows", "postdog_get_flow", "postdog_save_flow", "postdog_delete_flow",
+      "postdog_run_flow", "postdog_list_flow_runs", "postdog_get_flow_run"]) {
       expect(names).toContain(name);
       expect(namesFor(API_TYPES.OPENAI_RESPONSES)).not.toContain(name);
     }

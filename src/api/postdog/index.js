@@ -5,9 +5,15 @@ export const POSTDOG_REQUESTS_KEY = "postdogRequests";
 export const POSTDOG_ENVIRONMENTS_KEY = "postdogEnvironments";
 export const POSTDOG_ACTIVE_ENVIRONMENT_KEY = "postdogActiveEnvironmentId";
 export const POSTDOG_HISTORY_KEY = "postdogHistory";
+export const POSTDOG_FLOWS_KEY = "postdogFlows";
+export const POSTDOG_FLOW_RUNS_KEY = "postdogFlowRuns";
 
 const MAX_HISTORY = 300;
 const MAX_HISTORY_PER_REQUEST = 30;
+const MAX_FLOW_RUNS_PER_FLOW = 10;
+const MAX_FLOW_RUN_BODY_CHARS = 64 * 1024;
+const MAX_FLOW_DELAY_MS = 60 * 60 * 1000;
+export const POSTDOG_FLOW_STEP_TYPES = ["request", "delay", "script"];
 
 export function newPostdogId(prefix) {
   const rand = Math.random().toString(36).slice(2, 7);
@@ -381,6 +387,128 @@ export async function getPostdogHistoryRun(runId) {
   const id = String(runId || "").trim();
   const history = await listPostdogHistory();
   return history.find(item => item.runId === id || item.id === id) || null;
+}
+
+// ------------------------------------------------------------------ flows (编排)
+
+export function normalizeFlowStep(step) {
+  if (!step || typeof step !== "object") return null;
+  const type = POSTDOG_FLOW_STEP_TYPES.includes(step.type) ? step.type : null;
+  if (!type) return null;
+  const id = String(step.id || "").trim() || newPostdogId("pds");
+  if (type === "request") return { id, type, requestId: String(step.requestId || "").trim() };
+  if (type === "delay") {
+    const ms = Math.round(Number(step.ms));
+    return { id, type, ms: Number.isFinite(ms) ? Math.min(MAX_FLOW_DELAY_MS, Math.max(0, ms)) : 1000 };
+  }
+  return { id, type, script: String(step.script || "") };
+}
+
+export function normalizeFlow(flow) {
+  if (!flow || typeof flow !== "object") return null;
+  const id = String(flow.id || "").trim();
+  const name = String(flow.name || "").trim();
+  if (!id || !name) return null;
+  const createdAt = Number(flow.createdAt) || Date.now();
+  return {
+    id,
+    name,
+    preScript: String(flow.preScript || ""),
+    postScript: String(flow.postScript || ""),
+    steps: Array.isArray(flow.steps) ? flow.steps.map(normalizeFlowStep).filter(Boolean) : [],
+    createdAt,
+    updatedAt: Number(flow.updatedAt) || createdAt
+  };
+}
+
+export async function listPostdogFlows() {
+  const res = await chrome.storage.local.get({ [POSTDOG_FLOWS_KEY]: [] });
+  const flows = Array.isArray(res[POSTDOG_FLOWS_KEY]) ? res[POSTDOG_FLOWS_KEY] : [];
+  return flows.map(normalizeFlow).filter(Boolean);
+}
+
+export async function savePostdogFlow(flow) {
+  const normalized = normalizeFlow({
+    ...flow,
+    id: flow?.id || newPostdogId("pdw"),
+    updatedAt: Date.now()
+  });
+  if (!normalized) throw new Error("invalid flow");
+  const flows = await listPostdogFlows();
+  const index = flows.findIndex(item => item.id === normalized.id);
+  if (index >= 0) flows[index] = normalized;
+  else flows.unshift(normalized);
+  await chrome.storage.local.set({ [POSTDOG_FLOWS_KEY]: flows });
+  return normalized;
+}
+
+export async function deletePostdogFlow(id) {
+  const flowId = String(id || "").trim();
+  const flows = await listPostdogFlows();
+  const next = flows.filter(item => item.id !== flowId);
+  const runs = await listAllPostdogFlowRuns();
+  await chrome.storage.local.set({
+    [POSTDOG_FLOWS_KEY]: next,
+    [POSTDOG_FLOW_RUNS_KEY]: runs.filter(run => run.flowId !== flowId)
+  });
+  return { id: flowId, removed: flows.length - next.length };
+}
+
+async function listAllPostdogFlowRuns() {
+  const res = await chrome.storage.local.get({ [POSTDOG_FLOW_RUNS_KEY]: [] });
+  return Array.isArray(res[POSTDOG_FLOW_RUNS_KEY]) ? res[POSTDOG_FLOW_RUNS_KEY] : [];
+}
+
+/** Newest first. */
+export async function listPostdogFlowRuns(flowId) {
+  const id = String(flowId || "").trim();
+  const runs = await listAllPostdogFlowRuns();
+  return id ? runs.filter(run => run.flowId === id) : runs;
+}
+
+/**
+ * Insert or update a flow run (matched by runId). Step results are compacted (large bodies are
+ * cut, file downloads dropped) and only the newest runs of each flow are kept.
+ */
+export async function savePostdogFlowRun(run) {
+  const runId = String(run?.runId || "").trim();
+  const flowId = String(run?.flowId || "").trim();
+  if (!runId || !flowId) throw new Error("flow run needs runId and flowId");
+  const compact = {
+    ...run,
+    runId,
+    flowId,
+    startedAt: Number(run.startedAt) || Date.now(),
+    updatedAt: Date.now(),
+    steps: (Array.isArray(run.steps) ? run.steps : []).map(compactFlowStepRun)
+  };
+  const runs = await listAllPostdogFlowRuns();
+  const rest = runs.filter(item => item.runId !== runId);
+  let sameFlow = 0;
+  const next = [compact, ...rest]
+    .sort((a, b) => (Number(b.startedAt) || 0) - (Number(a.startedAt) || 0))
+    .filter(item => {
+      if (item.flowId !== flowId) return true;
+      sameFlow += 1;
+      return sameFlow <= MAX_FLOW_RUNS_PER_FLOW;
+    });
+  await chrome.storage.local.set({ [POSTDOG_FLOW_RUNS_KEY]: next });
+  return compact;
+}
+
+function compactFlowStepRun(step) {
+  const result = step?.result;
+  if (!result?.response) return step;
+  const response = { ...result.response };
+  delete response.download;
+  delete response.bodyJson;
+  const text = String(response.bodyText || "");
+  if (text.length > MAX_FLOW_RUN_BODY_CHARS) {
+    response.bodyText = text.slice(0, MAX_FLOW_RUN_BODY_CHARS);
+    response.bodyTruncated = true;
+    response.bodyNote = [response.bodyNote, `编排记录只保存前 ${MAX_FLOW_RUN_BODY_CHARS / 1024} KB`].filter(Boolean).join(" ");
+  }
+  return { ...step, result: { ...result, response } };
 }
 
 export function serializePostdogRequestForAi(request) {

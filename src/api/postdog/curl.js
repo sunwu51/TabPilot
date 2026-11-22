@@ -143,14 +143,15 @@ function quoteShell(value) {
   return `'${text.replace(/'/g, "'\\''")}'`;
 }
 
-export function exportPostdogJson({ folders = [], requests = [], environments = [] } = {}) {
+export function exportPostdogJson({ folders = [], requests = [], environments = [], flows = [] } = {}) {
   return JSON.stringify({
     type: "tabmanager.postdog",
     version: 1,
     exportedAt: new Date().toISOString(),
     folders,
     requests,
-    environments
+    environments,
+    flows
   }, null, 2);
 }
 
@@ -162,6 +163,7 @@ export function parsePostdogJson(text) {
   return {
     folders: Array.isArray(parsed.folders) ? parsed.folders : [],
     requests: Array.isArray(parsed.requests) ? parsed.requests : [],
-    environments: Array.isArray(parsed.environments) ? parsed.environments : []
+    environments: Array.isArray(parsed.environments) ? parsed.environments : [],
+    flows: Array.isArray(parsed.flows) ? parsed.flows : []
   };
 }

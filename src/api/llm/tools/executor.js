@@ -103,7 +103,14 @@ import {
   _execPostdogSaveEnvironment,
   _execPostdogSaveFolder,
   _execPostdogSaveRequest,
-  _execPostdogSetActiveEnvironment
+  _execPostdogSetActiveEnvironment,
+  _execPostdogListFlows,
+  _execPostdogGetFlow,
+  _execPostdogSaveFlow,
+  _execPostdogDeleteFlow,
+  _execPostdogRunFlow,
+  _execPostdogListFlowRuns,
+  _execPostdogGetFlowRun
 } from "./builtins/postdog";
 
 export { captureFullPageScreenshotToTab, openHelloWorldPlayground };
@@ -163,6 +170,8 @@ export function getBuiltinToolTimeoutSeconds(name) {
   if (name === "run_macro") return RUN_MACRO_TOOL_TIMEOUT_SECONDS;
   if (name === "image_gen" || name === "image_edit") return 900;
   if (name === "dom_wait" || name === "tab_wait") return 12;
+  // A flow runs several requests plus sleep steps; it keeps running in the background if this expires.
+  if (name === "postdog_run_flow") return 600;
   return DEFAULT_BUILTIN_TOOL_TIMEOUT_SECONDS;
 }
 
@@ -261,6 +270,13 @@ const BUILTIN_TOOL_HANDLERS = {
   postdog_list_environments: () => _execPostdogListEnvironments(),
   postdog_save_environment: (args) => _execPostdogSaveEnvironment(args),
   postdog_set_active_environment: (args) => _execPostdogSetActiveEnvironment(args),
+  postdog_list_flows: (args) => _execPostdogListFlows(args),
+  postdog_get_flow: (args) => _execPostdogGetFlow(args),
+  postdog_save_flow: (args) => _execPostdogSaveFlow(args),
+  postdog_delete_flow: (args) => _execPostdogDeleteFlow(args),
+  postdog_run_flow: (args) => _execPostdogRunFlow(args),
+  postdog_list_flow_runs: (args) => _execPostdogListFlowRuns(args),
+  postdog_get_flow_run: (args) => _execPostdogGetFlowRun(args),
 
   image_gen: (args) => executeImageGeneration(args),
   image_edit: (args) => executeImageEdit(args),

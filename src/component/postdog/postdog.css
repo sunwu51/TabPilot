@@ -385,9 +385,38 @@
 }
 
 .pd-sidebar-resizer {
+  position: relative;
   cursor: col-resize;
   background: transparent;
   transition: background 0.12s;
+}
+
+/* wider grab area than the 5px column */
+.pd-sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+  z-index: 2;
+}
+
+/* visible grip */
+.pd-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 40px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--c-line) 35%, transparent);
+  transform: translate(-50%, -50%);
+  transition: background 0.12s, height 0.12s;
+}
+
+.pd-sidebar-resizer:hover::after,
+.pd-resizing-x .pd-sidebar-resizer::after {
+  height: 64px;
+  background: var(--c-focus);
 }
 
 .pd-sidebar-resizer:hover,
@@ -425,11 +454,13 @@
   min-height: 34px;
 }
 
+/* Both groups get a definite flex-basis so they shrink together with the window
+   (an `auto` basis would size the env group from its text and keep it fixed). */
 .pd-title-group {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  flex: 3 1 600px;
   min-width: 0;
 }
 
@@ -442,7 +473,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
+  flex: 0 1 440px;
+  /* explicit: the automatic minimum would follow the selected env name's text width */
+  min-width: 240px;
 }
 
 .pd-env-label {
@@ -1449,6 +1482,7 @@
 
 .pd-name-input.input-container {
   flex: 1 1 260px;
+  min-width: 120px;
   max-width: 420px;
   width: auto;
 }
@@ -1464,12 +1498,14 @@
 }
 
 .pd-folder-select.select-container {
-  flex: 0 1 200px;
-  min-width: 120px;
+  flex: 0 1 320px;
+  min-width: 140px;
 }
 
 .pd-env-select.select-container {
-  width: 170px;
+  flex: 1 1 auto;
+  min-width: 120px;
+  max-width: 320px;
 }
 
 .pd-curl-folder {
@@ -1640,6 +1676,18 @@
   line-height: var(--control-height);
 }
 
+/* the topbar uses camel's sm controls (1.75rem high) */
+.pd-topbar .pd-env-label {
+  line-height: 1.75rem;
+}
+
+/* only the env select shrinks; the label and the Variables button keep one line */
+.pd-env-group > .pd-env-label,
+.pd-env-group > .button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .pd-delete-request {
   margin-top: calc((var(--control-height) - 30px) / 2);
 }
@@ -1664,4 +1712,335 @@
 
 .pd-folder-form .pd-name-input.input-container {
   max-width: 420px;
+}
+
+/* ============================================================ flows (编排) */
+
+.pd-mode-switch {
+  padding: 0 12px 8px;
+}
+
+.pd-mode-switch .radio-group,
+.pd-mode-switch [role="radiogroup"] {
+  width: 100%;
+}
+
+.pd-flow-item-icon {
+  flex: 0 0 18px;
+  color: var(--pd-muted);
+  text-align: center;
+}
+
+.pd-flow {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+.pd-flow-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pd-flow-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--pd-muted);
+  font-size: 12px;
+}
+
+.pd-flow-split {
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .pd-flow-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.pd-flow-steps-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--pd-border);
+  flex-wrap: wrap;
+}
+
+.pd-flow-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pd-flow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  border: 2px solid var(--pd-border);
+  border-radius: var(--r-md);
+  background: var(--pd-surface);
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s, box-shadow 0.12s;
+}
+
+.pd-flow-step:hover {
+  border-color: color-mix(in srgb, var(--c-line) 55%, var(--c-surface));
+}
+
+.pd-flow-step.selected {
+  border-color: var(--c-line);
+  box-shadow: var(--shadow-sm);
+}
+
+.pd-flow-step.status-running {
+  border-color: var(--c-focus);
+  background: var(--c-primary-tint);
+}
+
+.pd-flow-step.status-passed {
+  border-color: var(--c-success-strong);
+  background: color-mix(in srgb, var(--c-success) 14%, var(--c-surface));
+}
+
+.pd-flow-step.status-failed {
+  border-color: var(--c-danger-strong);
+  background: color-mix(in srgb, var(--c-danger) 16%, var(--c-surface));
+}
+
+.pd-flow-step.status-skipped,
+.pd-flow-step.status-stopped {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.pd-flow-step-icon {
+  flex: 0 0 24px;
+  height: 24px;
+  margin-top: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--c-line);
+  border-radius: 50%;
+  background: var(--pd-surface);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.status-running .pd-flow-step-icon {
+  border-color: var(--c-focus);
+  color: var(--c-focus);
+  animation: pd-pulse 1s ease-in-out infinite;
+}
+
+.status-passed .pd-flow-step-icon {
+  border-color: var(--c-success-strong);
+  background: var(--c-success);
+  color: var(--c-on-soft);
+}
+
+.status-failed .pd-flow-step-icon {
+  border-color: var(--c-danger-strong);
+  background: var(--c-danger);
+  color: var(--c-on-soft);
+}
+
+.pd-flow-step-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pd-flow-step-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pd-flow-step-type {
+  flex: 0 0 auto;
+  min-width: 36px;
+  color: var(--pd-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.75rem;
+}
+
+.pd-flow-request-select.combobox-container {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pd-flow-ms {
+  width: 110px;
+  height: 1.75rem;
+  padding: 2px 8px;
+  border: 2px solid var(--c-line);
+  border-radius: var(--r-sm);
+  background: var(--pd-surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+}
+
+.pd-flow-countdown {
+  color: var(--c-focus);
+  font-family: var(--pd-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pd-flow-step-code {
+  display: flex;
+  height: 140px;
+  border: 1px solid var(--pd-border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: text;
+}
+
+.pd-flow-step-code .pd-code-editor {
+  flex: 1;
+  min-width: 0;
+}
+
+.pd-flow-step-error {
+  color: var(--pd-danger);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pd-flow-step-time {
+  flex: 0 0 auto;
+  color: var(--pd-muted);
+  font-family: var(--pd-mono);
+  font-size: 11px;
+  line-height: 28px;
+}
+
+.pd-flow-step-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.pd-flow-step-actions .pd-icon-button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.pd-flow-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.pd-flow-error-banner {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--pd-border);
+  background: color-mix(in srgb, var(--c-danger) 18%, var(--c-surface));
+  color: var(--pd-danger);
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.pd-flow-scripts {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.pd-flow-scripts > .pd-help {
+  margin: 0;
+}
+
+.pd-flow-inherit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pd-flow-inherit > span:first-child {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pd-flow-inherit-select.select-container {
+  flex: 0 1 260px;
+  min-width: 160px;
+}
+
+.pd-flow-script-pair {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+  flex: 1;
+  min-height: 340px;
+}
+
+.pd-flow-script-pair .pd-folder-script {
+  min-height: 0;
+}
+
+.pd-flow-script-pair .pd-code-editor {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--pd-border-strong);
+  border-radius: 6px;
+}
+
+.pd-flow-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pd-flow-run-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-flow-run-item:hover {
+  background: var(--c-muted);
+}
+
+.pd-flow-run-item.selected {
+  background: var(--c-primary-tint);
+  box-shadow: inset 3px 0 0 var(--c-line);
 }

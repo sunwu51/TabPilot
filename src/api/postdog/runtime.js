@@ -28,7 +28,12 @@ export async function runPostdogRequest(input = {}) {
   const envVars = buildVariableMap(env);
   const folderChain = await getRequestFolderChain(request); // outermost first
   const secretValues = buildSecretValues(env);
-  const scriptState = { tests: {}, logs: [] };
+  // `failed` is set only when a script throws; console.error / failed $.test do not count.
+  const scriptState = { tests: {}, logs: [], failed: false };
+  // Flow (编排) scripts wrap the request scripts: folder pre → flow pre → request pre … request post → flow post → folder post.
+  const flow = input.flow && typeof input.flow === "object"
+    ? { preScript: String(input.flow.preScript || ""), postScript: String(input.flow.postScript || "") }
+    : null;
   const mutableRequest = cloneRequest(request);
   const runId = newPostdogId("pdh");
   const createdAt = Date.now();
@@ -48,6 +53,16 @@ export async function runPostdogRequest(input = {}) {
       abortReason = "Folder pre script failed";
       break;
     }
+  }
+  if (!abortReason && flow) {
+    const flowPreOk = await runScript(flow.preScript, {
+      phase: "flow_pre",
+      request: mutableRequest,
+      env,
+      envVars,
+      scriptState
+    });
+    if (!flowPreOk) abortReason = "Flow pre script failed";
   }
   if (!abortReason) {
     const preOk = await runScript(mutableRequest.preScript, {
@@ -137,6 +152,17 @@ export async function runPostdogRequest(input = {}) {
       scriptState
     });
 
+    if (flow) {
+      await runScript(flow.postScript, {
+        phase: "flow_post",
+        request: mutableRequest,
+        response: responsePayload,
+        env,
+        envVars,
+        scriptState
+      });
+    }
+
     for (const folder of [...folderChain].reverse()) {
       await runScript(folder.postScript, {
         phase: "folder_post",
@@ -169,7 +195,10 @@ export async function runPostdogRequest(input = {}) {
     durationMs,
     tests: scriptState.tests,
     logs: redactSecrets(scriptState.logs, secretValues),
-    scriptFailed: scriptState.logs.some(log => log.level === "error")
+    scriptFailed: scriptState.logs.some(log => log.level === "error"),
+    // Flow pass/fail: the request was sent and got a response, and no script threw.
+    // The HTTP status does not matter; scripts throw (e.g. $.assert) to fail a step.
+    passed: !responsePayload.error && !scriptState.failed
   };
 
   const historyResponse = { ...result.response };
@@ -691,6 +720,25 @@ function formatBytes(bytes) {
   return `${Math.round(value / 1024 / 1024)} MB`;
 }
 
+/**
+ * Run a standalone flow script step against the active environment (no request / response).
+ * Returns { passed, tests, logs, durationMs }.
+ */
+export async function runPostdogFlowScript(input = {}) {
+  const env = await getActivePostdogEnvironment();
+  const envVars = buildVariableMap(env);
+  const secretValues = buildSecretValues(env);
+  const scriptState = { tests: {}, logs: [], failed: false };
+  const startedAt = performance.now();
+  await runScript(input.script, { phase: "script", request: null, env, envVars, scriptState });
+  return {
+    passed: !scriptState.failed,
+    tests: scriptState.tests,
+    logs: redactSecrets(scriptState.logs, secretValues),
+    durationMs: Math.round(performance.now() - startedAt)
+  };
+}
+
 async function runScript(script, context) {
   const source = String(script || "").trim();
   if (!source) return true;
@@ -720,6 +768,7 @@ async function runScript(script, context) {
     await runtime.exports.__postdogPromise;
     return true;
   } catch (error) {
+    context.scriptState.failed = true;
     context.scriptState.logs.push({
       level: "error",
       phase: context.phase,
@@ -778,7 +827,7 @@ function buildScriptApi(context) {
     all: envApi.all,
     toJSON: envApi.toJSON
   };
-  const requestApi = {
+  const requestApi = !context.request ? null : {
     get method() { return context.request.method; },
     set method(value) { context.request.method = String(value || "GET").toUpperCase(); },
     get url() { return context.request.url; },
@@ -807,7 +856,7 @@ function buildScriptApi(context) {
       }
     }
   };
-  requestApi.params = requestApi.query;
+  if (requestApi) requestApi.params = requestApi.query;
   const responseApi = context.response ? {
     status: context.response.status,
     ok: context.response.ok,
@@ -820,6 +869,12 @@ function buildScriptApi(context) {
     uuid: createGuid,
     now: () => new Date().toISOString(),
     timestamp: () => Date.now(),
+    // await $.sleep(1000): pause the script for the given milliseconds.
+    sleep: scriptSleep,
+    // $.assert(cond, "message"): throw (and so fail the step / abort the send) when cond is falsy.
+    assert: (condition, message) => {
+      if (!condition) throw new Error(message == null || message === "" ? "Assertion failed" : String(message));
+    },
     env: envApi,
     environment: envApi,
     variables: variablesApi,
@@ -837,6 +892,11 @@ function buildScriptApi(context) {
       context.scriptState.logs.push({ level: "info", phase: context.phase, message: args.map(formatScriptLogArg).join(" ") });
     }
   };
+}
+
+function scriptSleep(ms) {
+  const delay = Number(ms);
+  return new Promise(resolve => setTimeout(resolve, Number.isFinite(delay) && delay > 0 ? delay : 0));
 }
 
 function buildScriptConsole(context) {

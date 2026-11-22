@@ -1,2 +1,4 @@
 allowBuilds:
   esbuild: set this to true or false
+minimumReleaseAgeExclude:
+  - '@sunwu51/camel-ui@0.0.11'

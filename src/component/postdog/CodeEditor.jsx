@@ -134,12 +134,14 @@ const API_TREE = {
     prop("request", "request", "The request about to be sent (mutable in pre script)"),
     prop("response", "response", "Available in post scripts"),
     fn("test", "(name, passed)", "Record a test result"),
+    fn("assert", "(condition, message?)", "Throw when condition is falsy (fails the flow step)"),
     prop("tests", "tests"),
     fn("log", "(...args)", "Write to Script Logs"),
     fn("uuid", "()", "Random UUID"),
     fn("guid", "()", "Random UUID"),
     fn("now", "()", "ISO timestamp"),
-    fn("timestamp", "()", "Milliseconds since epoch")
+    fn("timestamp", "()", "Milliseconds since epoch"),
+    fn("sleep", "(ms)", "Pause for ms milliseconds: await $.sleep(1000)")
   ],
   children: {
     env: { members: ENV_MEMBERS },

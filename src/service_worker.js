@@ -33,10 +33,13 @@ import { ensureSettingsMigrated } from "./api/settings/migrations";
 import { ensureBuiltinScripts } from "./api/sticky/builtinScripts";
 import {
     deletePostdogEnvironment,
+    deletePostdogFlow,
     deletePostdogFolder,
     deletePostdogRequest,
     reorderPostdogTree,
     listPostdogEnvironments,
+    listPostdogFlowRuns,
+    listPostdogFlows,
     listPostdogFolders,
     listPostdogHistory,
     listPostdogHistorySummaries,
@@ -45,6 +48,8 @@ import {
     getPostdogHistoryRun,
     getPostdogRequest,
     savePostdogEnvironment,
+    savePostdogFlow,
+    savePostdogFlowRun,
     savePostdogFolder,
     savePostdogRequest,
     serializePostdogEnvironmentForAi,
@@ -54,7 +59,13 @@ import {
     unsetPostdogEnvironmentVariable
 } from "./api/postdog";
 import { exportCurl, exportPostdogJson, importCurl, parsePostdogJson } from "./api/postdog/curl";
-import { exportPostdogCurl, runPostdogRequest } from "./api/postdog/runtime";
+import { exportPostdogCurl, runPostdogFlowScript, runPostdogRequest } from "./api/postdog/runtime";
+import {
+    runPostdogFlowInBackground,
+    serializePostdogFlowForAi,
+    stopPostdogFlowRun,
+    summarizePostdogFlowRunForAi
+} from "./api/postdog/flowBackground";
 import { markSupabaseSettingsDirtyFromStorageChanges } from "./api/supabase/backup";
 import { registerStickyBackground } from "./api/sticky/background";
 import {
@@ -759,13 +770,14 @@ async function handlePostdogManagerMessage(action, payload = {}) {
         case "list_all": {
             // History (full response bodies, up to hundreds of runs) is fetched per request via
             // list_history; sending it here made every reload very heavy.
-            const [folders, requests, environments, activeEnvironment] = await Promise.all([
+            const [folders, requests, environments, activeEnvironment, flows] = await Promise.all([
                 listPostdogFolders(),
                 listPostdogRequests(),
                 listPostdogEnvironments(),
-                getActivePostdogEnvironment()
+                getActivePostdogEnvironment(),
+                listPostdogFlows()
             ]);
-            const data = { folders, requests, environments, activeEnvironmentId: activeEnvironment?.id || "" };
+            const data = { folders, requests, environments, flows, activeEnvironmentId: activeEnvironment?.id || "" };
             if (payload.includeHistory) data.history = await listPostdogHistory();
             return { success: true, data };
         }
@@ -795,6 +807,48 @@ async function handlePostdogManagerMessage(action, payload = {}) {
             return { success: true, data: await deletePostdogRequest(payload.id) };
         case "run_request":
             return { success: true, data: await runPostdogRequest(payload) };
+        case "list_flows":
+            return { success: true, data: await listPostdogFlows() };
+        case "save_flow":
+            return { success: true, data: await savePostdogFlow(payload.flow || payload) };
+        case "delete_flow":
+            return { success: true, data: await deletePostdogFlow(payload.id) };
+        case "run_flow_script":
+            return { success: true, data: await runPostdogFlowScript(payload) };
+        case "list_flow_runs":
+            return { success: true, data: await listPostdogFlowRuns(payload.flowId) };
+        case "save_flow_run":
+            return { success: true, data: await savePostdogFlowRun(payload.run || payload) };
+        case "get_flow": {
+            const flow = (await listPostdogFlows()).find(item => item.id === String(payload.id || "").trim());
+            return flow ? { success: true, data: flow } : { success: false, error: `flow not found: ${payload.id}` };
+        }
+        case "list_flows_for_ai": {
+            const [flows, requests] = await Promise.all([listPostdogFlows(), listPostdogRequests()]);
+            const query = String(payload.query || "").trim().toLowerCase();
+            const filtered = query ? flows.filter(item => item.name.toLowerCase().includes(query)) : flows;
+            return { success: true, data: filtered.map(flow => serializePostdogFlowForAi(flow, requests)) };
+        }
+        case "get_flow_for_ai": {
+            const [flows, requests] = await Promise.all([listPostdogFlows(), listPostdogRequests()]);
+            const flow = flows.find(item => item.id === String(payload.id || "").trim());
+            return flow
+                ? { success: true, data: serializePostdogFlowForAi(flow, requests, { full: true }) }
+                : { success: false, error: `flow not found: ${payload.id}` };
+        }
+        case "run_flow":
+            return { success: true, data: summarizePostdogFlowRunForAi(await runPostdogFlowInBackground(payload), { details: true }) };
+        case "stop_flow_run":
+            return { success: true, data: stopPostdogFlowRun(payload.runId) };
+        case "list_flow_runs_for_ai":
+            return { success: true, data: (await listPostdogFlowRuns(payload.flowId)).map(run => summarizePostdogFlowRunForAi(run)) };
+        case "get_flow_run_for_ai": {
+            const runId = String(payload.runId || "").trim();
+            const run = (await listPostdogFlowRuns()).find(item => item.runId === runId);
+            return run
+                ? { success: true, data: summarizePostdogFlowRunForAi(run, { details: true }) }
+                : { success: false, error: `flow run not found: ${runId}` };
+        }
         case "list_history":
             return { success: true, data: await listPostdogHistorySummaries(payload.requestId) };
         case "get_history_run":
@@ -836,12 +890,13 @@ async function handlePostdogManagerMessage(action, payload = {}) {
             return { success: true, data: { text: payload.raw ? exportCurl(request) : await exportPostdogCurl(request) } };
         }
         case "export_json": {
-            const [folders, requests, environments] = await Promise.all([
+            const [folders, requests, environments, flows] = await Promise.all([
                 listPostdogFolders(),
                 listPostdogRequests(),
-                listPostdogEnvironments()
+                listPostdogEnvironments(),
+                listPostdogFlows()
             ]);
-            return { success: true, data: { text: exportPostdogJson({ folders, requests, environments }) } };
+            return { success: true, data: { text: exportPostdogJson({ folders, requests, environments, flows }) } };
         }
         case "import_json": {
             const parsed = parsePostdogJson(payload.text || "");
@@ -851,7 +906,9 @@ async function handlePostdogManagerMessage(action, payload = {}) {
             for (const folder of parsed.folders) folders.push(await savePostdogFolder(folder));
             for (const request of parsed.requests) requests.push(await savePostdogRequest(request));
             for (const environment of parsed.environments) environments.push(await savePostdogEnvironment(environment));
-            return { success: true, data: { folders, requests, environments } };
+            const flows = [];
+            for (const flow of parsed.flows) flows.push(await savePostdogFlow(flow));
+            return { success: true, data: { folders, requests, environments, flows } };
         }
         default:
             return { success: false, error: `Unknown postdog action: ${action}` };
