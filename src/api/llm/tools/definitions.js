@@ -1291,6 +1291,105 @@ export const TOOLS = [
     }
   },
   {
+    name: "postdog_list_flows",
+    description: "List Postdog flows (编排). A flow runs saved requests in order with optional sleep and script steps and stops at the first step that throws. Returns each flow's steps in short form.",
+    schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional case-insensitive substring matched against flow names." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "postdog_get_flow",
+    description: "Get one Postdog flow with all steps (including script step code) and the flow preScript / postScript.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Flow id from postdog_list_flows." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "postdog_save_flow",
+    description: "Create a Postdog flow, or update one by id (only the fields you pass change; pass the full steps array to change steps). Steps run in order: {type:\"request\", requestId} runs a saved request (ids from postdog_list_requests); {type:\"delay\", ms} sleeps; {type:\"script\", script} runs a script with no request ($.env, $.assert, $.sleep, $.log available). The flow preScript / postScript run around EVERY request step: folder pre → flow pre → request pre → send → request post → flow post → folder post. A step fails only when a script throws (e.g. $.assert(cond, msg)), the request cannot be sent, or the network fails; the HTTP status code does not fail a step by itself — check it in a script, e.g. $.assert($.response.ok, \"HTTP \" + $.response.status). Values pass between steps through the active environment ($.env.set / {{name}}).",
+    schema: {
+      type: "object",
+      properties: {
+        flow: {
+          type: "object",
+          description: "Flow object: optional id (update), name (required on create), optional preScript, postScript, and steps array.",
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            preScript: { type: "string" },
+            postScript: { type: "string" },
+            steps: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  type: { type: "string", enum: ["request", "delay", "script"] },
+                  requestId: { type: "string", description: "For request steps." },
+                  ms: { type: "number", description: "For delay steps, milliseconds (max 3600000)." },
+                  script: { type: "string", description: "For script steps." }
+                },
+                required: ["type"]
+              }
+            }
+          }
+        }
+      },
+      required: ["flow"]
+    }
+  },
+  {
+    name: "postdog_delete_flow",
+    description: "Delete a Postdog flow and its run records. The requests it references are not deleted.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Flow id." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "postdog_run_flow",
+    description: "Run a saved Postdog flow against the active environment and wait for it to finish (up to 10 minutes). Returns the run status (passed / failed / stopped), the failing step and its error, and per-step results: HTTP status, tests, error logs, a body preview, and historyRunId for postdog_get_history_run. An open Postdog page shows the run live.",
+    schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Flow id." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "postdog_list_flow_runs",
+    description: "List the recent runs of one Postdog flow (newest first, last 10 kept) with status and pass counts. Use postdog_get_flow_run for per-step details.",
+    schema: {
+      type: "object",
+      properties: {
+        flowId: { type: "string", description: "Flow id." }
+      },
+      required: ["flowId"]
+    }
+  },
+  {
+    name: "postdog_get_flow_run",
+    description: "Get one Postdog flow run with per-step status, duration, error, HTTP status, tests, error logs, body preview, and historyRunId (full request/response via postdog_get_history_run).",
+    schema: {
+      type: "object",
+      properties: {
+        runId: { type: "string", description: "Flow run id from postdog_run_flow or postdog_list_flow_runs." }
+      },
+      required: ["runId"]
+    }
+  },
+  {
     name: "html_playground",
     description: "Create and open a storage-backed HTML/CSS/JS playground, or reopen one by playgroundId. Keep expanded false by default; set expanded true only when the user explicitly requests the source editors or wants to inspect detailed code. Write HTML, CSS, and JavaScript as readable multi-line source with normal indentation; never minify or collapse generated code into one line, because users inspect it in the editors. New projects expire after 24 hours by default and may specify expireAt. The result returns a stable playgroundId, expireAt, and a files array containing absolute VFS paths for index.html, style.css, and script.js. Pass any returned files path unchanged to vfs_read_file, vfs_edit_file, or vfs_write_file. Prefer vfs_edit_file for targeted changes and vfs_write_file only when replacing the complete file. Pass playgroundId without html/css/js to reopen an existing project.",
     schema: {

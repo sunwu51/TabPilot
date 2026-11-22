@@ -8,3 +8,47 @@
 .ui-check .checkbox-container {
   transform: scale(0.8);
 }
+
+/* UiCombobox (camel combobox classes + a muted hint per option) */
+.ui-combobox .listbox li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ui-combobox-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-combobox-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--c-fg-muted);
+  font-size: 0.9em;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the list may be wider than the input so long names stay readable */
+.ui-combobox .listbox {
+  right: auto;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(520px, 80vw);
+}
+
+.ui-combobox .listbox li.ui-combobox-empty {
+  color: var(--c-fg-muted);
+  cursor: default;
+}
+
+.ui-combobox .combobox-input input {
+  text-overflow: ellipsis;
+}

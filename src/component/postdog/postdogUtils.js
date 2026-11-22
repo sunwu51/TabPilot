@@ -8,6 +8,19 @@ export function getStatusClass(status) {
   return "unknown";
 }
 
+export function flowStatusLabel(status) {
+  return {
+    running: tr("执行中", "Running"),
+    passed: tr("通过", "Passed"),
+    failed: tr("失败", "Failed"),
+    stopped: tr("已停止", "Stopped")
+  }[status] || status || "";
+}
+
+export function flowStatusVariant(status) {
+  return { passed: "success", failed: "danger", running: "warning" }[status] || "neutral";
+}
+
 export function formatDateTime(timestamp) {
   const date = new Date(Number(timestamp) || Date.now());
   const pad = n => String(n).padStart(2, "0");
